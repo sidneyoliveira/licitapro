@@ -6,8 +6,7 @@ import sys
 
 def main():
     """Run administrative tasks."""
-    # --- LINHA CORRIGIDA ---
-    # Removemos o .get do final de os.environ
+
     settings_module = 'backend.deployment_settings' if 'RENDER_EXTERNAL_HOSTNAME' in os.environ else 'backend.settings'
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', settings_module)
     try:
