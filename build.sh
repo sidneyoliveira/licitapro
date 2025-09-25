@@ -7,7 +7,7 @@ pip install -r requirements.txt
 python manage.py collectstatic --no-input
 python manage.py migrate
 
-echo "Creating superuser..."
-# O comando vai ler as variáveis de ambiente DJANGO_SUPERUSER_* automaticamente
-python manage.py createsuperuser --no-input
-echo "Superuser created."
+# echo "Creating superuser..."
+# # O comando vai ler as variáveis de ambiente DJANGO_SUPERUSER_* automaticamente
+# python manage.py createsuperuser --no-input
+# echo "Superuser created."
