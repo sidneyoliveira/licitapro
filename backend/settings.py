@@ -13,7 +13,11 @@ SECRET_KEY = 'django-insecure-tqricav+inr0r@lcfnjzawx)tq-700k-^1*c3u_ue!c@rb^&xe
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    '.onrender.com', # Permite que qualquer subdomínio do Render acesse sua API
+]
 
 
 STATIC_ROOT = BASE_DIR / 'staticfiles'
