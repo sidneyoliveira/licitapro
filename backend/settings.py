@@ -18,6 +18,7 @@ ALLOWED_HOSTS = [
     'licitapro-tgrn.onrender.com', # O domínio do seu backend
     'localhost',
     '127.0.0.1',
+    '72.60.154.234'
 ]
 
 STATIC_ROOT = BASE_DIR / 'staticfiles'
