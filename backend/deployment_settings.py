@@ -23,7 +23,7 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = {
-    "https://licitapro1.onrender.com",
+    "http://localhost:3000",
 }
 
 
