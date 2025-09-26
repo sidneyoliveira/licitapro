@@ -14,11 +14,11 @@ SECRET_KEY = 'django-insecure-tqricav+inr0r@lcfnjzawx)tq-700k-^1*c3u_ue!c@rb^&xe
 DEBUG = True
 
 ALLOWED_HOSTS = [
+    'licitapro1.onrender.com', # O domínio do seu frontend
+    'licitapro-tgrn.onrender.com', # O domínio do seu backend
     'localhost',
     '127.0.0.1',
-    '.onrender.com', # Permite que qualquer subdomínio do Render acesse sua API
 ]
-
 
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
@@ -41,6 +41,8 @@ INSTALLED_APPS = [
 
 CORS_ALLOWED_ORIGINS = [
     "https://licitapro1.onrender.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 
 REST_FRAMEWORK = {
