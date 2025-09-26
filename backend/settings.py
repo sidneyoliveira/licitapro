@@ -40,7 +40,7 @@ INSTALLED_APPS = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "https://licitapro1.onrender.com", # Endereço do nosso frontend React
+    "https://licitapro1.onrender.com",
 ]
 
 REST_FRAMEWORK = {
