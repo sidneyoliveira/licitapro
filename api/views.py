@@ -30,7 +30,7 @@ from .filters import ProcessoFilter
 
 # --- ViewSets para os Modelos Principais ---
 
-class EntidadeViewSet(viewsets.ReadOnlyModelViewSet):
+class EntidadeViewSet(viewsets.ModelViewSet):
     """
     Fornece uma lista de todos as Entidade.
     ReadOnly porque geralmente não os criamos pela API.
@@ -38,6 +38,7 @@ class EntidadeViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Entidade.objects.all().order_by('nome')
     serializer_class = EntidadeSerializer
 
+    
 class OrgaoViewSet(viewsets.ModelViewSet):
     """
     Fornece uma lista de órgãos, com a capacidade de filtrar por Entidade.
