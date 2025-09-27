@@ -4,7 +4,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .views import (
-    ProcessoViewSet, OrgaoViewSet, FornecedorViewSet, MunicipioViewSet,
+    ProcessoViewSet, OrgaoViewSet, FornecedorViewSet, EntidadeViewSet,
     CreateUserView, ManageUserView, DashboardStatsView
 )
 
@@ -12,7 +12,7 @@ router = DefaultRouter()
 router.register(r'processos', ProcessoViewSet, basename='processo')
 router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'orgaos', OrgaoViewSet, basename='orgao')
-router.register(r'municipios', MunicipioViewSet, basename='municipio')
+router.register(r'entidade', EntidadeViewSet, basename='entidade')
 
 urlpatterns = [
     path('', include(router.urls)),

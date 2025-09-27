@@ -16,23 +16,23 @@ class Fornecedor(models.Model):
     def __str__(self):
         return self.razao_social
 
-class Municipio(models.Model):
-    nome = models.CharField(max_length=100, unique=True)
-    uf = models.CharField(max_length=2)
+class Entidade(models.Model):
+
+    nome = models.CharField(max_length=200, unique=True)
+    cnpj = models.CharField(max_length=18, unique=True, null=True, blank=True)
+
     def __str__(self):
-        return f"{self.nome} - {self.uf}"
+        return self.nome
 
 class Orgao(models.Model):
-    """ Modelo de Órgão agora vinculado a um Município. """
+    """
+    Modelo de Órgão vinculado a uma Entidade.
+    """
     nome = models.CharField(max_length=255)
-    # ADICIONE null=True, blank=True A ESTA LINHA
-    municipio = models.ForeignKey(Municipio, related_name='orgaos', on_delete=models.CASCADE, null=True, blank=True)
+    entidade = models.ForeignKey(Entidade, related_name='orgaos', on_delete=models.CASCADE)
 
     def __str__(self):
-        # Adiciona uma verificação para o caso de o município ser nulo
-        if self.municipio:
-            return f"{self.nome} ({self.municipio.nome})"
-        return self.nome
+        return f"{self.nome} ({self.entidade.nome})"
 
 class ProcessoLicitatorio(models.Model):
     """ Modelo de Processo Licitatório com os novos campos e organização. """

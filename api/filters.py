@@ -8,7 +8,7 @@ class ProcessoFilter(filters.FilterSet):
 
     class Meta:
         model = ProcessoLicitatorio
-        fields = ['modalidade', 'situacao', 'orgao', 'classificacao', 'registro_precos']
+        fields = ['modalidade', 'situacao', 'orgao', 'entidade', 'classificacao',  'registro_precos']
 
     def filter_by_search(self, queryset, name, value):
         # Q objects permitem buscas complexas com OR

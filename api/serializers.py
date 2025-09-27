@@ -1,7 +1,7 @@
 # backend/api/serializers.py
 
 from rest_framework import serializers
-from .models import ProcessoLicitatorio, Orgao, Fornecedor, Municipio, CustomUser
+from .models import ProcessoLicitatorio, Orgao, Fornecedor, Entidade, CustomUser
 
 # Serializer para o modelo de usuário
 class UserSerializer(serializers.ModelSerializer):
@@ -17,25 +17,25 @@ class FornecedorSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class MunicipioSerializer(serializers.ModelSerializer):
+class EntidadeSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Municipio
+        model = Entidade
         fields = '__all__'
 
-# 2. Serializer para Órgão (Atualizado para incluir o nome do município)
+# 2. Serializer para Órgão (Atualizado para incluir o nome do entidade)
 class OrgaoSerializer(serializers.ModelSerializer):
-    # Este campo busca o nome do município relacionado e o inclui na resposta da API
-    municipio_nome = serializers.CharField(source='municipio.nome', read_only=True)
+    # Este campo busca o nome do entidade  relacionado e o inclui na resposta da API
+    entidade_nome = serializers.CharField(source='entidade.nome', read_only=True)
     
     class Meta:
         model = Orgao
-        fields = ['id', 'nome', 'municipio', 'municipio_nome']
+        fields = ['id', 'nome', 'entidade', 'entidade_nome']
 
 # 3. Serializer para Processo (Atualizado para incluir nomes em vez de IDs)
 class ProcessoSerializer(serializers.ModelSerializer):
     # Estes campos retornam informações legíveis para o frontend
     orgao_nome = serializers.CharField(source='orgao.nome', read_only=True)
-    municipio_nome = serializers.CharField(source='orgao.municipio.nome', read_only=True)
+    entidade_nome = serializers.CharField(source='orgao.entidade.nome', read_only=True)
     
     class Meta:
         model = ProcessoLicitatorio

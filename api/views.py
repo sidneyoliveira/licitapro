@@ -11,7 +11,7 @@ from .models import (
     ProcessoLicitatorio, 
     Orgao, 
     Fornecedor, 
-    Municipio, 
+    Entidade, 
     CustomUser
 )
 
@@ -20,7 +20,7 @@ from .serializers import (
     ProcessoSerializer, 
     OrgaoSerializer, 
     FornecedorSerializer, 
-    MunicipioSerializer, 
+    EntidadeSerializer, 
     UserSerializer
 )
 
@@ -30,22 +30,22 @@ from .filters import ProcessoFilter
 
 # --- ViewSets para os Modelos Principais ---
 
-class MunicipioViewSet(viewsets.ReadOnlyModelViewSet):
+class EntidadeViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    Fornece uma lista de todos os municípios.
+    Fornece uma lista de todos as Entidade.
     ReadOnly porque geralmente não os criamos pela API.
     """
-    queryset = Municipio.objects.all().order_by('nome')
-    serializer_class = MunicipioSerializer
+    queryset = Entidade.objects.all().order_by('nome')
+    serializer_class = EntidadeSerializer
 
 class OrgaoViewSet(viewsets.ModelViewSet):
     """
-    Fornece uma lista de órgãos, com a capacidade de filtrar por município.
+    Fornece uma lista de órgãos, com a capacidade de filtrar por Entidade.
     """
     queryset = Orgao.objects.all().order_by('nome')
     serializer_class = OrgaoSerializer
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['municipio'] # Permite a filtragem via /api/orgaos/?municipio=1
+    filterset_fields = ['entidade'] # Permite a filtragem via /api/orgaos/?entidade=1
 
 class FornecedorViewSet(viewsets.ModelViewSet):
     queryset = Fornecedor.objects.all()
@@ -55,7 +55,7 @@ class ProcessoViewSet(viewsets.ModelViewSet):
     """
     ViewSet principal para Processos Licitatórios, com filtros avançados.
     """
-    queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__municipio').all().order_by('-data_cadastro')
+    queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__entidade').all().order_by('-data_cadastro')
     serializer_class = ProcessoSerializer
     filter_backends = [DjangoFilterBackend]
     # Usa a classe de filtro customizada para permitir a busca em múltiplos campos
