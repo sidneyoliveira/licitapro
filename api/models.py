@@ -29,7 +29,7 @@ class Orgao(models.Model):
     Modelo de Órgão vinculado a uma Entidade.
     """
     nome = models.CharField(max_length=255)
-    entidade = models.ForeignKey(Entidade, related_name='orgaos', on_delete=models.CASCADE)
+    entidade = models.ForeignKey(Entidade, related_name='orgaos', on_delete=models.CASCADE, null=True, blank=True)
 
     def __str__(self):
         return f"{self.nome} ({self.entidade.nome})"
