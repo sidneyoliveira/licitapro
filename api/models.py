@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 
+
 # Estenda o usuário padrão para adicionar campos extras
 class CustomUser(AbstractUser):
     cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
@@ -71,7 +72,7 @@ class ProcessoLicitatorio(models.Model):
     numero_certame = models.CharField(max_length=50, verbose_name="Número do Certame")
     modalidade = models.CharField(max_length=50, choices=MODALIDADE_CHOICES)
     classificacao = models.CharField(max_length=50, choices=CLASSIFICACAO_CHOICES)
-    data_cadastro = models.DateField(auto_now_add=True, verbose_name="Data do Processo")
+    data_cadastro = models.DateField(verbose_name="Data do Processo")
     orgao = models.ForeignKey(Orgao, on_delete=models.PROTECT, related_name="processos")
 
     # --- CAMPOS OPCIONAIS ---
@@ -80,8 +81,9 @@ class ProcessoLicitatorio(models.Model):
     situacao = models.CharField(max_length=50, choices=SITUACAO_CHOICES, blank=True, null=True)
     registro_precos = models.BooleanField(default=False)
     data_publicacao = models.DateField(null=True, blank=True, verbose_name="Data da Publicação")
+    # Este campo já é opcional (null=True, blank=True), o que está correto.
     data_abertura = models.DateTimeField(null=True, blank=True, verbose_name="Abertura da Contratação")
     valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, verbose_name="Valor de Referência")
-
+    
     def __str__(self):
         return f"{self.numero_processo} - {self.objeto[:50]}"
