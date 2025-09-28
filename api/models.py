@@ -71,7 +71,7 @@ class ProcessoLicitatorio(models.Model):
     numero_certame = models.CharField(max_length=50, verbose_name="Número do Certame")
     modalidade = models.CharField(max_length=50, choices=MODALIDADE_CHOICES)
     classificacao = models.CharField(max_length=50, choices=CLASSIFICACAO_CHOICES)
-    data_cadastro = models.DateField(default=timezone.now, verbose_name="Data do Processo")
+    data_cadastro = models.DateField(auto_now_add=True, verbose_name="Data do Processo")
     orgao = models.ForeignKey(Orgao, on_delete=models.PROTECT, related_name="processos")
 
     # --- CAMPOS OPCIONAIS ---
