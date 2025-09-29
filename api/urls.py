@@ -10,10 +10,11 @@ from .views import (
 )
 
 router = DefaultRouter()
-router.register(r'processo', ProcessoViewSet, basename='processo')
-router.register(r'fornecedor', FornecedorViewSet, basename='fornecedor')
-router.register(r'orgao', OrgaoViewSet, basename='orgao')
-router.register(r'entidade', EntidadeViewSet, basename='entidade')
+router.register(r'processos', ProcessoViewSet, basename='processo')
+router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
+router.register(r'orgaos', OrgaoViewSet, basename='orgao')
+router.register(r'entidades', EntidadeViewSet, basename='entidades')
+
 
 urlpatterns = [
     path('', include(router.urls)),
