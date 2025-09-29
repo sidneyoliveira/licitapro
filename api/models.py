@@ -64,27 +64,26 @@ class ProcessoLicitatorio(models.Model):
         LOTE = 'Lote'
         ITEM = 'Item'
 
-    # --- CAMPOS OBRIGATÓRIOS ---
+   # --- CAMPOS OBRIGATÓRIOS NA CRIAÇÃO ---
     objeto = models.TextField()
     numero_processo = models.CharField(max_length=50, verbose_name="Número")
-    numero_certame = models.CharField(max_length=50, verbose_name="Número do Certame")
-    # A data de cadastro agora é automática e não precisa de estar no formulário
-    data_cadastro = models.DateField(auto_now_add=True, verbose_name="Data de Cadastro")
+    modalidade = models.CharField(max_length=50, choices=Modalidade.choices)
+    classificacao = models.CharField(max_length=50, choices=Classificacao.choices)
+    data_processo = models.DateField(verbose_name="Data do Processo")
     orgao = models.ForeignKey(Orgao, on_delete=models.PROTECT, related_name="processos")
-    
-    # --- CAMPOS AGORA OPCIONAIS (para o formulário funcionar) ---
-    modalidade = models.CharField(max_length=50, choices=Modalidade.choices, blank=True, null=True)
-    classificacao = models.CharField(max_length=50, choices=Classificacao.choices, blank=True, null=True)
-    
-    # --- OUTROS CAMPOS OPCIONAIS ---
-    data_processo = models.DateField(null=True, blank=True, verbose_name="Data do Processo")
+
+    # --- CAMPOS DE PUBLICAÇÃO (OPCIONAIS) ---
+    numero_certame = models.CharField(max_length=50, verbose_name="Número do Certame", blank=True, null=True)
     data_abertura = models.DateTimeField(null=True, blank=True, verbose_name="Abertura da Contratação")
-    tipo_organizacao = models.CharField(max_length=10, choices=Organizacao.choices, blank=True, null=True, verbose_name="Tipo de Organização")
-    vigencia_meses = models.PositiveIntegerField(blank=True, null=True, verbose_name="Vigência (Meses)")
+    
+    # --- OUTROS CAMPOS ---
+    data_cadastro = models.DateField(auto_now_add=True, verbose_name="Data de Criação no Sistema")
+    tipo_organizacao = models.CharField(max_length=10, choices=Organizacao.choices, blank=True, null=True)
+    vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
     situacao = models.CharField(max_length=50, choices=Situacao.choices, blank=True, null=True)
     registro_precos = models.BooleanField(default=False)
-    valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, verbose_name="Valor de Referência")
-
+    valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    
     def __str__(self):
         return f"{self.numero_processo} - {self.objeto[:50]}"
     
