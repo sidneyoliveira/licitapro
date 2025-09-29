@@ -14,6 +14,7 @@ router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'orgaos', OrgaoViewSet, basename='orgao')
 router.register(r'entidades', EntidadeViewSet, basename='entidades')
 
+
 urlpatterns = [
     path('', include(router.urls)),
     path('dashboard-stats/', DashboardStatsView.as_view(), name='dashboard_stats'),
