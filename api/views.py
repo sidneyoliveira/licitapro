@@ -5,6 +5,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework_simplejwt.views import TokenObtainPairView
+from .serializers import MyTokenObtainPairSerializer
 
 # Importando Modelos (apenas uma vez)
 from .models import (
@@ -38,7 +40,7 @@ class EntidadeViewSet(viewsets.ModelViewSet):
     queryset = Entidade.objects.all().order_by('nome')
     serializer_class = EntidadeSerializer
 
-    
+
 class OrgaoViewSet(viewsets.ModelViewSet):
     """
     Fornece uma lista de órgãos, com a capacidade de filtrar por Entidade.
@@ -129,3 +131,9 @@ class DashboardStatsView(APIView):
             'total_orgaos': total_orgaos,
         }
         return Response(data)
+
+class MyTokenObtainPairView(TokenObtainPairView):
+    """
+    Usa o serializer customizado para incluir os dados do utilizador no token.
+    """
+    serializer_class = MyTokenObtainPairSerializer
