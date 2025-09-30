@@ -4,7 +4,6 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import ProcessoLicitatorio, Orgao, Fornecedor, Entidade, CustomUser
 from .models import ItemProcesso, FornecedorProcesso
-from .serializers import ItemProcessoSerializer, FornecedorProcessoSerializer
 
 # Serializer para o modelo de usuário
 class UserSerializer(serializers.ModelSerializer):
