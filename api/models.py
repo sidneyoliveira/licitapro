@@ -1,8 +1,7 @@
 # backend/api/models.py
-
 from django.db import models
 from django.contrib.auth.models import AbstractUser
-
+from django.utils import timezone
 # Mantenha os seus outros modelos (CustomUser, Fornecedor, Entidade, Orgao) como estão.
 # Abaixo estão apenas as alterações relevantes para o modelo ProcessoLicitatorio.
 
@@ -22,8 +21,9 @@ class Fornecedor(models.Model):
 class Entidade(models.Model):
     nome = models.CharField(max_length=200, unique=True)
     cnpj = models.CharField(max_length=18, unique=True, null=True, blank=True)
+    ano = models.IntegerField(default=timezone.now().year, verbose_name="Ano de Exercício")
     def __str__(self):
-        return self.nome
+        return f"{self.nome} ({self.ano})"
 
 class Orgao(models.Model):
     nome = models.CharField(max_length=255)
