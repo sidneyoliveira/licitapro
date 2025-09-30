@@ -69,15 +69,19 @@ class ProcessoLicitatorio(models.Model):
     numero_processo = models.CharField(max_length=50, verbose_name="Número")
     modalidade = models.CharField(max_length=50, choices=Modalidade.choices)
     classificacao = models.CharField(max_length=50, choices=Classificacao.choices)
+    # Este é o campo de data que o utilizador preenche
     data_processo = models.DateField(verbose_name="Data do Processo")
     orgao = models.ForeignKey(Orgao, on_delete=models.PROTECT, related_name="processos")
 
+    # --- CAMPO AUTOMÁTICO ---
+    data_cadastro_sistema = models.DateField(auto_now_add=True, verbose_name="Data de Criação no Sistema")
+    
     # --- CAMPOS DE PUBLICAÇÃO (OPCIONAIS) ---
     numero_certame = models.CharField(max_length=50, verbose_name="Número do Certame", blank=True, null=True)
     data_abertura = models.DateTimeField(null=True, blank=True, verbose_name="Abertura da Contratação")
-    
-    # --- OUTROS CAMPOS ---
-    data_cadastro = models.DateField(auto_now_add=True, verbose_name="Data de Criação no Sistema")
+    data_publicacao = models.DateField(null=True, blank=True, verbose_name="Data da Publicação")
+
+    # --- OUTROS CAMPOS OPCIONAIS ---
     tipo_organizacao = models.CharField(max_length=10, choices=Organizacao.choices, blank=True, null=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
     situacao = models.CharField(max_length=50, choices=Situacao.choices, blank=True, null=True)
@@ -85,12 +89,12 @@ class ProcessoLicitatorio(models.Model):
     valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     
     def __str__(self):
-        return f"{self.numero_processo} - {self.objeto[:50]}"
+        return self.numero_processo
     
     class Meta:
         verbose_name = "Processo Licitatório"
         verbose_name_plural = "Processos Licitatórios"
-        ordering = ['-data_cadastro']
+        ordering = ['-data_processo']
 
 class ItemProcesso(models.Model):
     """ Guarda os itens associados a um processo licitatório. """

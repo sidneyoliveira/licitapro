@@ -9,8 +9,6 @@ from .views import (
     CreateUserView, ManageUserView, DashboardStatsView, ItemProcessoViewSet, FornecedorProcessoViewSet
 )
 
-
-
 router = DefaultRouter()
 router.register(r'processos', ProcessoViewSet, basename='processo')
 router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
