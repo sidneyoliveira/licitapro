@@ -43,12 +43,12 @@ CORS_ALLOWED_ORIGINS = [
     "https://licitapro1.onrender.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "l3solution.net.br"
+    'http://l3solution.net.br'
 ]
 
 CSRF_TRUSTED_ORIGINS = [
-    'https://licitapro1.onrender.com',
-    'l3solution.net.br'
+    'http://licitapro1.onrender.com',
+    'http://l3solution.net.br'
 ]
 
 REST_FRAMEWORK = {
