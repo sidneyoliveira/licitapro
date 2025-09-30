@@ -14,14 +14,12 @@ SECRET_KEY = 'django-insecure-tqricav+inr0r@lcfnjzawx)tq-700k-^1*c3u_ue!c@rb^&xe
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    'licitapro1.onrender.com', # O domínio do seu frontend
-    'licitapro-tgrn.onrender.com', # O domínio do seu backend
-    'localhost',
-    '127.0.0.1',
-    '72.60.154.234',
-    'l3solution.net.br'
+    'l3solution.net.br',
+    'www.l3solution.net.br',
+    '72.60.154.234', 
+    '127.0.0.1', 
+    'localhost'
 ]
-
 # Application definition
 
 INSTALLED_APPS = [

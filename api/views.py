@@ -7,6 +7,8 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import MyTokenObtainPairSerializer
+from .models import ItemProcesso, FornecedorProcesso
+from .serializers import ItemProcessoSerializer, FornecedorProcessoSerializer
 
 # Importando Modelos (apenas uma vez)
 from .models import (
@@ -137,3 +139,14 @@ class MyTokenObtainPairView(TokenObtainPairView):
     Usa o serializer customizado para incluir os dados do utilizador no token.
     """
     serializer_class = MyTokenObtainPairSerializer
+
+
+class ItemProcessoViewSet(viewsets.ModelViewSet):
+    queryset = ItemProcesso.objects.all()
+    serializer_class = ItemProcessoSerializer
+    filterset_fields = ['processo'] # Permite buscar itens de um processo específico
+
+class FornecedorProcessoViewSet(viewsets.ModelViewSet):
+    queryset = FornecedorProcesso.objects.all()
+    serializer_class = FornecedorProcessoSerializer
+    filterset_fields = ['processo'] # Permite buscar fornecedores de um processo

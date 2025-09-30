@@ -32,9 +32,20 @@ class OrgaoSerializer(serializers.ModelSerializer):
         model = Orgao
         fields = ['id', 'nome', 'entidade', 'entidade_nome']
 
-# 3. Serializer para Processo (Atualizado para incluir nomes em vez de IDs)
+class ItemProcessoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ItemProcesso
+        fields = '__all__'
+
+class FornecedorProcessoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FornecedorProcesso
+        fields = '__all__'
+
 class ProcessoSerializer(serializers.ModelSerializer):
-    # Estes campos retornam informações legíveis para o frontend
+    # Adiciona os itens e fornecedores diretamente na resposta do processo
+    itens = ItemProcessoSerializer(many=True, read_only=True)
+    fornecedores = FornecedorProcessoSerializer(many=True, read_only=True)
     orgao_nome = serializers.CharField(source='orgao.nome', read_only=True)
     entidade_nome = serializers.CharField(source='orgao.entidade.nome', read_only=True)
     

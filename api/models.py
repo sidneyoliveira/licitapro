@@ -91,3 +91,31 @@ class ProcessoLicitatorio(models.Model):
         verbose_name = "Processo Licitatório"
         verbose_name_plural = "Processos Licitatórios"
         ordering = ['-data_cadastro']
+
+class ItemProcesso(models.Model):
+    """ Guarda os itens associados a um processo licitatório. """
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
+    descricao = models.CharField(max_length=255)
+    especificacao = models.TextField(blank=True, null=True)
+    unidade = models.CharField(max_length=20)
+    quantidade = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        ordering = ['id']
+
+    def __str__(self):
+        return self.descricao
+
+class FornecedorProcesso(models.Model):
+    """ Guarda os fornecedores associados a um processo licitatório. """
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='fornecedores', on_delete=models.CASCADE)
+    nome = models.CharField(max_length=255)
+    cnpj = models.CharField(max_length=18)
+    telefone = models.CharField(max_length=20, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['nome']
+
+    def __str__(self):
+        return self.nome
