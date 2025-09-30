@@ -155,7 +155,7 @@ REST_FRAMEWORK = {
 }
 
 # URL para se referir aos ficheiros estáticos
-STATIC_URL = 'static/'
+STATIC_URL = '/static-admin/'
 
 # O caminho absoluto para a pasta onde o 'collectstatic' irá juntar todos os ficheiros estáticos.
 STATIC_ROOT = BASE_DIR / 'staticfiles'
