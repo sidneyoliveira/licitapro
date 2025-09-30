@@ -18,7 +18,8 @@ ALLOWED_HOSTS = [
     'licitapro-tgrn.onrender.com', # O domínio do seu backend
     'localhost',
     '127.0.0.1',
-    '72.60.154.234'
+    '72.60.154.234',
+    'l3solution.net.br'
 ]
 
 # Application definition
@@ -39,13 +40,13 @@ INSTALLED_APPS = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "https://licitapro1.onrender.com",
+    "",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
-    'https://licitapro1.onrender.com',
+    '',
 ]
 
 REST_FRAMEWORK = {
