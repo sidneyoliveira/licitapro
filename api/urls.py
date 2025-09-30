@@ -6,15 +6,18 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .views import MyTokenObtainPairView
 from .views import (
     ProcessoViewSet, OrgaoViewSet, FornecedorViewSet, EntidadeViewSet,
-    CreateUserView, ManageUserView, DashboardStatsView
+    CreateUserView, ManageUserView, DashboardStatsView, ItemProcessoViewSet, FornecedorProcessoViewSet
 )
+
+
 
 router = DefaultRouter()
 router.register(r'processos', ProcessoViewSet, basename='processo')
 router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'orgaos', OrgaoViewSet, basename='orgao')
 router.register(r'entidades', EntidadeViewSet, basename='entidades')
-
+router.register(r'itens', ItemProcessoViewSet, basename='itemprocesso')
+router.register(r'fornecedores-processo', FornecedorProcessoViewSet, basename='fornecedorprocesso')
 
 urlpatterns = [
     path('', include(router.urls)),
