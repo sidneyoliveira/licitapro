@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter # 1. Importe o SearchFilter
 
 from .models import (
     ProcessoLicitatorio, Orgao, Fornecedor, Entidade, 
@@ -17,6 +18,7 @@ from .serializers import (
 )
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .filters import ProcessoFilter
+
 
 class MyTokenObtainPairView(TokenObtainPairView):
     serializer_class = MyTokenObtainPairSerializer
@@ -32,9 +34,12 @@ class OrgaoViewSet(viewsets.ModelViewSet):
     filterset_fields = ['entidade']
 
 class FornecedorViewSet(viewsets.ModelViewSet):
-    """ ViewSet para o catálogo geral de fornecedores. """
+    """ ViewSet para o catálogo geral de fornecedores, agora com pesquisa. """
     queryset = Fornecedor.objects.all()
     serializer_class = FornecedorSerializer
+    # 2. Adicione o SearchFilter e defina os campos de pesquisa
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    search_fields = ['razao_social', 'cnpj']
 
 class ItemProcessoViewSet(viewsets.ModelViewSet):
     queryset = ItemProcesso.objects.all()
