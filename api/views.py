@@ -32,6 +32,7 @@ class OrgaoViewSet(viewsets.ModelViewSet):
     filterset_fields = ['entidade']
 
 class FornecedorViewSet(viewsets.ModelViewSet):
+    """ ViewSet para o catálogo geral de fornecedores. """
     queryset = Fornecedor.objects.all()
     serializer_class = FornecedorSerializer
 
@@ -85,14 +86,9 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
         return self.request.user
 
 class DashboardStatsView(APIView):
-    """
-    Fornece estatísticas agregadas para a página inicial do dashboard.
-    """
     permission_classes = [IsAuthenticated]
-
     def get(self, request, format=None):
         total_processos = ProcessoLicitatorio.objects.count()
-        # Corrigido para usar o nome completo da situação, conforme o novo modelo
         processos_em_andamento = ProcessoLicitatorio.objects.filter(situacao='Em Contratação').count()
         total_fornecedores = Fornecedor.objects.count()
         total_orgaos = Orgao.objects.count()
@@ -104,20 +100,3 @@ class DashboardStatsView(APIView):
             'total_orgaos': total_orgaos,
         }
         return Response(data)
-
-class MyTokenObtainPairView(TokenObtainPairView):
-    """
-    Usa o serializer customizado para incluir os dados do utilizador no token.
-    """
-    serializer_class = MyTokenObtainPairSerializer
-
-
-class ItemProcessoViewSet(viewsets.ModelViewSet):
-    queryset = ItemProcesso.objects.all()
-    serializer_class = ItemProcessoSerializer
-    filterset_fields = ['processo'] # Permite buscar itens de um processo específico
-
-class FornecedorProcessoViewSet(viewsets.ModelViewSet):
-    queryset = FornecedorProcesso.objects.all()
-    serializer_class = FornecedorProcessoSerializer
-    filterset_fields = ['processo'] # Permite buscar fornecedores de um processo

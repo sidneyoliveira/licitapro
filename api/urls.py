@@ -5,8 +5,14 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
-    ProcessoViewSet, OrgaoViewSet, FornecedorViewSet, EntidadeViewSet,
-    ItemProcessoViewSet, CreateUserView, ManageUserView, DashboardStatsView,
+    ProcessoViewSet, 
+    OrgaoViewSet, 
+    FornecedorViewSet, 
+    EntidadeViewSet,
+    ItemProcessoViewSet, 
+    CreateUserView, 
+    ManageUserView, 
+    DashboardStatsView,
     MyTokenObtainPairView
 )
 
@@ -16,6 +22,7 @@ router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'orgaos', OrgaoViewSet, basename='orgao')
 router.register(r'entidades', EntidadeViewSet, basename='entidade')
 router.register(r'itens', ItemProcessoViewSet, basename='item')
+# A linha que registava 'fornecedores-processo' foi removida.
 
 urlpatterns = [
     path('', include(router.urls)),
