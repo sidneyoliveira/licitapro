@@ -1,10 +1,27 @@
 # backend/api/serializers.py
 
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
     ProcessoLicitatorio, Orgao, Fornecedor, Entidade, CustomUser, ItemProcesso
 )
 
+# --- SERIALIZER CUSTOMIZADO PARA O TOKEN (ESTAVA EM FALTA) ---
+class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Serializer customizado para o token JWT.
+    Adiciona informações extras do utilizador (username, email, first_name) ao token.
+    """
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        # Adiciona os campos customizados ao "payload" do token
+        token['username'] = user.username
+        token['email'] = user.email
+        token['first_name'] = user.first_name
+        return token
+
+# --- SEUS OUTROS SERIALIZERS ---
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
