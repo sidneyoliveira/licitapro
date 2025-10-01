@@ -4,115 +4,85 @@ from rest_framework import viewsets, generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import MyTokenObtainPairSerializer
 
-from .models import ItemProcesso, FornecedorProcesso
-from .serializers import ItemProcessoSerializer, FornecedorProcessoSerializer
-
-# Importando Modelos (apenas uma vez)
 from .models import (
-    ProcessoLicitatorio, 
-    Orgao, 
-    Fornecedor, 
-    Entidade, 
-    CustomUser
+    ProcessoLicitatorio, Orgao, Fornecedor, Entidade, 
+    CustomUser, ItemProcesso
 )
-
-# Importando Serializers (apenas uma vez)
 from .serializers import (
-    ProcessoSerializer, 
-    OrgaoSerializer, 
-    FornecedorSerializer, 
-    EntidadeSerializer, 
-    UserSerializer
+    ProcessoSerializer, OrgaoSerializer, FornecedorSerializer, EntidadeSerializer, 
+    UserSerializer, ItemProcessoSerializer, MyTokenObtainPairSerializer
 )
-
-# Importando a classe de filtro
+from rest_framework_simplejwt.views import TokenObtainPairView
 from .filters import ProcessoFilter
 
-
-# --- ViewSets para os Modelos Principais ---
+class MyTokenObtainPairView(TokenObtainPairView):
+    serializer_class = MyTokenObtainPairSerializer
 
 class EntidadeViewSet(viewsets.ModelViewSet):
-    """
-    Fornece uma lista de todos as Entidade.
-    ReadOnly porque geralmente não os criamos pela API.
-    """
     queryset = Entidade.objects.all().order_by('nome')
     serializer_class = EntidadeSerializer
 
-
 class OrgaoViewSet(viewsets.ModelViewSet):
-    """
-    Fornece uma lista de órgãos, com a capacidade de filtrar por Entidade.
-    """
     queryset = Orgao.objects.all().order_by('nome')
     serializer_class = OrgaoSerializer
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['entidade'] # Permite a filtragem via /api/orgaos/?entidade=1
+    filterset_fields = ['entidade']
 
 class FornecedorViewSet(viewsets.ModelViewSet):
     queryset = Fornecedor.objects.all()
     serializer_class = FornecedorSerializer
 
+class ItemProcessoViewSet(viewsets.ModelViewSet):
+    queryset = ItemProcesso.objects.all()
+    serializer_class = ItemProcessoSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['processo']
+
 class ProcessoViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet principal para Processos Licitatórios, com filtros avançados.
-    """
     queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__entidade').all().order_by('-data_processo')
     serializer_class = ProcessoSerializer
     filter_backends = [DjangoFilterBackend]
-
     filterset_class = ProcessoFilter
 
+    @action(detail=True, methods=['post'])
+    def adicionar_fornecedor(self, request, pk=None):
+        processo = self.get_object()
+        fornecedor_id = request.data.get('fornecedor_id')
+        if not fornecedor_id:
+            return Response({'error': 'fornecedor_id é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            fornecedor = Fornecedor.objects.get(id=fornecedor_id)
+            processo.fornecedores_participantes.add(fornecedor)
+            return Response(ProcessoSerializer(processo).data, status=status.HTTP_200_OK)
+        except Fornecedor.DoesNotExist:
+            return Response({'error': 'Fornecedor não encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
-# --- Views para Gerenciamento de Usuário ---
+    @action(detail=True, methods=['post'])
+    def remover_fornecedor(self, request, pk=None):
+        processo = self.get_object()
+        fornecedor_id = request.data.get('fornecedor_id')
+        if not fornecedor_id:
+            return Response({'error': 'fornecedor_id é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            fornecedor = Fornecedor.objects.get(id=fornecedor_id)
+            processo.fornecedores_participantes.remove(fornecedor)
+            return Response(ProcessoSerializer(processo).data, status=status.HTTP_200_OK)
+        except Fornecedor.DoesNotExist:
+            return Response({'error': 'Fornecedor não encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
 class CreateUserView(generics.CreateAPIView):
-    """
-    Permite o registro de novos usuários.
-    """
     queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
 
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        validated_data = serializer.validated_data
-        
-        try:
-            # Usa o método create_user para garantir a criptografia correta da senha
-            user = CustomUser.objects.create_user(
-                username=validated_data['username'],
-                email=validated_data.get('email', ''),
-                password=validated_data['password'],
-                first_name=validated_data.get('first_name', ''),
-                last_name=validated_data.get('last_name', ''),
-                cpf=validated_data.get('cpf'),
-                data_nascimento=validated_data.get('data_nascimento')
-            )
-        except Exception as e:
-            return Response({"detail": f"Erro ao criar usuário: {e}"}, status=status.HTTP_400_BAD_REQUEST)
-
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-
 class ManageUserView(generics.RetrieveUpdateAPIView):
-    """ 
-    Permite que um usuário autenticado veja e atualize seu próprio perfil.
-    """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
-
     def get_object(self):
         return self.request.user
-
-
-# --- Views Utilitárias ---
 
 class DashboardStatsView(APIView):
     """

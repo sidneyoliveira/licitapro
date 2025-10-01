@@ -1,22 +1,16 @@
 # backend/api/models.py
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
-# Mantenha os seus outros modelos (CustomUser, Fornecedor, Entidade, Orgao) como estão.
-# Abaixo estão apenas as alterações relevantes para o modelo ProcessoLicitatorio.
+
+# --- MODELOS BASE ---
 
 class CustomUser(AbstractUser):
     cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
     data_nascimento = models.DateField(null=True, blank=True)
     groups = models.ManyToManyField('auth.Group', related_name='customuser_set', blank=True)
     user_permissions = models.ManyToManyField('auth.Permission', related_name='customuser_set', blank=True)
-
-class Fornecedor(models.Model):
-    razao_social = models.CharField(max_length=255)
-    cnpj = models.CharField(max_length=18, unique=True)
-    email = models.EmailField()
-    def __str__(self):
-        return self.razao_social
 
 class Entidade(models.Model):
     nome = models.CharField(max_length=200, unique=True)
@@ -27,21 +21,27 @@ class Entidade(models.Model):
 
 class Orgao(models.Model):
     nome = models.CharField(max_length=255)
-    entidade = models.ForeignKey(Entidade, related_name='orgaos', on_delete=models.CASCADE, null=True, blank=True)
+    entidade = models.ForeignKey(Entidade, related_name='orgaos', on_delete=models.CASCADE)
     def __str__(self):
-        if self.entidade:
-            return f"{self.nome} ({self.entidade.nome})"
-        return self.nome
+        return f"{self.nome} ({self.entidade.nome})"
 
-# --- MODELO PRINCIPAL ATUALIZADO ---
+class Fornecedor(models.Model):
+    """ Este é o nosso catálogo geral de fornecedores, reutilizável em vários processos. """
+    razao_social = models.CharField(max_length=255)
+    cnpj = models.CharField(max_length=18, unique=True)
+    email = models.EmailField(blank=True, null=True)
+    telefone = models.CharField(max_length=20, blank=True, null=True)
+    def __str__(self):
+        return self.razao_social
+
+# --- MODELOS DO PROCESSO ---
+
 class ProcessoLicitatorio(models.Model):
-    
-    # Usar TextChoices é uma boa prática para organizar as opções
     class Modalidade(models.TextChoices):
         PREGAO_ELETRONICO = 'Pregão Eletrônico'
-        CONCORRENCIA = 'Concorrência Eletrônica'
-        DISPENSA = 'Dispensa Eletrônica'
-        INEXIGIBILIDADE = 'Inexigibilidade Eletrônica'
+        CONCORRENCIA_ELETRONICA = 'Concorrência Eletrônica'
+        DISPENSA_ELETRONICA = 'Dispensa Eletrônica'
+        INEXIGIBILIDADE_ELETRONICA = 'Inexigibilidade Eletrônica'
         ADESAO_ARP = 'Adesão a Registro de Preços'
         CREDENCIAMENTO = 'Credenciamento'
 
@@ -57,47 +57,43 @@ class ProcessoLicitatorio(models.Model):
         AGUARDANDO_PUBLICACAO = 'Aguardando Publicação'
         PUBLICADO = 'Publicado'
         EM_CONTRATACAO = 'Em Contratação'
-        HOMOLOGADO = 'Adjudicado/Homologado'
-        CANCELADO = 'Revogado/Cancelado'
+        ADJUDICADO_HOMOLOGADO = 'Adjudicado/Homologado'
+        REVOGADO_CANCELADO = 'Revogado/Cancelado'
 
     class Organizacao(models.TextChoices):
         LOTE = 'Lote'
         ITEM = 'Item'
 
-   # --- CAMPOS OBRIGATÓRIOS NA CRIAÇÃO ---
+    # --- CAMPOS OBRIGATÓRIOS ---
     objeto = models.TextField()
-    numero_processo = models.CharField(max_length=50, verbose_name="Número")
+    numero_processo = models.CharField(max_length=50)
+    data_processo = models.DateField()
     modalidade = models.CharField(max_length=50, choices=Modalidade.choices)
     classificacao = models.CharField(max_length=50, choices=Classificacao.choices)
-    # Este é o campo de data que o utilizador preenche
-    data_processo = models.DateField(verbose_name="Data do Processo")
     orgao = models.ForeignKey(Orgao, on_delete=models.PROTECT, related_name="processos")
+    tipo_organizacao = models.CharField(max_length=10, choices=Organizacao.choices)
+    registro_precos = models.BooleanField(default=False)
 
     # --- CAMPO AUTOMÁTICO ---
-    data_cadastro_sistema = models.DateField(auto_now_add=True, verbose_name="Data de Criação no Sistema")
+    data_cadastro_sistema = models.DateField(auto_now_add=True)
     
-    # --- CAMPOS DE PUBLICAÇÃO (OPCIONAIS) ---
-    numero_certame = models.CharField(max_length=50, verbose_name="Número do Certame", blank=True, null=True)
-    data_abertura = models.DateTimeField(null=True, blank=True, verbose_name="Abertura da Contratação")
-    data_publicacao = models.DateField(null=True, blank=True, verbose_name="Data da Publicação")
-
-    # --- OUTROS CAMPOS OPCIONAIS ---
-    tipo_organizacao = models.CharField(max_length=10, choices=Organizacao.choices, blank=True, null=True)
+    # --- CAMPOS OPCIONAIS ---
+    numero_certame = models.CharField(max_length=50, blank=True, null=True)
+    data_abertura = models.DateTimeField(null=True, blank=True)
+    valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
     situacao = models.CharField(max_length=50, choices=Situacao.choices, blank=True, null=True)
-    registro_precos = models.BooleanField(default=False)
-    valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     
+    # Relação Many-to-Many com o catálogo de Fornecedores
+    fornecedores_participantes = models.ManyToManyField(Fornecedor, related_name='processos_participados', blank=True)
+
     def __str__(self):
         return self.numero_processo
     
     class Meta:
-        verbose_name = "Processo Licitatório"
-        verbose_name_plural = "Processos Licitatórios"
         ordering = ['-data_processo']
 
 class ItemProcesso(models.Model):
-    """ Guarda os itens associados a um processo licitatório. """
     processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
     descricao = models.CharField(max_length=255)
     especificacao = models.TextField(blank=True, null=True)
@@ -109,17 +105,3 @@ class ItemProcesso(models.Model):
 
     def __str__(self):
         return self.descricao
-
-class FornecedorProcesso(models.Model):
-    """ Guarda os fornecedores associados a um processo licitatório. """
-    processo = models.ForeignKey(ProcessoLicitatorio, related_name='fornecedores', on_delete=models.CASCADE)
-    nome = models.CharField(max_length=255)
-    cnpj = models.CharField(max_length=18)
-    telefone = models.CharField(max_length=20, blank=True, null=True)
-    email = models.EmailField(blank=True, null=True)
-
-    class Meta:
-        ordering = ['nome']
-
-    def __str__(self):
-        return self.nome
