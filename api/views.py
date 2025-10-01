@@ -61,10 +61,10 @@ class ProcessoViewSet(viewsets.ModelViewSet):
     """
     ViewSet principal para Processos Licitatórios, com filtros avançados.
     """
-    queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__entidade').all().order_by('-data_cadastro')
+    queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__entidade').all().order_by('-data_processo')
     serializer_class = ProcessoSerializer
     filter_backends = [DjangoFilterBackend]
-    # Usa a classe de filtro customizada para permitir a busca em múltiplos campos
+
     filterset_class = ProcessoFilter
 
 
