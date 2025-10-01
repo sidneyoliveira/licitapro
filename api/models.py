@@ -4,8 +4,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 
-# --- MODELOS BASE ---
-
+# --- MODELOS BASE (sem alterações) ---
 class CustomUser(AbstractUser):
     cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
     data_nascimento = models.DateField(null=True, blank=True)
@@ -26,7 +25,6 @@ class Orgao(models.Model):
         return f"{self.nome} ({self.entidade.nome})"
 
 class Fornecedor(models.Model):
-    """ Este é o nosso catálogo geral de fornecedores, reutilizável em vários processos. """
     razao_social = models.CharField(max_length=255)
     cnpj = models.CharField(max_length=18, unique=True)
     email = models.EmailField(blank=True, null=True)
@@ -34,7 +32,7 @@ class Fornecedor(models.Model):
     def __str__(self):
         return self.razao_social
 
-# --- MODELOS DO PROCESSO ---
+# --- MODELOS DO PROCESSO (corrigidos) ---
 
 class ProcessoLicitatorio(models.Model):
     class Modalidade(models.TextChoices):
@@ -67,15 +65,15 @@ class ProcessoLicitatorio(models.Model):
     # --- CAMPOS OBRIGATÓRIOS ---
     objeto = models.TextField()
     numero_processo = models.CharField(max_length=50)
-    data_processo = models.DateField()
+    data_processo = models.DateField(verbose_name="Data do Processo") # A única data obrigatória
     modalidade = models.CharField(max_length=50, choices=Modalidade.choices)
     classificacao = models.CharField(max_length=50, choices=Classificacao.choices)
     orgao = models.ForeignKey(Orgao, on_delete=models.PROTECT, related_name="processos")
     tipo_organizacao = models.CharField(max_length=10, choices=Organizacao.choices)
     registro_precos = models.BooleanField(default=False)
 
-    # --- CAMPO AUTOMÁTICO ---
-    data_cadastro_sistema = models.DateField(auto_now_add=True)
+    # --- CAMPO AUTOMÁTICO (para referência interna) ---
+    data_criacao_sistema = models.DateTimeField(auto_now_add=True)
     
     # --- CAMPOS OPCIONAIS ---
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
@@ -83,8 +81,6 @@ class ProcessoLicitatorio(models.Model):
     valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
     situacao = models.CharField(max_length=50, choices=Situacao.choices, blank=True, null=True)
-    
-    # Relação Many-to-Many com o catálogo de Fornecedores
     fornecedores_participantes = models.ManyToManyField(Fornecedor, related_name='processos_participados', blank=True)
 
     def __str__(self):
