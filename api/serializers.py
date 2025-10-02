@@ -6,7 +6,6 @@ from .models import (
     ProcessoLicitatorio, Orgao, Fornecedor, Entidade, CustomUser, ItemProcesso, ItemCatalogo
 )
 
-# --- SERIALIZER CUSTOMIZADO PARA O TOKEN (ESTAVA EM FALTA) ---
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
     Serializer customizado para o token JWT.
@@ -21,7 +20,6 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
         token['first_name'] = user.first_name
         return token
 
-# --- SEUS OUTROS SERIALIZERS ---
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
@@ -46,9 +44,14 @@ class OrgaoSerializer(serializers.ModelSerializer):
         fields = ['id', 'nome', 'entidade', 'entidade_nome']
 
 class ItemProcessoSerializer(serializers.ModelSerializer):
+    descricao = serializers.CharField(source='item_catalogo.descricao', read_only=True)
+    unidade = serializers.CharField(source='item_catalogo.unidade', read_only=True)
+    especificacao = serializers.CharField(source='item_catalogo.especificacao', read_only=True)
+    
     class Meta:
         model = ItemProcesso
-        fields = '__all__'
+        # Adicionado o campo 'ordem'
+        fields = ['id', 'processo', 'item_catalogo', 'quantidade', 'ordem', 'descricao', 'unidade', 'especificacao']
 
 class ProcessoSerializer(serializers.ModelSerializer):
     itens = ItemProcessoSerializer(many=True, read_only=True)
@@ -65,15 +68,6 @@ class ItemCatalogoSerializer(serializers.ModelSerializer):
         model = ItemCatalogo
         fields = '__all__'
 
-class ItemProcessoSerializer(serializers.ModelSerializer):
-    # Inclui os detalhes do item do catálogo na resposta
-    descricao = serializers.CharField(source='item_catalogo.descricao', read_only=True)
-    unidade = serializers.CharField(source='item_catalogo.unidade', read_only=True)
-    especificacao = serializers.CharField(source='item_catalogo.especificacao', read_only=True)
-    
-    class Meta:
-        model = ItemProcesso
-        fields = ['id', 'processo', 'item_catalogo', 'quantidade', 'descricao', 'unidade', 'especificacao']
 
 class ProcessoSerializer(serializers.ModelSerializer):
 

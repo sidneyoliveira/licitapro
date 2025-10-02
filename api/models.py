@@ -103,6 +103,7 @@ class ItemProcesso(models.Model):
     processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens_do_processo', on_delete=models.CASCADE)
     item_catalogo = models.ForeignKey(ItemCatalogo, related_name='nos_processos', on_delete=models.PROTECT)
     quantidade = models.DecimalField(max_digits=10, decimal_places=2)
+    ordem = models.PositiveIntegerField(default=0)
 
     class Meta:
         # Garante que não podemos adicionar o mesmo item do catálogo duas vezes no mesmo processo

@@ -104,6 +104,12 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(item_processo)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    def perform_create(self, serializer):
+        processo = serializer.validated_data['processo']
+        # Define a ordem como o próximo número disponível (o total de itens + 1)
+        ordem_max = ItemProcesso.objects.filter(processo=processo).count()
+        serializer.save(ordem=ordem_max + 1)
+
 class ProcessoViewSet(viewsets.ModelViewSet):
     """
     ViewSet principal para Processos Licitatórios.
@@ -170,3 +176,26 @@ class DashboardStatsView(APIView):
             'total_orgaos': total_orgaos,
         }
         return Response(data)
+    
+class ReorderItensView(APIView):
+    """
+    View para receber uma lista de IDs de itens e reordená-los.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        item_ids = request.data.get('item_ids', [])
+        
+        if not isinstance(item_ids, list):
+            return Response({"error": "O corpo do pedido deve conter uma lista de 'item_ids'."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        for index, item_id in enumerate(item_ids):
+            try:
+                item = ItemProcesso.objects.get(id=item_id)
+                item.ordem = index + 1
+                item.save()
+            except ItemProcesso.DoesNotExist:
+                # Ignora IDs que não existem, mas continua a reordenar os outros
+                continue
+        
+        return Response({"status": "Itens reordenados com sucesso."}, status=status.HTTP_200_OK)

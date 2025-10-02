@@ -8,7 +8,7 @@ from .views import (
     ProcessoViewSet, OrgaoViewSet, FornecedorViewSet, EntidadeViewSet,
     ItemProcessoViewSet, ItemCatalogoViewSet, # Adicione ItemCatalogoViewSet aqui
     CreateUserView, ManageUserView, DashboardStatsView,
-    MyTokenObtainPairView
+    MyTokenObtainPairView, ReorderItensView
 )
 
 router = DefaultRouter()
@@ -26,4 +26,6 @@ urlpatterns = [
     path('me/', ManageUserView.as_view(), name='me'),
     path('token/', MyTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('reorder-itens/', ReorderItensView.as_view(), name='reorder-itens'),
+    path('dashboard-stats/', DashboardStatsView.as_view(), name='dashboard_stats'),
 ]
