@@ -22,8 +22,7 @@ router.register(r'processos', ProcessoViewSet, basename='processo')
 router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'orgaos', OrgaoViewSet, basename='orgao')
 router.register(r'entidades', EntidadeViewSet, basename='entidade')
-router.register(r'itens', ItemProcessoViewSet, basename='itemprocesso')
-router.register(r'catalogo-itens', ItemCatalogoViewSet, basename='itemcatalogo')
+router.register(r'itens', ItemProcessoViewSet, basename='item')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -33,3 +32,15 @@ urlpatterns = [
     path('token/', MyTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]
+
+# backend/api/urls.py
+
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenRefreshView
+
+from .views import (
+    ProcessoViewSet, OrgaoViewSet, FornecedorViewSet, EntidadeViewSet,
+    ItemProcessoViewSet, CreateUserView, ManageUserView, DashboardStatsView,
+    MyTokenObtainPairView
+)

@@ -76,7 +76,7 @@ class ItemProcessoSerializer(serializers.ModelSerializer):
         fields = ['id', 'processo', 'item_catalogo', 'quantidade', 'descricao', 'unidade', 'especificacao']
 
 class ProcessoSerializer(serializers.ModelSerializer):
-    # Renomeado o 'related_name' para 'itens_do_processo' para maior clareza
+
     itens_do_processo = ItemProcessoSerializer(many=True, read_only=True)
     fornecedores_participantes = FornecedorSerializer(many=True, read_only=True)
     orgao_nome = serializers.CharField(source='orgao.nome', read_only=True)
