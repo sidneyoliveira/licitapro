@@ -3,7 +3,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
-    ProcessoLicitatorio, Orgao, Fornecedor, Entidade, CustomUser, ItemProcesso
+    ProcessoLicitatorio, Orgao, Fornecedor, Entidade, CustomUser, ItemProcesso, ItemCatalogo
 )
 
 # --- SERIALIZER CUSTOMIZADO PARA O TOKEN (ESTAVA EM FALTA) ---
@@ -52,6 +52,32 @@ class ItemProcessoSerializer(serializers.ModelSerializer):
 
 class ProcessoSerializer(serializers.ModelSerializer):
     itens = ItemProcessoSerializer(many=True, read_only=True)
+    fornecedores_participantes = FornecedorSerializer(many=True, read_only=True)
+    orgao_nome = serializers.CharField(source='orgao.nome', read_only=True)
+    entidade_nome = serializers.CharField(source='orgao.entidade.nome', read_only=True)
+
+    class Meta:
+        model = ProcessoLicitatorio
+        fields = '__all__'
+
+class ItemCatalogoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ItemCatalogo
+        fields = '__all__'
+
+class ItemProcessoSerializer(serializers.ModelSerializer):
+    # Inclui os detalhes do item do catálogo na resposta
+    descricao = serializers.CharField(source='item_catalogo.descricao', read_only=True)
+    unidade = serializers.CharField(source='item_catalogo.unidade', read_only=True)
+    especificacao = serializers.CharField(source='item_catalogo.especificacao', read_only=True)
+    
+    class Meta:
+        model = ItemProcesso
+        fields = ['id', 'processo', 'item_catalogo', 'quantidade', 'descricao', 'unidade', 'especificacao']
+
+class ProcessoSerializer(serializers.ModelSerializer):
+    # Renomeado o 'related_name' para 'itens_do_processo' para maior clareza
+    itens_do_processo = ItemProcessoSerializer(many=True, read_only=True)
     fornecedores_participantes = FornecedorSerializer(many=True, read_only=True)
     orgao_nome = serializers.CharField(source='orgao.nome', read_only=True)
     entidade_nome = serializers.CharField(source='orgao.entidade.nome', read_only=True)

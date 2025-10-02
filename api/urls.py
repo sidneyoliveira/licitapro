@@ -13,7 +13,8 @@ from .views import (
     CreateUserView, 
     ManageUserView, 
     DashboardStatsView,
-    MyTokenObtainPairView
+    MyTokenObtainPairView,
+    ItemCatalogoViewSet
 )
 
 router = DefaultRouter()
@@ -21,8 +22,8 @@ router.register(r'processos', ProcessoViewSet, basename='processo')
 router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'orgaos', OrgaoViewSet, basename='orgao')
 router.register(r'entidades', EntidadeViewSet, basename='entidade')
-router.register(r'itens', ItemProcessoViewSet, basename='item')
-# A linha que registava 'fornecedores-processo' foi removida.
+router.register(r'itens', ItemProcessoViewSet, basename='itemprocesso')
+router.register(r'catalogo-itens', ItemCatalogoViewSet, basename='itemcatalogo')
 
 urlpatterns = [
     path('', include(router.urls)),

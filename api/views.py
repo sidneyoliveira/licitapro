@@ -10,11 +10,11 @@ from rest_framework.filters import SearchFilter # 1. Importe o SearchFilter
 
 from .models import (
     ProcessoLicitatorio, Orgao, Fornecedor, Entidade, 
-    CustomUser, ItemProcesso
+    CustomUser, ItemProcesso, ItemCatalogo
 )
 from .serializers import (
     ProcessoSerializer, OrgaoSerializer, FornecedorSerializer, EntidadeSerializer, 
-    UserSerializer, ItemProcessoSerializer, MyTokenObtainPairSerializer
+    UserSerializer, ItemProcessoSerializer, MyTokenObtainPairSerializer, ItemCatalogoSerializer
 )
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .filters import ProcessoFilter
@@ -105,3 +105,17 @@ class DashboardStatsView(APIView):
             'total_orgaos': total_orgaos,
         }
         return Response(data)
+    
+class ItemCatalogoViewSet(viewsets.ModelViewSet):
+    """ ViewSet para o catálogo geral de itens, com pesquisa. """
+    queryset = ItemCatalogo.objects.all()
+    serializer_class = ItemCatalogoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [SearchFilter]
+    search_fields = ['descricao', 'especificacao']
+
+class ItemProcessoViewSet(viewsets.ModelViewSet):
+    queryset = ItemProcesso.objects.all()
+    serializer_class = ItemProcessoSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['processo']

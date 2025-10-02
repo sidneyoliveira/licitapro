@@ -4,7 +4,6 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 
-# --- MODELOS BASE (sem alterações) ---
 class CustomUser(AbstractUser):
     cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
     data_nascimento = models.DateField(null=True, blank=True)
@@ -32,8 +31,18 @@ class Fornecedor(models.Model):
     def __str__(self):
         return self.razao_social
 
-# --- MODELOS DO PROCESSO (corrigidos) ---
+class ItemCatalogo(models.Model):
 
+    descricao = models.CharField(max_length=255, unique=True)
+    especificacao = models.TextField(blank=True, null=True)
+    unidade = models.CharField(max_length=20)
+
+    class Meta:
+        ordering = ['descricao']
+
+    def __str__(self):
+        return self.descricao
+    
 class ProcessoLicitatorio(models.Model):
     class Modalidade(models.TextChoices):
         PREGAO_ELETRONICO = 'Pregão Eletrônico'
@@ -90,14 +99,15 @@ class ProcessoLicitatorio(models.Model):
         ordering = ['-data_processo']
 
 class ItemProcesso(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
-    descricao = models.CharField(max_length=255)
-    especificacao = models.TextField(blank=True, null=True)
-    unidade = models.CharField(max_length=20)
+ 
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens_do_processo', on_delete=models.CASCADE)
+    item_catalogo = models.ForeignKey(ItemCatalogo, related_name='nos_processos', on_delete=models.PROTECT)
     quantidade = models.DecimalField(max_digits=10, decimal_places=2)
 
     class Meta:
+        # Garante que não podemos adicionar o mesmo item do catálogo duas vezes no mesmo processo
+        unique_together = ('processo', 'item_catalogo')
         ordering = ['id']
 
     def __str__(self):
-        return self.descricao
+        return f"{self.item_catalogo.descricao} no processo {self.processo.numero_processo}"
