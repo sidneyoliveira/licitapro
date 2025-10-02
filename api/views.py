@@ -6,7 +6,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter # 1. Importe o SearchFilter
+from rest_framework.filters import SearchFilter
+from django.db import IntegrityError
 
 from .models import (
     ProcessoLicitatorio, Orgao, Fornecedor, Entidade, 
@@ -19,39 +20,100 @@ from .serializers import (
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .filters import ProcessoFilter
 
-
 class MyTokenObtainPairView(TokenObtainPairView):
+    """
+    Usa o serializer customizado para incluir os dados do utilizador no token.
+    """
     serializer_class = MyTokenObtainPairSerializer
 
 class EntidadeViewSet(viewsets.ModelViewSet):
+    """
+    API para gerir Entidades. Permite CRUD completo.
+    """
     queryset = Entidade.objects.all().order_by('nome')
     serializer_class = EntidadeSerializer
+    permission_classes = [IsAuthenticated]
 
 class OrgaoViewSet(viewsets.ModelViewSet):
+    """
+    API para gerir Órgãos, com filtro por entidade.
+    """
     queryset = Orgao.objects.all().order_by('nome')
     serializer_class = OrgaoSerializer
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['entidade']
 
 class FornecedorViewSet(viewsets.ModelViewSet):
-    """ ViewSet para o catálogo geral de fornecedores, agora com pesquisa. """
+    """ 
+    ViewSet para o catálogo geral de fornecedores, com pesquisa. 
+    """
     queryset = Fornecedor.objects.all()
     serializer_class = FornecedorSerializer
-    # 2. Adicione o SearchFilter e defina os campos de pesquisa
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['razao_social', 'cnpj']
 
+class ItemCatalogoViewSet(viewsets.ModelViewSet):
+    """ 
+    ViewSet para o catálogo geral de itens, com pesquisa. 
+    """
+    queryset = ItemCatalogo.objects.all()
+    serializer_class = ItemCatalogoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [SearchFilter]
+    search_fields = ['descricao', 'especificacao']
+
 class ItemProcessoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gerir a ligação entre um Processo e um Item do Catálogo.
+    """
     queryset = ItemProcesso.objects.all()
     serializer_class = ItemProcessoSerializer
-    filter_backends = [DjangoFilterBackend]
+    permission_classes = [IsAuthenticated]
     filterset_fields = ['processo']
 
+    def create(self, request, *args, **kwargs):
+        # Lógica inteligente para o cadastro manual de itens.
+        descricao = request.data.get('descricao')
+        unidade = request.data.get('unidade')
+        especificacao = request.data.get('especificacao', '')
+        processo_id = request.data.get('processo')
+        quantidade = request.data.get('quantidade')
+
+        if not all([descricao, unidade, processo_id, quantidade]):
+            return Response({'error': 'Todos os campos obrigatórios devem ser fornecidos.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Procura por um item no catálogo. Se não existir, cria um novo.
+        item_catalogo, created = ItemCatalogo.objects.get_or_create(
+            descricao=descricao,
+            unidade=unidade,
+            defaults={'especificacao': especificacao}
+        )
+
+        # Cria a ligação entre o processo e o item do catálogo.
+        try:
+            item_processo = ItemProcesso.objects.create(
+                processo_id=processo_id,
+                item_catalogo=item_catalogo,
+                quantidade=quantidade
+            )
+        except IntegrityError:
+            return Response({'error': 'Este item já foi adicionado a este processo.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = self.get_serializer(item_processo)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
 class ProcessoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet principal para Processos Licitatórios.
+    """
     queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__entidade').all().order_by('-data_processo')
     serializer_class = ProcessoSerializer
-    filter_backends = [DjangoFilterBackend]
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = ProcessoFilter
+    search_fields = ['numero_processo', 'objeto']
 
     @action(detail=True, methods=['post'])
     def adicionar_fornecedor(self, request, pk=None):
@@ -80,17 +142,20 @@ class ProcessoViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Fornecedor não encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
 class CreateUserView(generics.CreateAPIView):
+    """ Permite o registo de novos utilizadores. """
     queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
 
 class ManageUserView(generics.RetrieveUpdateAPIView):
+    """ Permite que um utilizador autenticado veja e atualize o seu perfil. """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
     def get_object(self):
         return self.request.user
 
 class DashboardStatsView(APIView):
+    """ Fornece estatísticas para a página inicial. """
     permission_classes = [IsAuthenticated]
     def get(self, request, format=None):
         total_processos = ProcessoLicitatorio.objects.count()
@@ -105,17 +170,3 @@ class DashboardStatsView(APIView):
             'total_orgaos': total_orgaos,
         }
         return Response(data)
-    
-class ItemCatalogoViewSet(viewsets.ModelViewSet):
-    """ ViewSet para o catálogo geral de itens, com pesquisa. """
-    queryset = ItemCatalogo.objects.all()
-    serializer_class = ItemCatalogoSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [SearchFilter]
-    search_fields = ['descricao', 'especificacao']
-
-class ItemProcessoViewSet(viewsets.ModelViewSet):
-    queryset = ItemProcesso.objects.all()
-    serializer_class = ItemProcessoSerializer
-    permission_classes = [IsAuthenticated]
-    filterset_fields = ['processo']
