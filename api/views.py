@@ -59,12 +59,14 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """ Este método é agora chamado corretamente e define a ordem. """
         processo = serializer.validated_data['processo']
-        # Define a ordem como o próximo número disponível (o total de itens + 1)
-        ordem_max = ItemProcesso.objects.filter(processo=processo).count()
-        serializer.save(ordem=ordem_max + 1)
+        try:
+            ordem_max = ItemProcesso.objects.filter(processo=processo).latest('ordem').ordem
+            serializer.save(ordem=ordem_max + 1)
+        except ItemProcesso.DoesNotExist:
+            serializer.save(ordem=1)
 
     def create(self, request, *args, **kwargs):
-        """ Sobrescrevemos o create para lidar com a lógica do catálogo de itens. """
+        """ Sobrescreve o create para lidar com a lógica do catálogo de itens. """
         descricao = request.data.get('descricao')
         unidade = request.data.get('unidade')
         especificacao = request.data.get('especificacao', '')
@@ -74,14 +76,12 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
         if not all([descricao, unidade, processo_id, quantidade]):
             return Response({'error': 'Todos os campos obrigatórios devem ser fornecidos.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Lógica inteligente: Procura por um item no catálogo. Se não existir, cria um novo.
         item_catalogo, created = ItemCatalogo.objects.get_or_create(
             descricao=descricao,
             unidade=unidade,
             defaults={'especificacao': especificacao}
         )
         
-        # Prepara os dados para o serializer, incluindo o ID do item do catálogo
         data = {
             'processo': processo_id,
             'item_catalogo': item_catalogo.id,
@@ -91,13 +91,12 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=data)
         try:
             serializer.is_valid(raise_exception=True)
-            # Chama a lógica padrão para salvar, que por sua vez irá chamar o perform_create
             self.perform_create(serializer)
             headers = self.get_success_headers(serializer.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
         except IntegrityError:
              return Response({'error': 'Este item já foi adicionado a este processo.'}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
+        except Exception:
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
