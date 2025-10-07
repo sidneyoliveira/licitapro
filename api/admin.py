@@ -20,7 +20,6 @@ class ItemCatalogoAdmin(admin.ModelAdmin):
     list_display = ('descricao', 'unidade', 'especificacao')
     search_fields = ('descricao', 'especificacao')
 
-@admin.register(ItemProcesso)
 class ItemProcessoAdmin(admin.ModelAdmin):
     list_display = ('id', 'processo', 'item_catalogo', 'quantidade', 'ordem')
     list_filter = ('processo',)
