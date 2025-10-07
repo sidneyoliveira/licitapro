@@ -27,17 +27,11 @@ class MyTokenObtainPairView(TokenObtainPairView):
     serializer_class = MyTokenObtainPairSerializer
 
 class EntidadeViewSet(viewsets.ModelViewSet):
-    """
-    API para gerir Entidades. Permite CRUD completo.
-    """
     queryset = Entidade.objects.all().order_by('nome')
     serializer_class = EntidadeSerializer
     permission_classes = [IsAuthenticated]
 
 class OrgaoViewSet(viewsets.ModelViewSet):
-    """
-    API para gerir Órgãos, com filtro por entidade.
-    """
     queryset = Orgao.objects.all().order_by('nome')
     serializer_class = OrgaoSerializer
     permission_classes = [IsAuthenticated]
@@ -45,9 +39,6 @@ class OrgaoViewSet(viewsets.ModelViewSet):
     filterset_fields = ['entidade']
 
 class FornecedorViewSet(viewsets.ModelViewSet):
-    """ 
-    ViewSet para o catálogo geral de fornecedores, com pesquisa. 
-    """
     queryset = Fornecedor.objects.all()
     serializer_class = FornecedorSerializer
     permission_classes = [IsAuthenticated]
@@ -55,9 +46,6 @@ class FornecedorViewSet(viewsets.ModelViewSet):
     search_fields = ['razao_social', 'cnpj']
 
 class ItemCatalogoViewSet(viewsets.ModelViewSet):
-    """ 
-    ViewSet para o catálogo geral de itens, com pesquisa. 
-    """
     queryset = ItemCatalogo.objects.all()
     serializer_class = ItemCatalogoSerializer
     permission_classes = [IsAuthenticated]
@@ -65,16 +53,12 @@ class ItemCatalogoViewSet(viewsets.ModelViewSet):
     search_fields = ['descricao', 'especificacao']
 
 class ItemProcessoViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet para gerir a ligação entre um Processo e um Item do Catálogo.
-    """
     queryset = ItemProcesso.objects.all()
     serializer_class = ItemProcessoSerializer
     permission_classes = [IsAuthenticated]
     filterset_fields = ['processo']
 
     def perform_create(self, serializer):
-        """ Este método é agora chamado corretamente e define a ordem. """
         processo = serializer.validated_data['processo']
         try:
             ordem_max = ItemProcesso.objects.filter(processo=processo).latest('ordem').ordem
@@ -83,7 +67,6 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
             serializer.save(ordem=1)
 
     def create(self, request, *args, **kwargs):
-        """ Sobrescreve o create para lidar com a lógica do catálogo de itens. """
         descricao = request.data.get('descricao')
         unidade = request.data.get('unidade')
         especificacao = request.data.get('especificacao', '')
@@ -93,7 +76,6 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
         if not all([descricao, unidade, processo_id, quantidade]):
             return Response({'error': 'Todos os campos obrigatórios devem ser fornecidos.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Lógica inteligente: Procura por um item no catálogo. Se não existir, cria um novo.
         item_catalogo, created = ItemCatalogo.objects.get_or_create(
             descricao=descricao,
             unidade=unidade,
@@ -119,9 +101,6 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
 
 
 class ReorderItensView(APIView):
-    """
-    View para receber uma lista de IDs de itens e reordená-los.
-    """
     permission_classes = [IsAuthenticated]
     def post(self, request, *args, **kwargs):
         item_ids = request.data.get('item_ids', [])
@@ -137,9 +116,6 @@ class ReorderItensView(APIView):
         return Response({"status": "Itens reordenados com sucesso."}, status=status.HTTP_200_OK)
 
 class ProcessoViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet principal para Processos Licitatórios.
-    """
     queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__entidade').all().order_by('-data_processo')
     serializer_class = ProcessoSerializer
     permission_classes = [IsAuthenticated]
@@ -174,20 +150,17 @@ class ProcessoViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Fornecedor não encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
 class CreateUserView(generics.CreateAPIView):
-    """ Permite o registo de novos utilizadores. """
     queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
 
 class ManageUserView(generics.RetrieveUpdateAPIView):
-    """ Permite que um utilizador autenticado veja e atualize o seu perfil. """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
     def get_object(self):
         return self.request.user
 
 class DashboardStatsView(APIView):
-    """ Fornece estatísticas para a página inicial. """
     permission_classes = [IsAuthenticated]
     def get(self, request, format=None):
         total_processos = ProcessoLicitatorio.objects.count()
@@ -202,4 +175,3 @@ class DashboardStatsView(APIView):
             'total_orgaos': total_orgaos,
         }
         return Response(data)
-

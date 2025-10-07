@@ -4,19 +4,15 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from .views import (
-    ProcessoViewSet, OrgaoViewSet, FornecedorViewSet, EntidadeViewSet,
-    ItemProcessoViewSet, ItemCatalogoViewSet, CreateUserView, ManageUserView, 
-    DashboardStatsView, MyTokenObtainPairView, ReorderItensView
-)
+from .views import *
 
 router = DefaultRouter()
 router.register(r'processos', ProcessoViewSet, basename='processo')
-router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
-router.register(r'orgaos', OrgaoViewSet, basename='orgao')
 router.register(r'entidades', EntidadeViewSet, basename='entidade')
-router.register(r'itens', ItemProcessoViewSet, basename='itemprocesso')
-router.register(r'catalogo-itens', ItemCatalogoViewSet, basename='itemcatalogo')
+router.register(r'orgaos', OrgaoViewSet, basename='orgao')
+router.register(r'itens', ItemProcessoViewSet, basename='item')
+router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
+
 
 urlpatterns = [
     path('', include(router.urls)),
