@@ -4,60 +4,36 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 
-# --- MODELOS BASE ---
-
 class CustomUser(AbstractUser):
     cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
     data_nascimento = models.DateField(null=True, blank=True)
+    # Mantém os relacionamentos padrão de grupos/perms sem conflito
     groups = models.ManyToManyField('auth.Group', related_name='customuser_set', blank=True)
     user_permissions = models.ManyToManyField('auth.Permission', related_name='customuser_set', blank=True)
+
+    def __str__(self):
+        return self.get_full_name() or self.username
+
 
 class Entidade(models.Model):
     nome = models.CharField(max_length=200, unique=True)
     cnpj = models.CharField(max_length=18, unique=True, null=True, blank=True)
     ano = models.IntegerField(default=timezone.now().year, verbose_name="Ano de Exercício")
+
     def __str__(self):
         return f"{self.nome} ({self.ano})"
+
 
 class Orgao(models.Model):
     nome = models.CharField(max_length=255)
     entidade = models.ForeignKey(Entidade, related_name='orgaos', on_delete=models.CASCADE)
-    def __str__(self):
-        return f"{self.nome} ({self.entidade.nome})"
-
-class Fornecedor(models.Model):
-    """ Este é o nosso catálogo geral de fornecedores, reutilizável em vários processos. """
-    razao_social = models.CharField(max_length=255)
-    cnpj = models.CharField(max_length=18, unique=True)
-    email = models.EmailField(blank=True, null=True)
-    telefone = models.CharField(max_length=20, blank=True, null=True)
-    
-    class Meta:
-        ordering = ['razao_social']
-    
-    def __str__(self):
-        return self.razao_social
-
-# --- MODELO DO CATÁLOGO DE ITENS (ESTAVA EM FALTA) ---
-
-class ItemCatalogo(models.Model):
-    """ Este é o nosso catálogo mestre de itens reutilizáveis. """
-    descricao = models.CharField(max_length=1000)
-    especificacao = models.TextField(blank=True, null=True)
-    unidade = models.CharField(max_length=20)
-
-    class Meta:
-        ordering = ['descricao']
-        # Garante que a combinação de descrição e unidade seja única.
-        unique_together = ('descricao', 'unidade')
 
     def __str__(self):
-        return f"{self.descricao} ({self.unidade})"
+        return f"{self.nome} - {self.entidade.nome}"
 
-
-# --- MODELOS DO PROCESSO ---
 
 class ProcessoLicitatorio(models.Model):
+    # enums
     class Modalidade(models.TextChoices):
         PREGAO_ELETRONICO = 'Pregão Eletrônico'
         CONCORRENCIA_ELETRONICA = 'Concorrência Eletrônica'
@@ -85,7 +61,7 @@ class ProcessoLicitatorio(models.Model):
         LOTE = 'Lote'
         ITEM = 'Item'
 
-    # --- CAMPOS OBRIGATÓRIOS ---
+    # Campos
     objeto = models.TextField()
     numero_processo = models.CharField(max_length=50)
     data_processo = models.DateField()
@@ -94,34 +70,76 @@ class ProcessoLicitatorio(models.Model):
     orgao = models.ForeignKey(Orgao, on_delete=models.PROTECT, related_name="processos")
     tipo_organizacao = models.CharField(max_length=10, choices=Organizacao.choices)
     registro_precos = models.BooleanField(default=False)
-    situacao = models.CharField(max_length=50, choices=Situacao.choices, default='Em Pesquisa')
+    situacao = models.CharField(max_length=50, choices=Situacao.choices, default=Situacao.EM_PESQUISA)
 
-    # --- CAMPO AUTOMÁTICO ---
+    # automáticos / opcionais
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
-    
-    # --- CAMPOS OPCIONAIS ---
     valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
     data_abertura = models.DateTimeField(null=True, blank=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
-    
-    # Relação Many-to-Many com o catálogo de Fornecedores
-    fornecedores_participantes = models.ManyToManyField(Fornecedor, related_name='processos_participados', blank=True)
 
-    def __str__(self):
-        return self.numero_processo
-    
     class Meta:
         ordering = ['-data_processo']
 
+    def __str__(self):
+        return f"{self.numero_processo}"
+
+
 class ItemProcesso(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens_do_processo', on_delete=models.CASCADE)
-    item_catalogo = models.ForeignKey(ItemCatalogo, related_name='nos_processos', on_delete=models.PROTECT)
-    quantidade = models.DecimalField(max_digits=10, decimal_places=2)
-    ordem = models.PositiveIntegerField(default=0)
+    """
+    Item diretamente associado a um Processo.
+    Não há catálogo: cada item pertence a um processo.
+    """
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
+    descricao = models.CharField(max_length=255)
+    especificacao = models.TextField(blank=True, null=True)
+    unidade = models.CharField(max_length=20)
+    quantidade = models.DecimalField(max_digits=12, decimal_places=4)
+    ordem = models.PositiveIntegerField(default=1)
 
     class Meta:
         ordering = ['ordem']
+        unique_together = (('processo', 'ordem'),)  # evita ordens duplicadas por processo
 
     def __str__(self):
-        return f"{self.item_catalogo.descricao} no processo {self.processo.numero_processo}"
+        return f"Item {self.id} - {self.descricao}"
+
+
+class Fornecedor(models.Model):
+    """
+    Cadastro de fornecedores no sistema (catálogo de fornecedores).
+    Fornecedor pode ser vinculado a processos posteriormente.
+    """
+    razao_social = models.CharField(max_length=255)
+    cnpj = models.CharField(max_length=18)
+    email = models.EmailField(blank=True, null=True)
+    telefone = models.CharField(max_length=30, blank=True, null=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['razao_social']
+        unique_together = (('razao_social', 'cnpj'),)
+
+    def __str__(self):
+        return self.razao_social
+
+
+class ItemFornecedor(models.Model):
+    """
+    Tabela de ligação entre ItemProcesso e Fornecedor.
+    Prepara o sistema para quando você quiser associar cada item a um fornecedor (ou vários),
+    preços por fornecedor, lotes, etc. Não é obrigatório para cadastrar itens, mas já existe.
+    """
+    item = models.ForeignKey(ItemProcesso, related_name='fornecedores_vinculados', on_delete=models.CASCADE)
+    fornecedor = models.ForeignKey(Fornecedor, related_name='itens_cotados', on_delete=models.CASCADE)
+    preco_unitario = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    observacao = models.TextField(blank=True, null=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = (('item', 'fornecedor'),)
+        ordering = ['-criado_em']
+
+    def __str__(self):
+        return f"{self.fornecedor} -> {self.item}"

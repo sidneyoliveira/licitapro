@@ -1,57 +1,77 @@
 # backend/api/serializers.py
+
 from rest_framework import serializers
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import *
+from .models import (
+    CustomUser,
+    Entidade,
+    Orgao,
+    ProcessoLicitatorio,
+    ItemProcesso,
+    Fornecedor,
+    ItemFornecedor
+)
 
-class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
-
-    @classmethod
-    def get_token(cls, user):
-        token = super().get_token(user)
-        # Adiciona os campos customizados ao "payload" do token
-        token['username'] = user.username
-        token['email'] = user.email
-        token['first_name'] = user.first_name
-        return token
-
-class ItemCatalogoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ItemCatalogo
-        fields = '__all__'
-        
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'password', 'first_name', 'last_name']
-        extra_kwargs = {'password': {'write_only': True}}
+        fields = ['id', 'username', 'email', 'first_name', 'last_name']
+        read_only_fields = ['id']
+
 
 class EntidadeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Entidade
         fields = '__all__'
+        read_only_fields = ['id']
+
 
 class OrgaoSerializer(serializers.ModelSerializer):
     entidade_nome = serializers.CharField(source='entidade.nome', read_only=True)
+
     class Meta:
         model = Orgao
         fields = '__all__'
+        read_only_fields = ['id', 'entidade_nome']
+
 
 class ItemProcessoSerializer(serializers.ModelSerializer):
+    processo = serializers.PrimaryKeyRelatedField(queryset=ProcessoLicitatorio.objects.all())
     class Meta:
         model = ItemProcesso
-        fields = '__all__'
+        fields = ['id', 'processo', 'descricao', 'especificacao', 'unidade', 'quantidade', 'ordem']
+        read_only_fields = ['id', 'ordem']
 
-class FornecedorProcessoSerializer(serializers.ModelSerializer):
+    def validate_quantidade(self, value):
+        if value is None or value <= 0:
+            raise serializers.ValidationError("Quantidade deve ser maior que zero.")
+        return value
+
+    def create(self, validated_data):
+        # estabelece ordem sequencial dentro do processo
+        processo = validated_data['processo']
+        max_ordem = ItemProcesso.objects.filter(processo=processo).aggregate(models.Max('ordem'))['ordem__max'] or 0
+        validated_data['ordem'] = max_ordem + 1
+        return super().create(validated_data)
+
+
+class FornecedorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Fornecedor
-        fields = '__all__'
+        fields = ['id', 'razao_social', 'cnpj', 'email', 'telefone', 'criado_em']
+        read_only_fields = ['id', 'criado_em']
 
-class ProcessoSerializer(serializers.ModelSerializer):
-    itens = ItemProcessoSerializer(many=True, read_only=True)
-    fornecedores = FornecedorProcessoSerializer(many=True, read_only=True)
-    orgao_nome = serializers.CharField(source='orgao.nome', read_only=True)
-    entidade_nome = serializers.CharField(source='orgao.entidade.nome', read_only=True)
-    
+    def validate(self, attrs):
+        # validações mínimas: cnpj + razao
+        if not attrs.get('razao_social') or not attrs.get('cnpj'):
+            raise serializers.ValidationError("Razão social e CNPJ são obrigatórios.")
+        return attrs
+
+
+class ItemFornecedorSerializer(serializers.ModelSerializer):
+    item = serializers.PrimaryKeyRelatedField(queryset=ItemProcesso.objects.all())
+    fornecedor = serializers.PrimaryKeyRelatedField(queryset=Fornecedor.objects.all())
+
     class Meta:
-        model = ProcessoLicitatorio
-        fields = '__all__'
+        model = ItemFornecedor
+        fields = ['id', 'item', 'fornecedor', 'preco_unitario', 'observacao', 'criado_em']
+        read_only_fields = ['id', 'criado_em']
