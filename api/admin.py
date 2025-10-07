@@ -1,15 +1,13 @@
 # backend/api/admin.py
 
 from django.contrib import admin
-from .models import CustomUser, Entidade, Orgao, Fornecedor, ProcessoLicitatorio, ItemProcesso, ItemCatalogo
+from .models import CustomUser, Entidade, Orgao, ProcessoLicitatorio, ItemProcesso, ItemCatalogo
 
 # Registos básicos que já tínhamos
 admin.site.register(CustomUser)
 admin.site.register(Entidade)
 admin.site.register(Orgao)
-admin.site.register(Fornecedor)
 admin.site.register(ProcessoLicitatorio)
-admin.site.register(ItemCatalogo)
 
 # --- CORREÇÃO APLICADA AQUI ---
 # Criamos uma classe de administração customizada para o ItemProcesso
