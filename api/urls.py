@@ -6,9 +6,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
     ProcessoViewSet, OrgaoViewSet, FornecedorViewSet, EntidadeViewSet,
-    ItemProcessoViewSet, ItemCatalogoViewSet, # Adicione ItemCatalogoViewSet aqui
-    CreateUserView, ManageUserView, DashboardStatsView,
-    MyTokenObtainPairView, ReorderItensView
+    ItemProcessoViewSet, ItemCatalogoViewSet, CreateUserView, ManageUserView, 
+    DashboardStatsView, MyTokenObtainPairView, ReorderItensView
 )
 
 router = DefaultRouter()
@@ -21,11 +20,10 @@ router.register(r'catalogo-itens', ItemCatalogoViewSet, basename='itemcatalogo')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('reorder-itens/', ReorderItensView.as_view(), name='reorder-itens'),
     path('dashboard-stats/', DashboardStatsView.as_view(), name='dashboard_stats'),
     path('register/', CreateUserView.as_view(), name='register'),
     path('me/', ManageUserView.as_view(), name='me'),
     path('token/', MyTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('reorder-itens/', ReorderItensView.as_view(), name='reorder-itens'),
-    path('dashboard-stats/', DashboardStatsView.as_view(), name='dashboard_stats'),
 ]
