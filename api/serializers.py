@@ -10,6 +10,7 @@ from .models import (
     Fornecedor,
     ItemFornecedor
 )
+from django.db import models
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
