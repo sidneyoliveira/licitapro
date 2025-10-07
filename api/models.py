@@ -23,14 +23,6 @@ class Orgao(models.Model):
     def __str__(self):
         return f"{self.nome} ({self.entidade.nome})"
 
-class Fornecedor(models.Model):
-    razao_social = models.CharField(max_length=255)
-    cnpj = models.CharField(max_length=18, unique=True)
-    email = models.EmailField(blank=True, null=True)
-    telefone = models.CharField(max_length=20, blank=True, null=True)
-    def __str__(self):
-        return self.razao_social
-
 class ProcessoLicitatorio(models.Model):
     class Modalidade(models.TextChoices):
         PREGAO_ELETRONICO = 'Pregão Eletrônico'
@@ -68,45 +60,46 @@ class ProcessoLicitatorio(models.Model):
     orgao = models.ForeignKey(Orgao, on_delete=models.PROTECT, related_name="processos")
     tipo_organizacao = models.CharField(max_length=10, choices=Organizacao.choices)
     registro_precos = models.BooleanField(default=False)
+    situacao = models.CharField(max_length=50, choices=Situacao.choices, default='Em Pesquisa')
 
     # --- CAMPO AUTOMÁTICO ---
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
     
     # --- CAMPOS OPCIONAIS ---
+    valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
     data_abertura = models.DateTimeField(null=True, blank=True)
-    valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
-    situacao = models.CharField(max_length=50, choices=Situacao.choices, blank=True, null=True)
     
-    fornecedores_participantes = models.ManyToManyField(Fornecedor, related_name='processos_participados', blank=True)
-
     def __str__(self):
         return self.numero_processo
     
     class Meta:
         ordering = ['-data_processo']
 
-class ItemCatalogo(models.Model):
-    descricao = models.CharField(max_length=255, unique=True)
+class ItemProcesso(models.Model):
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
+    descricao = models.CharField(max_length=255)
     especificacao = models.TextField(blank=True, null=True)
     unidade = models.CharField(max_length=20)
-
-    class Meta:
-        ordering = ['descricao']
-
-    def __str__(self):
-        return self.descricao
-
-class ItemProcesso(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens_do_processo', on_delete=models.CASCADE)
-    item_catalogo = models.ForeignKey(ItemCatalogo, related_name='nos_processos', on_delete=models.PROTECT)
     quantidade = models.DecimalField(max_digits=10, decimal_places=2)
     ordem = models.PositiveIntegerField(default=0)
 
     class Meta:
-        unique_together = ('processo', 'item_catalogo')
         ordering = ['ordem']
 
     def __str__(self):
-        return f"{self.item_catalogo.descricao} no processo {self.processo.numero_processo}"
+        return f"Item #{self.id} - {self.descricao}"
+
+class FornecedorProcesso(models.Model):
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='fornecedores', on_delete=models.CASCADE)
+    razao_social = models.CharField(max_length=255)
+    cnpj = models.CharField(max_length=18)
+    email = models.EmailField(blank=True, null=True)
+    telefone = models.CharField(max_length=20, blank=True, null=True)
+
+    class Meta:
+        ordering = ['razao_social']
+    
+    def __str__(self):
+        return self.razao_social

@@ -36,3 +36,4 @@ class ItemProcessoAdmin(admin.ModelAdmin):
         
         # Continua com o processo normal de salvar o objeto.
         super().save_model(request, obj, form, change)
+
