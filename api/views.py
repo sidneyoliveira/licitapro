@@ -14,7 +14,7 @@ from .models import (
     CustomUser, ItemProcesso, ItemCatalogo, Fornecedor
 )
 from .serializers import (
-    ProcessoSerializer, OrgaoSerializer, FornecedorSerializer, EntidadeSerializer, 
+    ProcessoSerializer, OrgaoSerializer, FornecedorProcessoSerializer, EntidadeSerializer, 
     UserSerializer, ItemProcessoSerializer, MyTokenObtainPairSerializer, ItemCatalogoSerializer,
     FornecedorProcessoSerializer
 )

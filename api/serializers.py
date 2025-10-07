@@ -1,7 +1,24 @@
 # backend/api/serializers.py
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import *
 
+class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
+
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        # Adiciona os campos customizados ao "payload" do token
+        token['username'] = user.username
+        token['email'] = user.email
+        token['first_name'] = user.first_name
+        return token
+
+class ItemCatalogoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ItemCatalogo
+        fields = '__all__'
+        
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
@@ -26,7 +43,7 @@ class ItemProcessoSerializer(serializers.ModelSerializer):
 
 class FornecedorProcessoSerializer(serializers.ModelSerializer):
     class Meta:
-        model = FornecedorProcesso
+        model = Fornecedor
         fields = '__all__'
 
 class ProcessoSerializer(serializers.ModelSerializer):

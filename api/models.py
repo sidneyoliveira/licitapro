@@ -42,7 +42,7 @@ class Fornecedor(models.Model):
 
 class ItemCatalogo(models.Model):
     """ Este é o nosso catálogo mestre de itens reutilizáveis. """
-    descricao = models.CharField(max_length=255)
+    descricao = models.CharField(max_length=1000)
     especificacao = models.TextField(blank=True, null=True)
     unidade = models.CharField(max_length=20)
 

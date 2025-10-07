@@ -1,14 +1,13 @@
 # backend/api/admin.py
 
 from django.contrib import admin
-# --- CORREÇÃO APLICADA AQUI: 'FornecedorProcesso' foi removido da importação ---
+
 from .models import CustomUser, Entidade, Orgao, Fornecedor, ProcessoLicitatorio, ItemProcesso, ItemCatalogo
 
-# --- CORREÇÃO APLICADA AQUI: O registo de 'FornecedorProcesso' foi removido ---
 admin.site.register(CustomUser)
 admin.site.register(Entidade)
 admin.site.register(Orgao)
-admin.site.register(Fornecedor) # Registamos o catálogo geral de Fornecedores
+admin.site.register(Fornecedor) 
 admin.site.register(ProcessoLicitatorio)
 admin.site.register(ItemCatalogo)
 
