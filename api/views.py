@@ -16,7 +16,6 @@ from .models import (
 from .serializers import (
     ProcessoSerializer, OrgaoSerializer, FornecedorProcessoSerializer, EntidadeSerializer, 
     UserSerializer, ItemProcessoSerializer, MyTokenObtainPairSerializer, ItemCatalogoSerializer,
-    FornecedorProcessoSerializer
 )
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .filters import ProcessoFilter
@@ -41,7 +40,7 @@ class OrgaoViewSet(viewsets.ModelViewSet):
 
 class FornecedorViewSet(viewsets.ModelViewSet):
     queryset = Fornecedor.objects.all()
-    serializer_class = FornecedorSerializer
+    serializer_class = FornecedorProcessoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['razao_social', 'cnpj']
