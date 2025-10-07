@@ -3,33 +3,28 @@
 from django.contrib import admin
 from .models import CustomUser, Entidade, Orgao, Fornecedor, ProcessoLicitatorio, ItemProcesso, ItemCatalogo
 
-# Register your models here.
-
-# Para permitir a gestão básica dos seus modelos na área de administração
+# Registos básicos que já tínhamos
 admin.site.register(CustomUser)
 admin.site.register(Entidade)
 admin.site.register(Orgao)
 admin.site.register(Fornecedor)
 admin.site.register(ProcessoLicitatorio)
-admin.site.register(ItemProcesso)
+admin.site.register(ItemCatalogo)
 
-# --- REGISTO DO NOVO MODELO DE CATÁLOGO ---
-# Esta linha torna o seu catálogo de itens visível e gerível na área de administração
-@admin.register(ItemCatalogo)
-class ItemCatalogoAdmin(admin.ModelAdmin):
-    list_display = ('descricao', 'unidade', 'especificacao')
-    search_fields = ('descricao', 'especificacao')
-
+# --- CORREÇÃO APLICADA AQUI ---
+# Criamos uma classe de administração customizada para o ItemProcesso
+@admin.register(ItemProcesso)
 class ItemProcessoAdmin(admin.ModelAdmin):
     list_display = ('id', 'processo', 'item_catalogo', 'quantidade', 'ordem')
     list_filter = ('processo',)
     search_fields = ('item_catalogo__descricao',)
-    
+
     def save_model(self, request, obj, form, change):
         """
-        Sobrescreve o método de salvar do admin para calcular a ordem.
+        Sobrescrevemos o método de salvar do admin.
+        Esta função é chamada sempre que um ItemProcesso é salvo através da interface de admin.
         """
-        # Se for um objeto novo (não uma edição)
+        # Se for um objeto novo (não uma edição), calculamos a ordem.
         if not obj.pk and obj.processo:
             # Encontra a ordem mais alta para os itens deste processo e adiciona 1.
             try:
