@@ -13,7 +13,13 @@ admin.site.register(Fornecedor)
 admin.site.register(ProcessoLicitatorio)
 admin.site.register(ItemProcesso)
 
-@admin.register(ItemProcesso)
+# --- REGISTO DO NOVO MODELO DE CATÁLOGO ---
+# Esta linha torna o seu catálogo de itens visível e gerível na área de administração
+@admin.register(ItemCatalogo)
+class ItemCatalogoAdmin(admin.ModelAdmin):
+    list_display = ('descricao', 'unidade', 'especificacao')
+    search_fields = ('descricao', 'especificacao')
+
 class ItemProcessoAdmin(admin.ModelAdmin):
     list_display = ('id', 'processo', 'item_catalogo', 'quantidade', 'ordem')
     list_filter = ('processo',)
