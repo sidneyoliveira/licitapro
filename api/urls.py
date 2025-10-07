@@ -11,7 +11,7 @@ router.register(r'processos', ProcessoViewSet, basename='processo')
 router.register(r'entidades', EntidadeViewSet, basename='entidade')
 router.register(r'orgaos', OrgaoViewSet, basename='orgao')
 router.register(r'itens', ItemProcessoViewSet, basename='item')
-router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
+router.register(r'fornecedores', FornecedorProcessoViewSet, basename='fornecedor')
 
 
 urlpatterns = [

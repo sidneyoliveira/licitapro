@@ -4,8 +4,6 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 
-# --- MODELOS BASE ---
-
 class CustomUser(AbstractUser):
     cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
     data_nascimento = models.DateField(null=True, blank=True)
@@ -24,35 +22,6 @@ class Orgao(models.Model):
     entidade = models.ForeignKey(Entidade, related_name='orgaos', on_delete=models.CASCADE)
     def __str__(self):
         return f"{self.nome} ({self.entidade.nome})"
-
-class Fornecedor(models.Model):
-    """ Este é o nosso catálogo geral de fornecedores, reutilizável em vários processos. """
-    razao_social = models.CharField(max_length=255)
-    cnpj = models.CharField(max_length=18, unique=True)
-    email = models.EmailField(blank=True, null=True)
-    telefone = models.CharField(max_length=20, blank=True, null=True)
-    
-    class Meta:
-        ordering = ['razao_social']
-    
-    def __str__(self):
-        return self.razao_social
-
-# --- NOVA ESTRUTURA PARA ITENS ---
-
-class ItemCatalogo(models.Model):
-    """ Este é o nosso catálogo mestre de itens reutilizáveis. """
-    descricao = models.CharField(max_length=255, unique=True)
-    especificacao = models.TextField(blank=True, null=True)
-    unidade = models.CharField(max_length=20)
-
-    class Meta:
-        ordering = ['descricao']
-
-    def __str__(self):
-        return self.descricao
-
-# --- MODELOS DO PROCESSO ---
 
 class ProcessoLicitatorio(models.Model):
     class Modalidade(models.TextChoices):
@@ -102,8 +71,6 @@ class ProcessoLicitatorio(models.Model):
     data_abertura = models.DateTimeField(null=True, blank=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
     
-    fornecedores_participantes = models.ManyToManyField(Fornecedor, related_name='processos_participados', blank=True)
-
     def __str__(self):
         return self.numero_processo
     
@@ -111,8 +78,10 @@ class ProcessoLicitatorio(models.Model):
         ordering = ['-data_processo']
 
 class ItemProcesso(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens_do_processo', on_delete=models.CASCADE)
-    item_catalogo = models.ForeignKey(ItemCatalogo, related_name='nos_processos', on_delete=models.PROTECT)
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
+    descricao = models.CharField(max_length=255)
+    especificacao = models.TextField(blank=True, null=True)
+    unidade = models.CharField(max_length=20)
     quantidade = models.DecimalField(max_digits=10, decimal_places=2)
     ordem = models.PositiveIntegerField(default=0)
 
@@ -120,5 +89,17 @@ class ItemProcesso(models.Model):
         ordering = ['ordem']
 
     def __str__(self):
-        return f"{self.item_catalogo.descricao} no processo {self.processo.numero_processo}"
+        return f"Item #{self.id} - {self.descricao}"
 
+class FornecedorProcesso(models.Model):
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='fornecedores', on_delete=models.CASCADE)
+    razao_social = models.CharField(max_length=255)
+    cnpj = models.CharField(max_length=18)
+    email = models.EmailField(blank=True, null=True)
+    telefone = models.CharField(max_length=20, blank=True, null=True)
+
+    class Meta:
+        ordering = ['razao_social']
+    
+    def __str__(self):
+        return self.razao_social

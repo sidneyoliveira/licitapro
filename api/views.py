@@ -10,12 +10,13 @@ from rest_framework.filters import SearchFilter
 from django.db import IntegrityError
 
 from .models import (
-    ProcessoLicitatorio, Orgao, Fornecedor, Entidade, 
-    CustomUser, ItemProcesso, ItemCatalogo
+    ProcessoLicitatorio, Orgao, Entidade, 
+    CustomUser, ItemProcesso, ItemCatalogo, Fornecedor
 )
 from .serializers import (
     ProcessoSerializer, OrgaoSerializer, FornecedorSerializer, EntidadeSerializer, 
-    UserSerializer, ItemProcessoSerializer, MyTokenObtainPairSerializer, ItemCatalogoSerializer
+    UserSerializer, ItemProcessoSerializer, MyTokenObtainPairSerializer, ItemCatalogoSerializer,
+    FornecedorProcessoSerializer
 )
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .filters import ProcessoFilter
@@ -65,8 +66,7 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
             serializer.save(ordem=ordem_max + 1)
         except ItemProcesso.DoesNotExist:
             serializer.save(ordem=1)
-
-    def create(self, request, *args, **kwargs):
+    def create(self, request, **kwargs):
         descricao = request.data.get('descricao')
         unidade = request.data.get('unidade')
         especificacao = request.data.get('especificacao', '')
@@ -76,7 +76,7 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
         if not all([descricao, unidade, processo_id, quantidade]):
             return Response({'error': 'Todos os campos obrigatórios devem ser fornecidos.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        item_catalogo, created = ItemCatalogo.objects.get_or_create(
+        item_catalogo, _ = ItemCatalogo.objects.get_or_create(
             descricao=descricao,
             unidade=unidade,
             defaults={'especificacao': especificacao}
@@ -98,11 +98,19 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
              return Response({'error': 'Este item já foi adicionado a este processo.'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception:
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+class FornecedorProcessoViewSet(viewsets.ModelViewSet):
+    queryset = Fornecedor.objects.all()
+    serializer_class = FornecedorProcessoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['processo']
+    search_fields = ['razao_social', 'cnpj']
 
 class ReorderItensView(APIView):
     permission_classes = [IsAuthenticated]
-    def post(self, request, *args, **kwargs):
+    def post(self, request):
         item_ids = request.data.get('item_ids', [])
         if not isinstance(item_ids, list):
             return Response({"error": "O corpo do pedido deve conter uma lista de 'item_ids'."}, status=status.HTTP_400_BAD_REQUEST)
@@ -114,6 +122,7 @@ class ReorderItensView(APIView):
             except ItemProcesso.DoesNotExist:
                 continue
         return Response({"status": "Itens reordenados com sucesso."}, status=status.HTTP_200_OK)
+        return Response({"status": "Itens reordenados com sucesso."}, status=status.HTTP_200_OK)
 
 class ProcessoViewSet(viewsets.ModelViewSet):
     queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__entidade').all().order_by('-data_processo')
@@ -123,8 +132,7 @@ class ProcessoViewSet(viewsets.ModelViewSet):
     filterset_class = ProcessoFilter
     search_fields = ['numero_processo', 'objeto']
 
-    @action(detail=True, methods=['post'])
-    def adicionar_fornecedor(self, request, pk=None):
+    def adicionar_fornecedor(self, request, **kwargs):
         processo = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
         if not fornecedor_id:
@@ -135,9 +143,9 @@ class ProcessoViewSet(viewsets.ModelViewSet):
             return Response(ProcessoSerializer(processo).data, status=status.HTTP_200_OK)
         except Fornecedor.DoesNotExist:
             return Response({'error': 'Fornecedor não encontrado'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Fornecedor não encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=True, methods=['post'])
-    def remover_fornecedor(self, request, pk=None):
+    def remover_fornecedor(self, request, **kwargs):
         processo = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
         if not fornecedor_id:
@@ -147,6 +155,7 @@ class ProcessoViewSet(viewsets.ModelViewSet):
             processo.fornecedores_participantes.remove(fornecedor)
             return Response(ProcessoSerializer(processo).data, status=status.HTTP_200_OK)
         except Fornecedor.DoesNotExist:
+            return Response({'error': 'Fornecedor não encontrado'}, status=status.HTTP_404_NOT_FOUND)
             return Response({'error': 'Fornecedor não encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
 class CreateUserView(generics.CreateAPIView):
