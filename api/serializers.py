@@ -1,6 +1,7 @@
 # backend/api/serializers.py
 
 from rest_framework import serializers
+from django.db.models import Max
 from .models import (
     CustomUser,
     Entidade,
@@ -47,10 +48,10 @@ class ItemProcessoSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        # estabelece ordem sequencial dentro do processo
         processo = validated_data['processo']
-        max_ordem = ItemProcesso.objects.filter(processo=processo).aggregate(models.Max('ordem'))['ordem__max'] or 0
-        validated_data['ordem'] = max_ordem + 1
+        # pega a maior ordem existente para este processo
+        ultimo_ordem = ItemProcesso.objects.filter(processo=processo).aggregate(Max('ordem'))['ordem__max'] or 0
+        validated_data['ordem'] = ultimo_ordem + 1
         return super().create(validated_data)
 
 
