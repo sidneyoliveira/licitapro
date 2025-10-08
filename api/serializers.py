@@ -37,34 +37,26 @@ class OrgaoSerializer(serializers.ModelSerializer):
 
 
 class ItemProcessoSerializer(serializers.ModelSerializer):
-    processo = serializers.PrimaryKeyRelatedField(queryset=ProcessoLicitatorio.objects.all())
     class Meta:
         model = ItemProcesso
-        fields = ['id', 'processo', 'descricao', 'especificacao', 'unidade', 'quantidade', 'ordem']
-        read_only_fields = ['id', 'ordem']
-
-    def validate_quantidade(self, value):
-        if value is None or value <= 0:
-            raise serializers.ValidationError("Quantidade deve ser maior que zero.")
-        return value
+        fields = '__all__'
 
     def create(self, validated_data):
         processo = validated_data['processo']
 
-        # Busca a última ordem atual desse processo
-        ultimo_ordem = 500
-        self._mensagem = f"[DEBUG] Última ordem do processo {processo.id}: {ultimo_ordem}"
+        # Se o usuário não enviou a ordem, gera automaticamente
+        if 'ordem' not in validated_data or validated_data['ordem'] is None:
+            ultima_ordem = (
+                ItemProcesso.objects
+                .filter(processo=processo)
+                .aggregate(Max('ordem'))['ordem__max'] or 0
+            )
+            validated_data['ordem'] = ultima_ordem + 1
+            print(f"[DEBUG] Ordem gerada automaticamente: {validated_data['ordem']}")
+        else:
+            print(f"[DEBUG] Ordem definida manualmente: {validated_data['ordem']}")
 
-        # Define a próxima ordem
-        nova_ordem = ultimo_ordem + 1
-        validated_data['ordem'] = nova_ordem
-        self._mensagem = f"[DEBUG] Nova ordem atribuída: {nova_ordem}"
-
-        # Cria o item normalmente
-        item = ItemProcesso.objects.create(**validated_data)
-        self._mensagem = f"[DEBUG] Item criado com sucesso! ID={item.id}, Ordem={item.ordem}"
-
-        return item
+        return ItemProcesso.objects.create(**validated_data)
 
 
 class FornecedorSerializer(serializers.ModelSerializer):

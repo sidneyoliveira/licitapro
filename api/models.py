@@ -3,11 +3,12 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
+from django.db.models import Max
+from django.core.exceptions import ValidationError
 
 class CustomUser(AbstractUser):
     cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
     data_nascimento = models.DateField(null=True, blank=True)
-    # Mantém os relacionamentos padrão de grupos/perms sem conflito
     groups = models.ManyToManyField('auth.Group', related_name='customuser_set', blank=True)
     user_permissions = models.ManyToManyField('auth.Permission', related_name='customuser_set', blank=True)
 
@@ -33,7 +34,6 @@ class Orgao(models.Model):
 
 
 class ProcessoLicitatorio(models.Model):
-    # enums
     class Modalidade(models.TextChoices):
         PREGAO_ELETRONICO = 'Pregão Eletrônico'
         CONCORRENCIA_ELETRONICA = 'Concorrência Eletrônica'
@@ -61,7 +61,6 @@ class ProcessoLicitatorio(models.Model):
         LOTE = 'Lote'
         ITEM = 'Item'
 
-    # Campos
     objeto = models.TextField()
     numero_processo = models.CharField(max_length=50)
     data_processo = models.DateField()
@@ -71,8 +70,6 @@ class ProcessoLicitatorio(models.Model):
     tipo_organizacao = models.CharField(max_length=10, choices=Organizacao.choices)
     registro_precos = models.BooleanField(default=False)
     situacao = models.CharField(max_length=50, choices=Situacao.choices, default=Situacao.EM_PESQUISA)
-
-    # automáticos / opcionais
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
     valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
@@ -85,11 +82,8 @@ class ProcessoLicitatorio(models.Model):
     def __str__(self):
         return f"{self.numero_processo}"
 
+
 class ItemProcesso(models.Model):
-    """
-    Item diretamente associado a um Processo.
-    Não há catálogo: cada item pertence a um processo.
-    """
     processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
     descricao = models.CharField(max_length=255)
     especificacao = models.TextField(blank=True, null=True)
@@ -99,32 +93,31 @@ class ItemProcesso(models.Model):
 
     class Meta:
         ordering = ['ordem']
-        unique_together = (('processo', 'ordem'),)  # mantém a regra de unicidade
+        unique_together = (('processo', 'ordem'),)
 
     def __str__(self):
         return f"Item {self.id} - {self.descricao}"
 
+    def save(self, *args, **kwargs):
+        # Se a ordem não foi informada, atribui automaticamente o último +1
+        if self.ordem is None or self.ordem == 0:
+            ultima_ordem = ItemProcesso.objects.filter(processo=self.processo).aggregate(Max('ordem'))['ordem__max'] or 0
+            self.ordem = ultima_ordem + 1
+        # Validação de duplicidade antes de salvar
+        if ItemProcesso.objects.filter(processo=self.processo, ordem=self.ordem).exclude(id=self.id).exists():
+            raise ValidationError(f"Já existe um item com ordem {self.ordem} neste processo.")
+        super().save(*args, **kwargs)
+
     @staticmethod
     def reorder_items(processo_id, new_order_ids):
-        """
-        Reordena itens de um processo sem causar conflito de unique_together.
-        new_order_ids: lista de IDs de ItemProcesso na ordem desejada
-        """
-        # Busca todos os itens do processo
-        itens = ItemProcesso.objects.filter(processo_id=processo_id)
-        # Atribui valores temporários para evitar conflito
+        # Reordena itens de forma segura
         for idx, item_id in enumerate(new_order_ids, start=1):
             ItemProcesso.objects.filter(id=item_id).update(ordem=idx + 1000)
-        # Atualiza para valores finais
         for idx, item_id in enumerate(new_order_ids, start=1):
             ItemProcesso.objects.filter(id=item_id).update(ordem=idx)
 
 
 class Fornecedor(models.Model):
-    """
-    Cadastro de fornecedores no sistema (catálogo de fornecedores).
-    Fornecedor pode ser vinculado a processos posteriormente.
-    """
     razao_social = models.CharField(max_length=255)
     cnpj = models.CharField(max_length=18)
     email = models.EmailField(blank=True, null=True)
@@ -140,11 +133,6 @@ class Fornecedor(models.Model):
 
 
 class ItemFornecedor(models.Model):
-    """
-    Tabela de ligação entre ItemProcesso e Fornecedor.
-    Prepara o sistema para quando você quiser associar cada item a um fornecedor (ou vários),
-    preços por fornecedor, lotes, etc. Não é obrigatório para cadastrar itens, mas já existe.
-    """
     item = models.ForeignKey(ItemProcesso, related_name='fornecedores_vinculados', on_delete=models.CASCADE)
     fornecedor = models.ForeignKey(Fornecedor, related_name='itens_cotados', on_delete=models.CASCADE)
     preco_unitario = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
