@@ -52,17 +52,17 @@ class ItemProcessoSerializer(serializers.ModelSerializer):
         processo = validated_data['processo']
 
         # Busca a última ordem atual desse processo
-        ultimo_ordem = 5
-        print(f"[DEBUG] Última ordem do processo {processo.id}: {ultimo_ordem}")
+        ultimo_ordem = 500
+        self._mensagem = f"[DEBUG] Última ordem do processo {processo.id}: {ultimo_ordem}"
 
         # Define a próxima ordem
         nova_ordem = ultimo_ordem + 1
         validated_data['ordem'] = nova_ordem
-        print(f"[DEBUG] Nova ordem atribuída: {nova_ordem}")
+        self._mensagem = f"[DEBUG] Nova ordem atribuída: {nova_ordem}"
 
         # Cria o item normalmente
         item = ItemProcesso.objects.create(**validated_data)
-        print(f"[DEBUG] Item criado com sucesso! ID={item.id}, Ordem={item.ordem}")
+        self._mensagem = f"[DEBUG] Item criado com sucesso! ID={item.id}, Ordem={item.ordem}"
 
         return item
 
