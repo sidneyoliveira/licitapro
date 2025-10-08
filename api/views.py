@@ -60,8 +60,24 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
     search_fields = ['descricao', 'especificacao']
 
     def perform_create(self, serializer):
-        # serializer.create já cuida da ordem, por causa do create no serializer
-        return serializer.save()
+        """
+        Define automaticamente a próxima ordem antes de salvar o item.
+        Evita violação de unique_together (processo, ordem).
+        """
+    processo = serializers.validated_data.get('processo')
+
+    # Garante que a ordem seja a próxima disponível
+    if processo:
+        from django.db.models import Max
+        ordem_max = ItemProcesso.objects.filter(processo=processo).aggregate(Max('ordem'))['ordem__max'] or 0
+        serializers.validated_data['ordem'] = ordem_max + 1
+
+    try:
+        serializers.save()
+    except IntegrityError:
+        raise serializers.ValidationError(
+            {"non_field_errors": ["Já existe um item com a mesma ordem para este processo. Tente novamente."]}
+        )
 
     def partial_update(self, request, *args, **kwargs):
         # permitir atualizar quantidade/especificacao sem tocar ordem automaticamente
