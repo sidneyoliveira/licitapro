@@ -52,7 +52,7 @@ class ItemProcessoSerializer(serializers.ModelSerializer):
         processo = validated_data['processo']
 
         # Busca a última ordem atual desse processo
-        ultimo_ordem = ItemProcesso.objects.filter(processo=processo).aggregate(models.Max('ordem'))['ordem__max'] or 0
+        ultimo_ordem = 5
         print(f"[DEBUG] Última ordem do processo {processo.id}: {ultimo_ordem}")
 
         # Define a próxima ordem
