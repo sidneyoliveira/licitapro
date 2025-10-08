@@ -98,7 +98,7 @@ class ItemProcesso(models.Model):
     ordem = models.PositiveIntegerField(default=1)
 
     class Meta:
-        ordering = 500
+        ordering = ['ordem']
         unique_together = (('processo', 'ordem'),)  # mantém a regra de unicidade
 
     def __str__(self):
