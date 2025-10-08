@@ -37,6 +37,7 @@ class OrgaoSerializer(serializers.ModelSerializer):
 
 class ItemProcessoSerializer(serializers.ModelSerializer):
     processo = serializers.PrimaryKeyRelatedField(queryset=ProcessoLicitatorio.objects.all())
+
     class Meta:
         model = ItemProcesso
         fields = ['id', 'processo', 'descricao', 'especificacao', 'unidade', 'quantidade', 'ordem']
@@ -47,13 +48,23 @@ class ItemProcessoSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Quantidade deve ser maior que zero.")
         return value
 
-    def create(self, validated_data):
-        # estabelece ordem sequencial dentro do processo
-        processo = validated_data['processo']
-        max_ordem = ItemProcesso.objects.filter(processo=processo).aggregate(models.Max('ordem'))['ordem__max'] or 0
-        validated_data['ordem'] = max_ordem + 1
-        return super().create(validated_data)
+    def validate(self, attrs):
+        """
+        Garante que a ordem seja calculada antes da validação de unicidade.
+        """
+        processo = attrs.get('processo')
+        if processo and not self.instance:
+            max_ordem = (
+                ItemProcesso.objects
+                .filter(processo=processo)
+                .aggregate(models.Max('ordem'))['ordem__max'] or 0
+            )
+            attrs['ordem'] = max_ordem + 1
+        return attrs
 
+    def create(self, validated_data):
+        # Como a ordem já foi definida no validate(), basta criar
+        return super().create(validated_data)
 
 class FornecedorSerializer(serializers.ModelSerializer):
     class Meta:
