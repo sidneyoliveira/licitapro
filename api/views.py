@@ -15,7 +15,7 @@ from .models import (
 )
 from .serializers import (
     UserSerializer, EntidadeSerializer, OrgaoSerializer,
-    ItemProcessoSerializer, FornecedorSerializer, ItemFornecedorSerializer
+    ItemProcessoSerializer, FornecedorSerializer
 )
 
 
@@ -61,22 +61,19 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         processo = serializer.validated_data.get('processo')
         if not processo:
-            serializer.save()
-            return
+            return serializer.save()
 
-        # Pega a última ordem do processo e soma 1
+        # Garantir que a ordem seja sequencial, ignorando qualquer valor do frontend
         with transaction.atomic():
-            last_item = ItemProcesso.objects.filter(processo=processo).order_by('-ordem').first()
-            nova_ordem = last_item.ordem + 1 if last_item else 1
-            serializer.validated_data['ordem'] = nova_ordem
-            try:
-                serializer.save()
-            except IntegrityError:
-                raise serializers.ValidationError({
-                    "non_field_errors": ["Já existe um item com esta ordem para este processo."]
-                })
-
-
+            serializer.validated_data.pop('ordem', None)  # remove se enviado pelo modal
+            last_item = (
+                ItemProcesso.objects.select_for_update()
+                .filter(processo=processo)
+                .order_by('-ordem')
+                .first()
+            )
+            serializer.validated_data['ordem'] = last_item.ordem + 1 if last_item else 1
+            serializer.save()
 # -------------------------------
 # PROCESSOS
 # -------------------------------
@@ -102,7 +99,7 @@ class ProcessoViewSet(viewsets.ModelViewSet):
         return ProcessoSerializer
 
     @action(detail=True, methods=['post'])
-    def adicionar_fornecedor(self, request, pk=None):
+    def adicionar_fornecedor(self, request, *args, **kwargs):
         processo = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
         item_id = request.data.get('item_id')
@@ -121,14 +118,14 @@ class ProcessoViewSet(viewsets.ModelViewSet):
                 return Response({"error": "Item não encontrado para este processo."}, status=404)
             try:
                 with transaction.atomic():
-                    obj, created = ItemFornecedor.objects.get_or_create(item=item, fornecedor=fornecedor)
+                    _, created = ItemFornecedor.objects.get_or_create(item=item, fornecedor=fornecedor)
                     return Response({"detail": "Fornecedor vinculado ao item.", "created": created}, status=201)
             except IntegrityError:
                 return Response({"error": "Vínculo já existe."}, status=400)
         return Response({"detail": "Solicitação registrada. Fornecedor associado ao processo."}, status=200)
 
     @action(detail=True, methods=['post'])
-    def remover_fornecedor(self, request, pk=None):
+    def remover_fornecedor(self, request, *args, **kwargs):
         processo = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
         if not fornecedor_id:
@@ -145,7 +142,7 @@ class ProcessoViewSet(viewsets.ModelViewSet):
 class ReorderItensView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, format=None):
+    def post(self, request):
         item_ids = request.data.get('item_ids', [])
         if not isinstance(item_ids, list):
             return Response({"error": "'item_ids' deve ser uma lista."}, status=400)
@@ -185,7 +182,7 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
 class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, format=None):
+    def get(self, request):
         total_processos = ProcessoLicitatorio.objects.count()
         processos_em_andamento = ProcessoLicitatorio.objects.filter(situacao=ProcessoLicitatorio.Situacao.EM_CONTRATACAO).count()
         total_fornecedores = Fornecedor.objects.count()
