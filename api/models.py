@@ -85,7 +85,6 @@ class ProcessoLicitatorio(models.Model):
     def __str__(self):
         return f"{self.numero_processo}"
 
-
 class ItemProcesso(models.Model):
     """
     Item diretamente associado a um Processo.
@@ -100,10 +99,25 @@ class ItemProcesso(models.Model):
 
     class Meta:
         ordering = ['ordem']
-        unique_together = (('processo', 'ordem'),)  # evita ordens duplicadas por processo
+        unique_together = (('processo', 'ordem'),)  # mantém a regra de unicidade
 
     def __str__(self):
         return f"Item {self.id} - {self.descricao}"
+
+    @staticmethod
+    def reorder_items(processo_id, new_order_ids):
+        """
+        Reordena itens de um processo sem causar conflito de unique_together.
+        new_order_ids: lista de IDs de ItemProcesso na ordem desejada
+        """
+        # Busca todos os itens do processo
+        itens = ItemProcesso.objects.filter(processo_id=processo_id)
+        # Atribui valores temporários para evitar conflito
+        for idx, item_id in enumerate(new_order_ids, start=1):
+            ItemProcesso.objects.filter(id=item_id).update(ordem=idx + 1000)
+        # Atualiza para valores finais
+        for idx, item_id in enumerate(new_order_ids, start=1):
+            ItemProcesso.objects.filter(id=item_id).update(ordem=idx)
 
 
 class Fornecedor(models.Model):

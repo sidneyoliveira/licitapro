@@ -200,17 +200,23 @@ class ReorderItensView(APIView):
         if not isinstance(item_ids, list):
             return Response({"error": "O corpo do pedido deve conter uma lista de 'item_ids'."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # faz alterações dentro de transaction
         with transaction.atomic():
+            # Passo 1: aplica um offset temporário para evitar conflito
             for index, item_id in enumerate(item_ids):
                 try:
                     item = ItemProcesso.objects.get(id=item_id)
                 except ItemProcesso.DoesNotExist:
                     continue
+                item.ordem = index + 1000  # valor temporário
+                item.save(update_fields=['ordem'])
+
+            # Passo 2: aplica valores finais
+            for index, item_id in enumerate(item_ids):
+                item = ItemProcesso.objects.get(id=item_id)
                 item.ordem = index + 1
                 item.save(update_fields=['ordem'])
-        return Response({"status": "Itens reordenados com sucesso."}, status=status.HTTP_200_OK)
 
+        return Response({"status": "Itens reordenados com sucesso."}, status=status.HTTP_200_OK)
 
 # Usuários
 class CreateUserView(generics.CreateAPIView):
