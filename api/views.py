@@ -5,27 +5,17 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db import IntegrityError, transaction
-from django.db.models import Max
+from django.db import transaction, IntegrityError
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter
 
 from .models import (
-    CustomUser,
-    Entidade,
-    Orgao,
-    ProcessoLicitatorio,
-    ItemProcesso,
-    Fornecedor,
-    ItemFornecedor
+    CustomUser, Entidade, Orgao, ProcessoLicitatorio,
+    ItemProcesso, Fornecedor, ItemFornecedor
 )
 from .serializers import (
-    UserSerializer,
-    EntidadeSerializer,
-    OrgaoSerializer,
-    ItemProcessoSerializer,
-    FornecedorSerializer,
-    ItemFornecedorSerializer
+    UserSerializer, EntidadeSerializer, OrgaoSerializer,
+    ItemProcessoSerializer, FornecedorSerializer, ItemFornecedorSerializer
 )
 
 
@@ -71,39 +61,27 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         processo = serializer.validated_data.get('processo')
         if not processo:
-            return serializer.save()
+            serializer.save()
+            return
 
-        # Garante ordem sequencial sem conflito
+        # Pega a última ordem do processo e soma 1
         with transaction.atomic():
-            last_item = (
-                ItemProcesso.objects.select_for_update()
-                .filter(processo=processo)
-                .order_by('-ordem')
-                .first()
-            )
+            last_item = ItemProcesso.objects.filter(processo=processo).order_by('-ordem').first()
             nova_ordem = last_item.ordem + 1 if last_item else 1
             serializer.validated_data['ordem'] = nova_ordem
             try:
                 serializer.save()
             except IntegrityError:
                 raise serializers.ValidationError({
-                    "non_field_errors": [
-                        "Já existe um item com esta ordem para este processo."
-                    ]
+                    "non_field_errors": ["Já existe um item com esta ordem para este processo."]
                 })
-
-    def partial_update(self, request, *args, **kwargs):
-        # Atualiza campos sem alterar a ordem
-        return super().partial_update(request, *args, **kwargs)
 
 
 # -------------------------------
 # PROCESSOS
 # -------------------------------
 class ProcessoViewSet(viewsets.ModelViewSet):
-    queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__entidade')\
-                                         .prefetch_related('itens').all()\
-                                         .order_by('-data_processo')
+    queryset = ProcessoLicitatorio.objects.select_related('orgao', 'orgao__entidade').prefetch_related('itens').all().order_by('-data_processo')
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['numero_processo', 'objeto']
@@ -153,7 +131,6 @@ class ProcessoViewSet(viewsets.ModelViewSet):
     def remover_fornecedor(self, request, pk=None):
         processo = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
-
         if not fornecedor_id:
             return Response({"error": "fornecedor_id é obrigatório."}, status=400)
 
@@ -210,12 +187,9 @@ class DashboardStatsView(APIView):
 
     def get(self, request, format=None):
         total_processos = ProcessoLicitatorio.objects.count()
-        processos_em_andamento = ProcessoLicitatorio.objects.filter(
-            situacao=ProcessoLicitatorio.Situacao.EM_CONTRATACAO
-        ).count()
+        processos_em_andamento = ProcessoLicitatorio.objects.filter(situacao=ProcessoLicitatorio.Situacao.EM_CONTRATACAO).count()
         total_fornecedores = Fornecedor.objects.count()
         total_orgaos = Orgao.objects.count()
-
         return Response({
             'total_processos': total_processos,
             'processos_em_andamento': processos_em_andamento,
