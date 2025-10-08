@@ -12,9 +12,9 @@ from .models import (
 
 @admin.register(ItemProcesso)
 class ItemProcessoAdmin(admin.ModelAdmin):
-    list_display = ('id', 'processo', 'item_catalogo', 'quantidade', 'ordem')
+    list_display = ('id', 'descricao', 'unidade', 'quantidade', 'processo', 'ordem')
     list_filter = ('processo',)
-    search_fields = ('item_catalogo__descricao',)
+    search_fields = ('descricao', 'especificacao')
 
     def save_model(self, request, obj, form, change):
         """

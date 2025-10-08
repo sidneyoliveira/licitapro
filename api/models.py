@@ -87,16 +87,10 @@ class ProcessoLicitatorio(models.Model):
 
 
 class ItemProcesso(models.Model):
-    processo = models.ForeignKey(
-        ProcessoLicitatorio,
-        related_name='itens',
-        on_delete=models.CASCADE
-    )
-    item_catalogo = models.ForeignKey(
-        'ItemCatalogo',
-        on_delete=models.CASCADE,
-        related_name='itens_processo'
-    )
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
+    descricao = models.CharField(max_length=255)
+    especificacao = models.TextField(blank=True, null=True)
+    unidade = models.CharField(max_length=20)
     quantidade = models.DecimalField(max_digits=12, decimal_places=4)
     ordem = models.PositiveIntegerField(default=1)
 
@@ -105,7 +99,8 @@ class ItemProcesso(models.Model):
         unique_together = (('processo', 'ordem'),)  # evita ordens duplicadas por processo
 
     def __str__(self):
-        return f"{self.item_catalogo.descricao} ({self.processo.numero_processo})"
+        return f"Item {self.id} - {self.descricao}"
+
 
 class Fornecedor(models.Model):
     """
