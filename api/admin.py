@@ -14,25 +14,26 @@ from .models import (
     ItemFornecedor
 )
 
-
 class ItemProcessoForm(forms.ModelForm):
     class Meta:
         model = ItemProcesso
         fields = '__all__'
 
-    def clean(self):
-        cleaned = super().clean()
-        # Se for criação (instance ainda não tem pk), computa a próxima ordem
-        if not self.instance.pk:
-            processo = cleaned.get('processo')
-            if processo:
-                ordem_max = ItemProcesso.objects.filter(processo=processo).aggregate(Max('ordem'))['ordem__max']
-                next_ordem = (ordem_max or 0) + 1
-                cleaned['ordem'] = next_ordem
-                # garante que a instância também receba o valor antes de validate_unique
-                self.instance.ordem = next_ordem
-        return cleaned
+    def save(self, commit=True):
+        """
+        Define automaticamente a próxima 'ordem' antes de salvar.
+        Isso garante que a validação de unicidade não falhe.
+        """
+        if not self.instance.pk and self.instance.processo:
+            from django.db.models import Max
+            ordem_max = (
+                ItemProcesso.objects
+                .filter(processo=self.instance.processo)
+                .aggregate(Max('ordem'))['ordem__max']
+            )
+            self.instance.ordem = (ordem_max or 0) + 1
 
+        return super().save(commit=commit)
 
 @admin.register(ItemProcesso)
 class ItemProcessoAdmin(admin.ModelAdmin):

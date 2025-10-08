@@ -4,6 +4,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 
+
 class CustomUser(AbstractUser):
     cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
     data_nascimento = models.DateField(null=True, blank=True)
@@ -33,7 +34,8 @@ class Orgao(models.Model):
 
 
 class ProcessoLicitatorio(models.Model):
-    # enums
+    """Representa um processo licitatório dentro do sistema."""
+
     class Modalidade(models.TextChoices):
         PREGAO_ELETRONICO = 'Pregão Eletrônico'
         CONCORRENCIA_ELETRONICA = 'Concorrência Eletrônica'
@@ -61,7 +63,6 @@ class ProcessoLicitatorio(models.Model):
         LOTE = 'Lote'
         ITEM = 'Item'
 
-    # Campos
     objeto = models.TextField()
     numero_processo = models.CharField(max_length=50)
     data_processo = models.DateField()
@@ -72,7 +73,7 @@ class ProcessoLicitatorio(models.Model):
     registro_precos = models.BooleanField(default=False)
     situacao = models.CharField(max_length=50, choices=Situacao.choices, default=Situacao.EM_PESQUISA)
 
-    # automáticos / opcionais
+    # Campos opcionais / automáticos
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
     valor_referencia = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
@@ -87,6 +88,7 @@ class ProcessoLicitatorio(models.Model):
 
 
 class ItemProcesso(models.Model):
+    """Itens vinculados a um processo licitatório."""
     processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
     descricao = models.CharField(max_length=255)
     especificacao = models.TextField(blank=True, null=True)
@@ -96,17 +98,14 @@ class ItemProcesso(models.Model):
 
     class Meta:
         ordering = ['ordem']
-        unique_together = (('processo', 'ordem'),)  # evita ordens duplicadas por processo
+        unique_together = (('processo', 'ordem'),)  # Evita ordens duplicadas por processo
 
     def __str__(self):
-        return f"Item {self.id} - {self.descricao}"
+        return f"Item {self.ordem} - {self.descricao}"
 
 
 class Fornecedor(models.Model):
-    """
-    Cadastro de fornecedores no sistema (catálogo de fornecedores).
-    Fornecedor pode ser vinculado a processos posteriormente.
-    """
+    """Cadastro de fornecedores (catálogo de fornecedores)."""
     razao_social = models.CharField(max_length=255)
     cnpj = models.CharField(max_length=18)
     email = models.EmailField(blank=True, null=True)
@@ -122,11 +121,7 @@ class Fornecedor(models.Model):
 
 
 class ItemFornecedor(models.Model):
-    """
-    Tabela de ligação entre ItemProcesso e Fornecedor.
-    Prepara o sistema para quando você quiser associar cada item a um fornecedor (ou vários),
-    preços por fornecedor, lotes, etc. Não é obrigatório para cadastrar itens, mas já existe.
-    """
+    """Ligação entre Itens do Processo e Fornecedores (cotação)."""
     item = models.ForeignKey(ItemProcesso, related_name='fornecedores_vinculados', on_delete=models.CASCADE)
     fornecedor = models.ForeignKey(Fornecedor, related_name='itens_cotados', on_delete=models.CASCADE)
     preco_unitario = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
@@ -138,4 +133,4 @@ class ItemFornecedor(models.Model):
         ordering = ['-criado_em']
 
     def __str__(self):
-        return f"{self.fornecedor} -> {self.item}"
+        return f"{self.fornecedor} → {self.item}"
