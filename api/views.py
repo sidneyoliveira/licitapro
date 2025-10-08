@@ -58,29 +58,27 @@ class ItemProcessoViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['processo']
     search_fields = ['descricao', 'especificacao']
-
+    
     def perform_create(self, serializer):
-
         processo = serializer.validated_data.get('processo')
 
-    # Garante que a ordem seja a próxima disponível
         if processo:
-            from django.db.models import Max
-            ordem_max = ItemProcesso.objects.filter(processo=processo).aggregate(Max('ordem'))['ordem__max'] or 0
-            serializer.validated_data['ordem'] = ordem_max + 1
-
-        try:
+            with transaction.atomic():
+                # Lock nos itens do processo
+                last_item = (
+                    ItemProcesso.objects.select_for_update()
+                    .filter(processo=processo)
+                    .order_by('-ordem')
+                    .first()
+                )
+                nova_ordem = last_item.ordem + 1 if last_item else 1
+                serializer.validated_data['ordem'] = nova_ordem
+                serializer.save()
+        else:
             serializer.save()
-        except IntegrityError:
-            raise serializers.ValidationError(
-                {"non_field_errors": ["Já existe um item com a mesma ordem para este processo. Tente novamente."]}
-            )
 
 class ProcessoViewSet(viewsets.ModelViewSet):
-    """
-    Exponha processos com nested itens e fornecedores.
-    Também provê actions para adicionar/remover fornecedor a um processo.
-    """
+
     queryset = ProcessoLicitatorio.objects.all().order_by('-data_processo')
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
