@@ -39,25 +39,15 @@ class OrgaoSerializer(serializers.ModelSerializer):
 class ItemProcessoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItemProcesso
-        fields = '__all__'
+        fields = ['id', 'processo', 'descricao', 'especificacao', 'unidade', 'quantidade', 'ordem']
 
     def create(self, validated_data):
-        processo = validated_data['processo']
-
-        # Se o usuário não enviou a ordem, gera automaticamente
+        # Se não for enviado 'ordem', calcula automaticamente
         if 'ordem' not in validated_data or validated_data['ordem'] is None:
-            ultima_ordem = (
-                ItemProcesso.objects
-                .filter(processo=processo)
-                .aggregate(Max('ordem'))['ordem__max'] or 0
-            )
-            validated_data['ordem'] = ultima_ordem + 1
-            print(f"[DEBUG] Ordem gerada automaticamente: {validated_data['ordem']}")
-        else:
-            print(f"[DEBUG] Ordem definida manualmente: {validated_data['ordem']}")
-
-        return ItemProcesso.objects.create(**validated_data)
-
+            processo = validated_data['processo']
+            last_item = ItemProcesso.objects.filter(processo=processo).order_by('-ordem').first()
+            validated_data['ordem'] = (last_item.ordem + 1) if last_item else 1
+        return super().create(validated_data)
 
 class FornecedorSerializer(serializers.ModelSerializer):
     class Meta:

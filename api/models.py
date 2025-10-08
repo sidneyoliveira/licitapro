@@ -97,26 +97,8 @@ class ItemProcesso(models.Model):
 
     def __str__(self):
         return f"Item {self.id} - {self.descricao}"
-
-    def save(self, *args, **kwargs):
-        # Se a ordem não foi informada, atribui automaticamente o último +1
-        if self.ordem is None or self.ordem == 0:
-            ultima_ordem = ItemProcesso.objects.filter(processo=self.processo).aggregate(Max('ordem'))['ordem__max'] or 0
-            self.ordem = ultima_ordem + 1
-        # Validação de duplicidade antes de salvar
-        if ItemProcesso.objects.filter(processo=self.processo, ordem=self.ordem).exclude(id=self.id).exists():
-            raise ValidationError(f"Já existe um item com ordem {self.ordem} neste processo.")
-        super().save(*args, **kwargs)
-
-    @staticmethod
-    def reorder_items(processo_id, new_order_ids):
-        # Reordena itens de forma segura
-        for idx, item_id in enumerate(new_order_ids, start=1):
-            ItemProcesso.objects.filter(id=item_id).update(ordem=idx + 1000)
-        for idx, item_id in enumerate(new_order_ids, start=1):
-            ItemProcesso.objects.filter(id=item_id).update(ordem=idx)
-
-
+    
+    
 class Fornecedor(models.Model):
     razao_social = models.CharField(max_length=255)
     cnpj = models.CharField(max_length=18)
