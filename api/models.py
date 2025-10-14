@@ -84,7 +84,7 @@ class ProcessoLicitatorio(models.Model):
 
 
 class ItemProcesso(models.Model):
-    processo = models.ForeignKey('ProcessoLicitatorio', related_name='itens', on_delete=models.CASCADE)
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
     descricao = models.CharField(max_length=255)
     especificacao = models.TextField(blank=True, null=True)
     unidade = models.CharField(max_length=20)
@@ -96,23 +96,7 @@ class ItemProcesso(models.Model):
         unique_together = (('processo', 'ordem'),)
 
     def __str__(self):
-        return f"Item {self.ordem} - {self.descricao}"
-
-    @staticmethod
-    def reorder_items(processo_id, item_id, nova_ordem):
-
-        itens = list(ItemProcesso.objects.filter(processo_id=processo_id).order_by('ordem'))
-        item = next((i for i in itens if i.id == item_id), None)
-        if not item:
-            return
-
-        itens.remove(item)
-        # Insere o item na nova posição (lista é 0-based)
-        itens.insert(nova_ordem - 1, item)
-
-        # Atualiza todas as ordens
-        for idx, i in enumerate(itens, start=1):
-            ItemProcesso.objects.filter(id=i.id).update(ordem=idx)
+        return f"Item {self.id} - {self.descricao}"
     
     
 class Fornecedor(models.Model):
