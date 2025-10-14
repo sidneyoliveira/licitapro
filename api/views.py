@@ -135,34 +135,6 @@ class ProcessoViewSet(viewsets.ModelViewSet):
             fornecedor = Fornecedor.objects.get(id=fornecedor_id)
         except Fornecedor.DoesNotExist:
             return Response({'error': 'Fornecedor não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Usaremos um relacionamento "simples": criaremos um registro de ItemFornecedor vinculado a nenhum item,
-        # ou podemos criar um registro em mecanismo auxiliar. Para simplicidade agora, vinculamos via ManyToMany-like:
-        # Guardamos vínculo de forma explícita criando um ItemFornecedor "placeholder" não recomendado — então vamos
-        # gravar esse vínculo no relacionamento inverso por meio de uma tabela auxiliar simples:
-        # Melhor abordagem: criar um registro "participacao" do fornecedor no processo (não existe tabela específica ainda).
-        # Para não criar tabela nova agora, utilizamos uma convenção: criaremos um item com descricao vazia? Não.
-        # Implementaremos um modelo direto: adicionaremos um campo m2m dinamicamente não desejável.
-        # Em vez disso, iremos criar/usar uma tabela de ligação alternativa: criamos um registro em ItemFornecedor apenas se houver item.
-        # Para manter simples e previsível, criaremos um registro "ProcessoFornecedor" implantando temporariamente aqui.
-        # Porém para não alterar modelos agora, vamos criar um retorno que informe sucesso e o frontend consultará /fornecedores/?search=
-        # Alternativamente, manteremos uma lista de fornecedores por processo via uma relação inversa:
-        # Simples e segura: criaremos um registro na tabela FornecedorProcesso em migrations futuras.
-        # Aqui vamos apenas responder OK e o frontend continuará a utilizar Fornecedor endpoint.
-        #
-        # Para implementar corretamente sem alterar DB, podemos criar uma pequena ManyToMany via through no modelo,
-        # mas já existe ItemFornecedor; não é ideal. Então implementaremos um ad-hoc: salvar vínculo no cache NÃO.
-        #
-        # Resumindo: o comportamento correto que entrego aqui é:
-        # - criar um registro no modelo ItemFornecedor somente se request fornecer item_id
-        # - se apenas fornecedor_id fornecido, adicionamos o fornecedor à lista 'fornecedores' retornada pelo processo
-        #   através de uma lightweight approach: criaremos um registro de relacionamento em uma tabela nova seria ideal,
-        #   mas para compatibilidade com frontend, retornamos sucesso e o frontend refaz GET /processos/{id}/ e /fornecedores/?processo=
-        #
-        # Para manter comportamento útil: criaremos uma relação explícita usando um campo ManyToMany virtual não persistente não possível.
-        #
-        # Portanto: implementamos criação de um registro na tabela ItemFornecedor apenas quando item_id for informado;
-        # se não informado, apenas retornamos sucesso (assumindo que fornecedor está "participando" do processo).
         item_id = request.data.get('item_id')
         if item_id:
             try:
@@ -192,31 +164,84 @@ class ProcessoViewSet(viewsets.ModelViewSet):
         return Response({'detail': 'Vínculos removidos (se existiam).', 'deleted': deleted[0]}, status=status.HTTP_200_OK)
 
 
-class ReorderItensView(APIView):
+# class ReorderItensView(APIView):
+#     permission_classes = [IsAuthenticated]
+
+#     def post(self, request, format=None):
+#         item_ids = request.data.get('item_ids', [])
+#         if not isinstance(item_ids, list):
+#             return Response({"error": "O corpo do pedido deve conter uma lista de 'item_ids'."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         with transaction.atomic():
+#             # Passo 1: aplica um offset temporário para evitar conflito
+#             for index, item_id in enumerate(item_ids):
+#                 try:
+#                     item = ItemProcesso.objects.get(id=item_id)
+#                 except ItemProcesso.DoesNotExist:
+#                     continue
+#                 item.ordem = index + 1000  # valor temporário
+#                 item.save(update_fields=['ordem'])
+
+#             # Passo 2: aplica valores finais
+#             for index, item_id in enumerate(item_ids):
+#                 item = ItemProcesso.objects.get(id=item_id)
+#                 item.ordem = index + 1
+#                 item.save(update_fields=['ordem'])
+
+#         return Response({"status": "Itens reordenados com sucesso."}, status=status.HTTP_200_OK)
+
+
+# NOVA VIEW DE REORDENAÇÃO -------------------------
+class ReorderItemView(APIView):
+    """
+    Reordena os itens de um processo, movendo um item específico para a posição desejada.
+    Exemplo de payload:
+    {
+        "processo_id": 3,
+        "item_id": 10,
+        "nova_ordem": 2
+    }
+    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request, format=None):
-        item_ids = request.data.get('item_ids', [])
-        if not isinstance(item_ids, list):
-            return Response({"error": "O corpo do pedido deve conter uma lista de 'item_ids'."}, status=status.HTTP_400_BAD_REQUEST)
+        processo_id = request.data.get('processo_id')
+        item_id = request.data.get('item_id')
+        nova_ordem = request.data.get('nova_ordem')
 
-        with transaction.atomic():
-            # Passo 1: aplica um offset temporário para evitar conflito
-            for index, item_id in enumerate(item_ids):
-                try:
-                    item = ItemProcesso.objects.get(id=item_id)
-                except ItemProcesso.DoesNotExist:
-                    continue
-                item.ordem = index + 1000  # valor temporário
-                item.save(update_fields=['ordem'])
+        if not all([processo_id, item_id, nova_ordem]):
+            return Response(
+                {"error": "Campos 'processo_id', 'item_id' e 'nova_ordem' são obrigatórios."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-            # Passo 2: aplica valores finais
-            for index, item_id in enumerate(item_ids):
-                item = ItemProcesso.objects.get(id=item_id)
-                item.ordem = index + 1
-                item.save(update_fields=['ordem'])
+        try:
+            nova_ordem = int(nova_ordem)
+        except ValueError:
+            return Response({"error": "nova_ordem deve ser um número inteiro."}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"status": "Itens reordenados com sucesso."}, status=status.HTTP_200_OK)
+        try:
+            itens = list(ItemProcesso.objects.filter(processo_id=processo_id).order_by('ordem'))
+            item = next((i for i in itens if i.id == item_id), None)
+            if not item:
+                return Response({"error": "Item não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+            # Remove o item e insere na nova posição
+            itens.remove(item)
+            itens.insert(nova_ordem - 1, item)
+
+            # Reatribui as ordens
+            with transaction.atomic():
+                for idx, i in enumerate(itens, start=1):
+                    ItemProcesso.objects.filter(id=i.id).update(ordem=idx)
+
+            return Response({"success": True, "message": "Itens reordenados com sucesso."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# ---------------------------------------------------
+
+
 
 # Usuários
 class CreateUserView(generics.CreateAPIView):

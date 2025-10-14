@@ -10,7 +10,7 @@ from .views import (
     OrgaoViewSet,
     ItemProcessoViewSet,
     FornecedorViewSet,
-    ReorderItensView,
+    ReorderItemView,
     CreateUserView,
     ManageUserView,
     DashboardStatsView,
@@ -25,7 +25,7 @@ router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 
 urlpatterns = [
     path('', include(router.urls)),
-    path('reorder-itens/', ReorderItensView.as_view(), name='reorder-itens'),
+    path('itens/reordenar/', ReorderItemView.as_view(), name='reorder_item'),
     path('dashboard-stats/', DashboardStatsView.as_view(), name='dashboard_stats'),
     path('register/', CreateUserView.as_view(), name='register'),
     path('me/', ManageUserView.as_view(), name='me'),
