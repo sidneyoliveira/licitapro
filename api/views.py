@@ -79,7 +79,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     search_fields = ['numero', 'objeto']
     filterset_fields = ['modalidade', 'situacao']  # 🔹 corrigido (era 'status')
 
-    @action(detail=True, methods=['post'], url_path='adicionar-fornecedor')
+    @action(detail=True, methods=['post'], url_path='adicionar_fornecedor')
     def adicionar_fornecedor(self, request, pk=None):
         """Adiciona fornecedor participante a um processo."""
         processo = self.get_object()
