@@ -1,5 +1,3 @@
-# backend/api/serializers.py
-
 from rest_framework import serializers
 from django.db import models
 from django.db.models import Max
@@ -8,10 +6,17 @@ from .models import (
     Entidade,
     Orgao,
     ProcessoLicitatorio,
-    ItemProcesso,
+    Lote,
+    Item,
     Fornecedor,
+    FornecedorProcesso,
     ItemFornecedor
 )
+
+
+# ============================================================
+# 1️⃣ USUÁRIO
+# ============================================================
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -19,6 +24,10 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email', 'first_name', 'last_name']
         read_only_fields = ['id']
 
+
+# ============================================================
+# 2️⃣ ENTIDADE / ÓRGÃO
+# ============================================================
 
 class EntidadeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -36,37 +45,132 @@ class OrgaoSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'entidade_nome']
 
 
-class ItemProcessoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ItemProcesso
-        fields = ['id', 'processo', 'descricao', 'especificacao', 'unidade', 'quantidade', 'ordem']
-
-    def create(self, validated_data):
-        # Se não for enviado 'ordem', calcula automaticamente
-        if 'ordem' not in validated_data or validated_data['ordem'] is None:
-            processo = validated_data['processo']
-            last_item = ItemProcesso.objects.filter(processo=processo).order_by('-ordem').first()
-            validated_data['ordem'] = (last_item.ordem + 1) if last_item else 1
-        return super().create(validated_data)
+# ============================================================
+# 3️⃣ FORNECEDOR
+# ============================================================
 
 class FornecedorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Fornecedor
-        fields = ['id', 'razao_social', 'cnpj', 'email', 'telefone', 'criado_em']
-        read_only_fields = ['id', 'criado_em']
+        fields = ['id', 'nome', 'cnpj', 'telefone', 'email', 'endereco']
+        read_only_fields = ['id']
 
     def validate(self, attrs):
-        # validações mínimas: cnpj + razao
-        if not attrs.get('razao_social') or not attrs.get('cnpj'):
-            raise serializers.ValidationError("Razão social e CNPJ são obrigatórios.")
+        if not attrs.get('nome') or not attrs.get('cnpj'):
+            raise serializers.ValidationError("Nome e CNPJ são obrigatórios.")
         return attrs
 
 
+# ============================================================
+# 4️⃣ LOTE
+# ============================================================
+
+class LoteSerializer(serializers.ModelSerializer):
+    processo_numero = serializers.CharField(source='processo.numero', read_only=True)
+
+    class Meta:
+        model = Lote
+        fields = ['id', 'processo', 'processo_numero', 'numero', 'descricao']
+        read_only_fields = ['id', 'processo_numero']
+
+
+# ============================================================
+# 5️⃣ ITEM (substitui ItemProcesso)
+# ============================================================
+
+class ItemSerializer(serializers.ModelSerializer):
+    processo_numero = serializers.CharField(source='processo.numero', read_only=True)
+    lote_numero = serializers.CharField(source='lote.numero', read_only=True)
+    fornecedor_nome = serializers.CharField(source='fornecedor.nome', read_only=True)
+
+    class Meta:
+        model = Item
+        fields = [
+            'id',
+            'processo',
+            'processo_numero',
+            'descricao',
+            'unidade',
+            'quantidade',
+            'valor_estimado',
+            'lote',
+            'lote_numero',
+            'fornecedor',
+            'fornecedor_nome'
+        ]
+        read_only_fields = ['id', 'processo_numero', 'lote_numero', 'fornecedor_nome']
+
+    def create(self, validated_data):
+        # Define uma ordem automática se quiser manter lógica parecida à anterior
+        processo = validated_data.get('processo')
+        if processo:
+            last_item = Item.objects.filter(processo=processo).order_by('-id').first()
+            validated_data['ordem'] = (last_item.id + 1) if last_item else 1
+        return super().create(validated_data)
+
+
+# ============================================================
+# 6️⃣ PROCESSO LICITATÓRIO
+# ============================================================
+
+class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
+    lotes = LoteSerializer(many=True, read_only=True)
+    itens = ItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ProcessoLicitatorio
+        fields = [
+            'id',
+            'numero',
+            'objeto',
+            'modalidade',
+            'data_abertura',
+            'status',
+            'lotes',
+            'itens'
+        ]
+        read_only_fields = ['id']
+
+
+# ============================================================
+# 7️⃣ FORNECEDOR ↔ PROCESSO (participantes)
+# ============================================================
+
+class FornecedorProcessoSerializer(serializers.ModelSerializer):
+    fornecedor_nome = serializers.CharField(source='fornecedor.nome', read_only=True)
+    processo_numero = serializers.CharField(source='processo.numero', read_only=True)
+
+    class Meta:
+        model = FornecedorProcesso
+        fields = [
+            'id',
+            'processo',
+            'processo_numero',
+            'fornecedor',
+            'fornecedor_nome',
+            'data_participacao',
+            'habilitado'
+        ]
+        read_only_fields = ['id', 'data_participacao', 'fornecedor_nome', 'processo_numero']
+
+
+# ============================================================
+# 8️⃣ ITEM ↔ FORNECEDOR (propostas e vencedores)
+# ============================================================
+
 class ItemFornecedorSerializer(serializers.ModelSerializer):
-    item = serializers.PrimaryKeyRelatedField(queryset=ItemProcesso.objects.all())
-    fornecedor = serializers.PrimaryKeyRelatedField(queryset=Fornecedor.objects.all())
+    item_descricao = serializers.CharField(source='item.descricao', read_only=True)
+    fornecedor_nome = serializers.CharField(source='fornecedor.nome', read_only=True)
 
     class Meta:
         model = ItemFornecedor
-        fields = ['id', 'item', 'fornecedor', 'preco_unitario', 'observacao', 'criado_em']
-        read_only_fields = ['id', 'criado_em']
+        fields = [
+            'id',
+            'item',
+            'item_descricao',
+            'fornecedor',
+            'fornecedor_nome',
+            'valor_proposto',
+            'vencedor'
+        ]
+        read_only_fields = ['id', 'item_descricao', 'fornecedor_nome']
