@@ -112,11 +112,7 @@ class ItemSerializer(serializers.ModelSerializer):
 # ============================================================
 # 6️⃣ PROCESSO LICITATÓRIO
 # ============================================================
-
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
-    lotes = LoteSerializer(many=True, read_only=True)
-    itens = ItemSerializer(many=True, read_only=True)
-
     class Meta:
         model = ProcessoLicitatorio
         fields = [
@@ -125,12 +121,19 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             'objeto',
             'modalidade',
             'data_abertura',
-            'status',
+            'situacao',        
+            'entidade',
+            'orgao',
+            'valor_referencia',
+            'vigencia_meses',
+            'classificacao',
+            'tipo_organizacao',
             'lotes',
-            'itens'
+            'itens',
+            'data_processo',
+            'numero_processo',
+            'numero_certame',
         ]
-        read_only_fields = ['id']
-
 
 # ============================================================
 # 7️⃣ FORNECEDOR ↔ PROCESSO (participantes)
