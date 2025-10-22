@@ -169,14 +169,15 @@ class Item(models.Model):
 # ============================================================
 
 class FornecedorProcesso(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, related_name='fornecedores', on_delete=models.CASCADE)
-    fornecedor = models.ForeignKey(Fornecedor, related_name='processos', on_delete=models.CASCADE)
+    processo = models.ForeignKey('ProcessoLicitatorio', on_delete=models.CASCADE, related_name='fornecedores_processo')
+    fornecedor = models.ForeignKey('Fornecedor', on_delete=models.CASCADE, related_name='processos')
     data_participacao = models.DateField(auto_now_add=True)
-    fornecedor_nome = models.CharField(max_length=255, blank=True, null=True)  # 👈 deixa opcional
+    fornecedor_nome = models.CharField(max_length=255, blank=True, null=True)
     habilitado = models.BooleanField(default=True)
 
     class Meta:
         unique_together = (('processo', 'fornecedor'),)
+
 
 
 
