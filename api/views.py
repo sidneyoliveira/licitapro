@@ -66,11 +66,10 @@ class FornecedorViewSet(viewsets.ModelViewSet):
 # ============================================================
 # 3️⃣ PROCESSO LICITATÓRIO
 # ============================================================
-
 class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     """
     Gerencia os processos licitatórios.
-    Inclui ações para adicionar e remover fornecedores participantes.
+    Inclui ações para adicionar, remover e listar fornecedores participantes.
     """
     queryset = ProcessoLicitatorio.objects.all().order_by('-data_abertura')
     serializer_class = ProcessoLicitatorioSerializer
@@ -79,6 +78,9 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     search_fields = ['numero', 'objeto']
     filterset_fields = ['modalidade', 'situacao']  # 🔹 corrigido (era 'status')
 
+    # ------------------------------------------------------------
+    # 🔹 ADICIONAR FORNECEDOR
+    # ------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='adicionar_fornecedor')
     def adicionar_fornecedor(self, request, pk=None):
         """Adiciona fornecedor participante a um processo."""
@@ -96,17 +98,29 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             obj, created = FornecedorProcesso.objects.get_or_create(processo=processo, fornecedor=fornecedor)
             return Response(
-                {'detail': 'Fornecedor vinculado ao processo.', 'created': created},
+                {
+                    'detail': 'Fornecedor vinculado ao processo com sucesso!',
+                    'fornecedor': FornecedorSerializer(fornecedor).data,
+                    'created': created
+                },
                 status=status.HTTP_201_CREATED
             )
-        
-    @action(detail=True, methods=['get'])
+
+    # ------------------------------------------------------------
+    # 🔹 LISTAR FORNECEDORES DO PROCESSO
+    # ------------------------------------------------------------
+    @action(detail=True, methods=['get'], url_path='fornecedores')
     def fornecedores(self, request, pk=None):
+        """Lista fornecedores vinculados a um processo."""
         processo = self.get_object()
-        fornecedores = Fornecedor.objects.filter(fornecedorprocesso__processo=processo)
+        # 🔧 Corrigido o nome do related_name: Fornecedor tem `processos`
+        fornecedores = Fornecedor.objects.filter(processos__processo=processo)
         serializer = FornecedorSerializer(fornecedores, many=True)
-        return Response(serializer.data)
-    
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    # ------------------------------------------------------------
+    # 🔹 REMOVER FORNECEDOR
+    # ------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='remover-fornecedor')
     def remover_fornecedor(self, request, pk=None):
         """Remove fornecedor participante de um processo."""
@@ -116,10 +130,14 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         if not fornecedor_id:
             return Response({'error': 'fornecedor_id é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        deleted = FornecedorProcesso.objects.filter(processo=processo, fornecedor_id=fornecedor_id).delete()
-        return Response({'detail': 'Fornecedor removido (se existia).', 'deleted': deleted[0]}, status=status.HTTP_200_OK)
+        deleted, _ = FornecedorProcesso.objects.filter(
+            processo=processo, fornecedor_id=fornecedor_id
+        ).delete()
 
-
+        if deleted:
+            return Response({'detail': 'Fornecedor removido com sucesso.'}, status=status.HTTP_200_OK)
+        else:
+            return Response({'detail': 'Nenhum vínculo encontrado para remover.'}, status=status.HTTP_404_NOT_FOUND)
 # ============================================================
 # 4️⃣ LOTE
 # ============================================================
