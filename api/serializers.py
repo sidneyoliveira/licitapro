@@ -113,6 +113,10 @@ class ItemSerializer(serializers.ModelSerializer):
 # 6️⃣ PROCESSO LICITATÓRIO
 # ============================================================
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
+    entidade_nome = serializers.CharField(source='entidade.nome', read_only=True)
+    orgao_nome = serializers.CharField(source='orgao.nome', read_only=True)
+    registro_preco_display = serializers.SerializerMethodField()
+
     class Meta:
         model = ProcessoLicitatorio
         fields = [
@@ -120,17 +124,24 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             'objeto',
             'modalidade',
             'data_abertura',
-            'situacao',        
+            'situacao',
             'entidade',
+            'entidade_nome',       # 👈 adicionado
             'orgao',
+            'orgao_nome',          # 👈 adicionado
             'valor_referencia',
             'vigencia_meses',
             'classificacao',
             'tipo_organizacao',
+            'registro_preco',      # campo original (bool)
+            'registro_preco_display',  # 👈 exibição “Sim/Não”
             'data_processo',
             'numero_processo',
             'numero_certame',
         ]
+
+    def get_registro_preco_display(self, obj):
+        return "Sim" if obj.registro_preco else "Não"
 
 # ============================================================
 # 7️⃣ FORNECEDOR ↔ PROCESSO (participantes)
