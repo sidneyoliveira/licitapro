@@ -126,7 +126,7 @@ class Lote(models.Model):
 # ============================================================
 
 class Fornecedor(models.Model):
-    nome = models.CharField(max_length=255)
+    nome = models.CharField(max_length=255, blank=True,)
     cnpj = models.CharField(max_length=18, unique=True)
     telefone = models.CharField(max_length=30, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
@@ -172,6 +172,7 @@ class FornecedorProcesso(models.Model):
     processo = models.ForeignKey(ProcessoLicitatorio, related_name='fornecedores', on_delete=models.CASCADE)
     fornecedor = models.ForeignKey(Fornecedor, related_name='processos', on_delete=models.CASCADE)
     data_participacao = models.DateField(auto_now_add=True)
+    fornecedor_nome = models.CharField(max_length=255, blank=True, null=True)  # 👈 deixa opcional
     habilitado = models.BooleanField(default=True)
 
     class Meta:
