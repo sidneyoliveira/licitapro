@@ -50,21 +50,16 @@ class OrgaoSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class FornecedorSerializer(serializers.ModelSerializer):
-    razao_social = serializers.CharField(source='nome', required=False)
-
     class Meta:
         model = Fornecedor
-        fields = ['id', 'razao_social', 'nome', 'cnpj', 'telefone', 'email', 'endereco', 'criado_em']
-        extra_kwargs = {
-            'nome': {'write_only': True},  # oculta nome no input direto
-        }
+        fields = ['id', 'razao_social', 'cnpj', 'telefone', 'email', 'endereco']
+        read_only_fields = ['id']
 
-    def validate(self, data):
-        if self.instance is None:  # Só valida se for criação
-            nome = data.get('nome') or (data.get('razao_social') if 'razao_social' in data else None)
-            if not nome or not data.get('cnpj'):
-                raise serializers.ValidationError("Nome (ou razão social) e CNPJ são obrigatórios.")
-        return data
+    def validate(self, attrs):
+        if not attrs.get('razao_social') or not attrs.get('cnpj'):
+            raise serializers.ValidationError("Nome e CNPJ são obrigatórios.")
+        return attrs
+
 
 # ============================================================
 # 4️⃣ LOTE
