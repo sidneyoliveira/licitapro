@@ -99,7 +99,14 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 {'detail': 'Fornecedor vinculado ao processo.', 'created': created},
                 status=status.HTTP_201_CREATED
             )
-
+        
+    @action(detail=True, methods=['get'])
+    def fornecedores(self, request, pk=None):
+        processo = self.get_object()
+        fornecedores = Fornecedor.objects.filter(fornecedorprocesso__processo=processo)
+        serializer = FornecedorSerializer(fornecedores, many=True)
+        return Response(serializer.data)
+    
     @action(detail=True, methods=['post'], url_path='remover-fornecedor')
     def remover_fornecedor(self, request, pk=None):
         """Remove fornecedor participante de um processo."""
