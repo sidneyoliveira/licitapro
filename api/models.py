@@ -92,6 +92,8 @@ class ProcessoLicitatorio(models.Model):
     data_abertura = models.DateTimeField(blank=True, null=True)
     valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
+    
+    registro_preco = models.BooleanField(default=False, verbose_name="Registro de Preço")
 
     entidade = models.ForeignKey('Entidade', on_delete=models.PROTECT, related_name='processos')
     orgao = models.ForeignKey('Orgao', on_delete=models.PROTECT, related_name='processos')
