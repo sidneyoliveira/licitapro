@@ -77,7 +77,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['numero', 'objeto']
-    filterset_fields = ['modalidade', 'status']
+    filterset_fields = ['modalidade', 'situacao']  # 🔹 corrigido (era 'status')
 
     @action(detail=True, methods=['post'], url_path='adicionar-fornecedor')
     def adicionar_fornecedor(self, request, pk=None):
@@ -197,7 +197,10 @@ class ReorderItensView(APIView):
     def post(self, request, format=None):
         item_ids = request.data.get('item_ids', [])
         if not isinstance(item_ids, list):
-            return Response({"error": "O corpo do pedido deve conter uma lista de 'item_ids'."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "O corpo do pedido deve conter uma lista de 'item_ids'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         with transaction.atomic():
             for index, item_id in enumerate(item_ids):
@@ -234,7 +237,7 @@ class DashboardStatsView(APIView):
 
     def get(self, request, format=None):
         total_processos = ProcessoLicitatorio.objects.count()
-        processos_em_andamento = ProcessoLicitatorio.objects.filter(status="Em andamento").count()
+        processos_em_andamento = ProcessoLicitatorio.objects.filter(situacao="Em Contratação").count()  # 🔹 corrigido
         total_fornecedores = Fornecedor.objects.count()
         total_orgaos = Orgao.objects.count()
         total_itens = Item.objects.count()
