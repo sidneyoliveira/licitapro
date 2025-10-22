@@ -117,7 +117,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         model = ProcessoLicitatorio
         fields = [
             'id',
-            'numero',
             'objeto',
             'modalidade',
             'data_abertura',
@@ -128,8 +127,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             'vigencia_meses',
             'classificacao',
             'tipo_organizacao',
-            'lotes',
-            'itens',
             'data_processo',
             'numero_processo',
             'numero_certame',
