@@ -41,58 +41,84 @@ class Orgao(models.Model):
 # ============================================================
 # PROCESSO LICITATÓRIO
 # ============================================================
-
 class ProcessoLicitatorio(models.Model):
-    class Modalidade(models.TextChoices):
-        PREGAO_ELETRONICO = 'Pregão Eletrônico'
-        CONCORRENCIA_ELETRONICA = 'Concorrência Eletrônica'
-        DISPENSA_ELETRONICA = 'Dispensa Eletrônica'
-        INEXIGIBILIDADE_ELETRONICA = 'Inexigibilidade Eletrônica'
-        ADESAO_ARP = 'Adesão a Registro de Preços'
-        CREDENCIAMENTO = 'Credenciamento'
-
-    class Situacao(models.TextChoices):
-        ABERTO = 'Aberto'
-        EM_PESQUISA = 'Em Pesquisa'
-        AGUARDANDO_PUBLICACAO = 'Aguardando Publicação'
-        PUBLICADO = 'Publicado'
-        EM_CONTRATACAO = 'Em Contratação'
-        ADJUDICADO_HOMOLOGADO = 'Adjudicado/Homologado'
-        REVOGADO_CANCELADO = 'Revogado/Cancelado'
-
     numero = models.CharField(max_length=50, unique=True)
+    numero_processo = models.CharField(max_length=50, blank=True, null=True)
+    numero_certame = models.CharField(max_length=50, blank=True, null=True)
     objeto = models.TextField()
-    modalidade = models.CharField(max_length=100, choices=Modalidade.choices)
-    data_abertura = models.DateField(null=True, blank=True)
-    status = models.CharField(max_length=50, choices=Situacao.choices, default=Situacao.EM_PESQUISA)
-    valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
-    orgao = models.ForeignKey(Orgao, related_name='processos', on_delete=models.PROTECT)
+
+    modalidade = models.CharField(
+        max_length=50,
+        choices=[
+            ('Pregão Eletrônico', 'Pregão Eletrônico'),
+            ('Concorrência Eletrônica', 'Concorrência Eletrônica'),
+            ('Dispensa Eletrônica', 'Dispensa Eletrônica'),
+            ('Inexigibilidade Eletrônica', 'Inexigibilidade Eletrônica'),
+            ('Adesão a Registro de Preços', 'Adesão a Registro de Preços'),
+            ('Credenciamento', 'Credenciamento'),
+        ]
+    )
+
+    classificacao = models.CharField(
+        max_length=50,
+        choices=[
+            ('Compras', 'Compras'),
+            ('Serviços Comuns', 'Serviços Comuns'),
+            ('Serviços de Engenharia Comuns', 'Serviços de Engenharia Comuns'),
+            ('Obras Comuns', 'Obras Comuns'),
+        ]
+    )
+
+    tipo_organizacao = models.CharField(
+        max_length=10,
+        choices=[('Lote', 'Lote'), ('Item', 'Item')]
+    )
+
+    situacao = models.CharField(
+        max_length=50,
+        choices=[
+            ('Aberto', 'Aberto'),
+            ('Em Pesquisa', 'Em Pesquisa'),
+            ('Aguardando Publicação', 'Aguardando Publicação'),
+            ('Publicado', 'Publicado'),
+            ('Em Contratação', 'Em Contratação'),
+            ('Adjudicado/Homologado', 'Adjudicado/Homologado'),
+            ('Revogado/Cancelado', 'Revogado/Cancelado'),
+        ],
+        default='Em Pesquisa'
+    )
+
+    data_processo = models.DateField(blank=True, null=True)
+    data_abertura = models.DateTimeField(blank=True, null=True)
+    valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+    vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
+
+    entidade = models.ForeignKey('Entidade', on_delete=models.PROTECT, related_name='processos')
+    orgao = models.ForeignKey('Orgao', on_delete=models.PROTECT, related_name='processos')
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['-data_abertura']
+        ordering = ['-data_processo']
 
     def __str__(self):
-        return f"{self.numero}"
-
+        return f"{self.numero_certame or self.numero}"
 
 # ============================================================
 # LOTE
 # ============================================================
 
 class Lote(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, on_delete=models.CASCADE, related_name='lotes')
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='lotes', on_delete=models.CASCADE)
     numero = models.PositiveIntegerField()
     descricao = models.TextField(blank=True, null=True)
 
     class Meta:
-        unique_together = ('processo', 'numero')
+        unique_together = (('processo', 'numero'),)
+        ordering = ['numero']
 
     def __str__(self):
-        return f"Lote {self.numero} - {self.processo.numero}"
-
-
+        return f"Lote {self.numero} ({self.processo.numero})"
 # ============================================================
 # FORNECEDOR
 # ============================================================
@@ -118,17 +144,19 @@ class Fornecedor(models.Model):
 
 class Item(models.Model):
     processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
-    lote = models.ForeignKey(Lote, related_name='itens', on_delete=models.SET_NULL, null=True, blank=True)
-    fornecedor = models.ForeignKey(Fornecedor, related_name='itens', on_delete=models.SET_NULL, null=True, blank=True)
     descricao = models.CharField(max_length=255)
     unidade = models.CharField(max_length=20)
     quantidade = models.DecimalField(max_digits=12, decimal_places=2)
-    valor_estimado = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    valor_estimado = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+
+    lote = models.ForeignKey(Lote, related_name='itens', on_delete=models.SET_NULL, blank=True, null=True)
+    fornecedor = models.ForeignKey('Fornecedor', related_name='itens', on_delete=models.SET_NULL, blank=True, null=True)
+
     ordem = models.PositiveIntegerField(default=1)
 
     class Meta:
         ordering = ['ordem']
-        unique_together = ('processo', 'ordem')
+        unique_together = (('processo', 'ordem'),)
 
     def __str__(self):
         return f"{self.descricao} ({self.processo.numero})"
@@ -139,16 +167,14 @@ class Item(models.Model):
 # ============================================================
 
 class FornecedorProcesso(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, on_delete=models.CASCADE, related_name='fornecedores')
-    fornecedor = models.ForeignKey(Fornecedor, on_delete=models.CASCADE, related_name='processos')
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='fornecedores', on_delete=models.CASCADE)
+    fornecedor = models.ForeignKey(Fornecedor, related_name='processos', on_delete=models.CASCADE)
     data_participacao = models.DateField(auto_now_add=True)
     habilitado = models.BooleanField(default=True)
 
     class Meta:
-        unique_together = ('processo', 'fornecedor')
+        unique_together = (('processo', 'fornecedor'),)
 
-    def __str__(self):
-        return f"{self.fornecedor.nome} - {self.processo.numero}"
 
 
 # ============================================================
@@ -162,7 +188,4 @@ class ItemFornecedor(models.Model):
     vencedor = models.BooleanField(default=False)
 
     class Meta:
-        unique_together = ('item', 'fornecedor')
-
-    def __str__(self):
-        return f"{self.item.descricao} - {self.fornecedor.nome}"
+        unique_together = (('item', 'fornecedor'),)
