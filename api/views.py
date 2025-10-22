@@ -105,7 +105,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_201_CREATED
             )
-
     # ------------------------------------------------------------
     # 🔹 LISTAR FORNECEDORES DO PROCESSO
     # ------------------------------------------------------------
