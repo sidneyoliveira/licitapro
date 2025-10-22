@@ -121,6 +121,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         model = ProcessoLicitatorio
         fields = [
             'id',
+            'numero',
             'objeto',
             'modalidade',
             'data_abertura',
