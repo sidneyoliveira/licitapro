@@ -76,8 +76,17 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['numero', 'objeto']
-    filterset_fields = ['modalidade', 'situacao']  # 🔹 corrigido (era 'status')
+    filterset_fields = ['modalidade', 'situacao'] 
 
+    @action(detail=True, methods=['get'])
+    def itens(self, request, pk=None):
+        """
+        Retorna todos os itens vinculados a um processo.
+        """
+        processo = self.get_object()
+        itens = Item.objects.filter(processo=processo).order_by('id')
+        serializer = ItemSerializer(itens, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
     # ------------------------------------------------------------
     # 🔹 ADICIONAR FORNECEDOR
     # ------------------------------------------------------------
