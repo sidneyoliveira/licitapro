@@ -28,8 +28,8 @@ class CustomUserAdmin(admin.ModelAdmin):
 
 @admin.register(Entidade)
 class EntidadeAdmin(admin.ModelAdmin):
-    list_display = ('razao_social', 'cnpj', 'ano')
-    search_fields = ('razao_social', 'cnpj')
+    list_display = ('nome', 'cnpj', 'ano')
+    search_fields = ('nome', 'cnpj')
 
 
 @admin.register(Orgao)
