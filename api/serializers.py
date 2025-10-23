@@ -52,11 +52,11 @@ class OrgaoSerializer(serializers.ModelSerializer):
 class FornecedorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Fornecedor
-        fields = ['id', 'nome', 'cnpj', 'telefone', 'email', 'endereco']
+        fields = ['id', 'razao_social', 'cnpj', 'telefone', 'email', 'endereco']
         read_only_fields = ['id']
 
     def validate(self, attrs):
-        if not attrs.get('nome') or not attrs.get('cnpj'):
+        if not attrs.get('razao_social') or not attrs.get('cnpj'):
             raise serializers.ValidationError("Nome e CNPJ são obrigatórios.")
         return attrs
 
