@@ -120,7 +120,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------
     # 🔹 REMOVER FORNECEDOR
     # ------------------------------------------------------------
-    @action(detail=True, methods=['post'], url_path='remover-fornecedor')
+    @action(detail=True, methods=['post'], url_path='remover_fornecedor')
     def remover_fornecedor(self, request, pk=None):
         """Remove fornecedor participante de um processo."""
         processo = self.get_object()
