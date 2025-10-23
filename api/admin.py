@@ -28,8 +28,8 @@ class CustomUserAdmin(admin.ModelAdmin):
 
 @admin.register(Entidade)
 class EntidadeAdmin(admin.ModelAdmin):
-    list_display = ('nome', 'cnpj', 'ano')
-    search_fields = ('nome', 'cnpj')
+    list_display = ('razao_social', 'cnpj', 'ano')
+    search_fields = ('razao_social', 'cnpj')
 
 
 @admin.register(Orgao)
@@ -69,8 +69,8 @@ class LoteAdmin(admin.ModelAdmin):
 
 @admin.register(Fornecedor)
 class FornecedorAdmin(admin.ModelAdmin):
-    list_display = ('nome', 'cnpj', 'email', 'telefone')
-    search_fields = ('nome', 'cnpj')
+    list_display = ('razao_social', 'cnpj', 'email', 'telefone')
+    search_fields = ('razao_social', 'cnpj')
     list_filter = ('criado_em',)
 
 
@@ -78,7 +78,7 @@ class FornecedorAdmin(admin.ModelAdmin):
 class FornecedorProcessoAdmin(admin.ModelAdmin):
     list_display = ('processo', 'fornecedor', 'habilitado', 'data_participacao')
     list_filter = ('habilitado', 'processo')
-    search_fields = ('fornecedor__nome', 'processo__numero')
+    search_fields = ('fornecedor__razaosocial', 'processo__numero')
 
 
 # ============================================================
@@ -102,4 +102,4 @@ class ItemAdmin(admin.ModelAdmin):
 class ItemFornecedorAdmin(admin.ModelAdmin):
     list_display = ('item', 'fornecedor', 'valor_proposto', 'vencedor')
     list_filter = ('vencedor', 'fornecedor')
-    search_fields = ('item__descricao', 'fornecedor__nome')
+    search_fields = ('item__descricao', 'fornecedor__razaosocial')

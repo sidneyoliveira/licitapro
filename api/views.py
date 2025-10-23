@@ -55,11 +55,11 @@ class OrgaoViewSet(viewsets.ModelViewSet):
 # ============================================================
 
 class FornecedorViewSet(viewsets.ModelViewSet):
-    queryset = Fornecedor.objects.all().order_by('nome')
+    queryset = Fornecedor.objects.all().order_by('razao_social')
     serializer_class = FornecedorSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [SearchFilter, DjangoFilterBackend]
-    search_fields = ['nome', 'cnpj']
+    search_fields = ['razao_social', 'cnpj']
     filterset_fields = ['cnpj']
 
 
@@ -195,7 +195,7 @@ class FornecedorProcessoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['processo', 'fornecedor']
-    search_fields = ['fornecedor__nome', 'processo__numero']
+    search_fields = ['fornecedor__razaosocial', 'processo__numero']
 
 
 # ============================================================
@@ -208,7 +208,7 @@ class ItemFornecedorViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['item', 'fornecedor', 'vencedor']
-    search_fields = ['item__descricao', 'fornecedor__nome']
+    search_fields = ['item__descricao', 'fornecedor__razaosocial']
 
 
 # ============================================================
