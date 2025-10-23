@@ -147,7 +147,7 @@ class Lote(models.Model):
 # ============================================================
 
 class Fornecedor(models.Model):
-    nome = models.CharField(max_length=255, blank=True)
+    razao_social = models.CharField(max_length=255, blank=True)
     cnpj = models.CharField(max_length=18, unique=True)
     telefone = models.CharField(max_length=30, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
@@ -155,10 +155,10 @@ class Fornecedor(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['nome']
+        ordering = ['razao_social']
 
     def __str__(self):
-        return self.nome or self.cnpj
+        return self.razao_social or self.cnpj
 
 
 # ============================================================
@@ -201,7 +201,7 @@ class FornecedorProcesso(models.Model):
         verbose_name_plural = "Fornecedores do Processo"
 
     def __str__(self):
-        return f"{self.fornecedor.nome or self.fornecedor.cnpj} - {self.processo.numero}"
+        return f"{self.fornecedor.razao_social or self.fornecedor.cnpj} - {self.processo.numero}"
 
 
 # ============================================================
@@ -220,4 +220,4 @@ class ItemFornecedor(models.Model):
         verbose_name_plural = "Propostas de Fornecedores"
 
     def __str__(self):
-        return f"{self.item.descricao} - {self.fornecedor.nome or self.fornecedor.cnpj}"
+        return f"{self.item.descricao} - {self.fornecedor.razao_social or self.fornecedor.cnpj}"
