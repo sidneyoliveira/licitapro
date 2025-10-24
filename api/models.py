@@ -151,7 +151,7 @@ class Fornecedor(models.Model):
     razao_social = models.CharField(max_length=255)
     nome_fantasia = models.CharField(max_length=255, blank=True, null=True)
     porte = models.CharField(max_length=100, blank=True, null=True)
-    natureza_juridica = models.CharField(max_length=255, blank=True, null=True)
+    telefone = models.CharField(max_length=20)  # <- precisa disso
     email = models.EmailField(blank=True, null=True)
     cep = models.CharField(max_length=20, blank=True, null=True)
     logradouro = models.CharField(max_length=255, blank=True, null=True)

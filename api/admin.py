@@ -69,9 +69,41 @@ class LoteAdmin(admin.ModelAdmin):
 
 @admin.register(Fornecedor)
 class FornecedorAdmin(admin.ModelAdmin):
-    list_display = ('razao_social', 'cnpj', 'email', 'telefone')
-    search_fields = ('razao_social', 'cnpj')
-    list_filter = ('criado_em',)
+    list_display = (
+        'razao_social',
+        'nome_fantasia',
+        'cnpj',
+        'porte',
+        'telefone',
+        'email',
+        'cep',
+        'logradouro',
+        'numero',
+        'bairro',
+        'complemento',
+        'uf',
+        'municipio',
+        'criado_em',
+    )
+
+    search_fields = (
+        'razao_social',
+        'nome_fantasia',
+        'cnpj',
+        'email',
+        'telefone',
+        'municipio',
+        'uf',
+    )
+
+    list_filter = (
+        'porte',
+        'uf',
+        'municipio',
+        'criado_em',
+    )
+
+    ordering = ('razao_social',)
 
 
 @admin.register(FornecedorProcesso)
