@@ -52,14 +52,12 @@ class OrgaoSerializer(serializers.ModelSerializer):
 class FornecedorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Fornecedor
-        fields = ['id', 'razao_social', 'cnpj', 'telefone', 'email', 'endereco']
-        read_only_fields = ['id']
-
-    def validate(self, attrs):
-        if not attrs.get('razao_social') or not attrs.get('cnpj'):
-            raise serializers.ValidationError("Nome e CNPJ são obrigatórios.")
-        return attrs
-
+        fields = [
+            'id', 'cnpj', 'razao_social', 'nome_fantasia', 'porte',
+            'natureza_juridica', 'email', 'cep', 'logradouro', 'numero',
+            'bairro', 'complemento', 'uf', 'municipio', 'criado_em'
+        ]
+        read_only_fields = ['id', 'criado_em']
 
 # ============================================================
 # 4️⃣ LOTE

@@ -147,11 +147,19 @@ class Lote(models.Model):
 # ============================================================
 
 class Fornecedor(models.Model):
-    razao_social = models.CharField(max_length=255, blank=True)
     cnpj = models.CharField(max_length=18, unique=True)
-    telefone = models.CharField(max_length=30, blank=True, null=True)
+    razao_social = models.CharField(max_length=255)
+    nome_fantasia = models.CharField(max_length=255, blank=True, null=True)
+    porte = models.CharField(max_length=100, blank=True, null=True)
+    natureza_juridica = models.CharField(max_length=255, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
-    endereco = models.CharField(max_length=255, blank=True, null=True)
+    cep = models.CharField(max_length=20, blank=True, null=True)
+    logradouro = models.CharField(max_length=255, blank=True, null=True)
+    numero = models.CharField(max_length=50, blank=True, null=True)
+    bairro = models.CharField(max_length=100, blank=True, null=True)
+    complemento = models.CharField(max_length=255, blank=True, null=True)
+    uf = models.CharField(max_length=2, blank=True, null=True)
+    municipio = models.CharField(max_length=100, blank=True, null=True)
     criado_em = models.DateTimeField(auto_now_add=True)
 
     class Meta:
