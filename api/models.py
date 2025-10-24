@@ -164,6 +164,7 @@ class Fornecedor(models.Model):
 
     class Meta:
         ordering = ['razao_social']
+        managed = True
 
     def __str__(self):
         return self.razao_social or self.cnpj
