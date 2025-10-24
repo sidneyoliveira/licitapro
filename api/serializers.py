@@ -54,7 +54,7 @@ class FornecedorSerializer(serializers.ModelSerializer):
         model = Fornecedor
         fields = [
             'id', 'cnpj', 'razao_social', 'nome_fantasia', 'porte',
-            'natureza_juridica', 'email', 'cep', 'logradouro', 'numero',
+            'telefone', 'email', 'cep', 'logradouro', 'numero',
             'bairro', 'complemento', 'uf', 'municipio', 'criado_em'
         ]
         read_only_fields = ['id', 'criado_em']
