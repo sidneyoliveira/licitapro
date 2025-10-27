@@ -59,7 +59,7 @@ class Orgao(models.Model):
 # ============================================================
 
 class ProcessoLicitatorio(models.Model):
-    numero = models.CharField(max_length=50, unique=True)
+    numero = models.CharField(max_length=50, unique=True, blank=True, null=True)
     numero_processo = models.CharField(max_length=50, blank=True, null=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
     objeto = models.TextField()
