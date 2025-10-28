@@ -283,3 +283,78 @@ class DashboardStatsView(APIView):
             'total_itens': total_itens,
         }
         return Response(data)
+
+
+# ============================================================
+# 🔟 LOGIN COM GOOGLE
+# ============================================================
+
+from google.oauth2 import id_token
+from google.auth.transport import requests
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.conf import settings
+
+
+class GoogleLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        """
+        Espera:
+        {
+            "token": "<google_id_token>"
+        }
+        Retorna:
+        {
+            "access": "...",
+            "refresh": "..."
+        }
+        """
+
+        google_token = request.data.get("token")
+
+        if not google_token:
+            return Response(
+                {"detail": "Token do Google ausente."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # ✅ Valida token junto ao Google
+            id_info = id_token.verify_oauth2_token(
+                google_token,
+                requests.Request(),
+                settings.GOOGLE_CLIENT_ID,
+            )
+
+            if not id_info.get("email_verified"):
+                return Response({"detail": "Email não verificado."}, status=status.HTTP_400_BAD_REQUEST)
+
+            email = id_info.get("email")
+            nome = id_info.get("name", "")
+            picture = id_info.get("picture", "")
+
+            # ✅ Usa e-mail como identificador do usuário
+            user, created = CustomUser.objects.get_or_create(
+                email=email,
+                defaults={
+                    "username": email,
+                    "first_name": nome.split(" ")[0] if nome else "",
+                    "last_name": " ".join(nome.split(" ")[1:]),
+                }
+            )
+
+            # ✅ Gera tokens JWT igual login normal
+            refresh = RefreshToken.for_user(user)
+
+            return Response({
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "new_user": created
+            }, status=status.HTTP_200_OK)
+
+        except ValueError:
+            return Response({"detail": "Token inválido do Google."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            print("Erro Login Google:", e)
+            return Response({"detail": "Erro no login com Google."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
