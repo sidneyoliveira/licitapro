@@ -1,3 +1,5 @@
+atualize aqui views
+
 from rest_framework import viewsets, generics, status, serializers
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
