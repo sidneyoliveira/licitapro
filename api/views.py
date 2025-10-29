@@ -284,77 +284,89 @@ class DashboardStatsView(APIView):
         }
         return Response(data)
 
-
 # ============================================================
-# 🔟 LOGIN COM GOOGLE
+# 🔟 LOGIN COM GOOGLE (Atualizado)
 # ============================================================
 
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.conf import settings
+import logging
 
+logger = logging.getLogger(__name__)
 
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        """
-        Espera:
-        {
-            "token": "<google_id_token>"
-        }
-        Retorna:
-        {
-            "access": "...",
-            "refresh": "..."
-        }
-        """
 
+        # Token vindo do front via Google Identity Services
         google_token = request.data.get("token")
+        logger.info(f"Token recebido: {bool(google_token)}")
 
         if not google_token:
-            return Response(
-                {"detail": "Token do Google ausente."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"detail": "Token do Google ausente."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # ✅ Valida token junto ao Google
+            logger.info("Validando token com Google...")
             id_info = id_token.verify_oauth2_token(
                 google_token,
                 requests.Request(),
                 settings.GOOGLE_CLIENT_ID,
             )
 
+            logger.info("Token validado com sucesso!")
+
+            # Verifica e-mail verificado no Google
             if not id_info.get("email_verified"):
-                return Response({"detail": "Email não verificado."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"detail": "Email não verificado pelo Google."},
+                                status=status.HTTP_401_UNAUTHORIZED)
 
             email = id_info.get("email")
-            nome = id_info.get("name", "")
+            nome = id_info.get("name") or ""
             picture = id_info.get("picture", "")
 
-            # ✅ Usa e-mail como identificador do usuário
+            if not email:
+                return Response({"detail": "E-mail não fornecido pelo Google."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            # Criar ou obter usuário com base no e-mail
             user, created = CustomUser.objects.get_or_create(
                 email=email,
                 defaults={
                     "username": email,
-                    "first_name": nome.split(" ")[0] if nome else "",
+                    "first_name": nome.split(" ")[0],
                     "last_name": " ".join(nome.split(" ")[1:]),
                 }
             )
 
-            # ✅ Gera tokens JWT igual login normal
+            # Gera tokens JWT
             refresh = RefreshToken.for_user(user)
+            access_token = str(refresh.access_token)
 
+            logger.info(f"Usuário autenticado: {email}")
+
+            # Resposta final
             return Response({
-                "access": str(refresh.access_token),
+                "access": access_token,
                 "refresh": str(refresh),
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "name": nome,
+                    "picture": picture,
+                },
                 "new_user": created
             }, status=status.HTTP_200_OK)
 
-        except ValueError:
-            return Response({"detail": "Token inválido do Google."}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as e:
+            logger.error(f"Token inválido: {e}")
+            return Response({"detail": "Token inválido do Google."},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
         except Exception as e:
-            print("Erro Login Google:", e)
-            return Response({"detail": "Erro no login com Google."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception("Erro inesperado no login Google")
+            return Response({"detail": "Erro no login com Google."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)

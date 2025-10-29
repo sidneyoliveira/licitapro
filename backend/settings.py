@@ -49,7 +49,7 @@ CSRF_TRUSTED_ORIGINS = [
     'http://l3solution.net.br'
 ]
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_ID = "517041394367-mlm4c069q8fmb45ks39a7q7ih2sgmnd0.apps.googleusercontent.com"
 
 
 REST_FRAMEWORK = {
