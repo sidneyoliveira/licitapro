@@ -10,6 +10,7 @@ from django.utils import timezone
 class CustomUser(AbstractUser):
     cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
     data_nascimento = models.DateField(null=True, blank=True)
+    phone = models.CharField(max_length=20, null=True, blank=True)
 
     # Corrige conflitos de related_name duplicados no admin
     groups = models.ManyToManyField(

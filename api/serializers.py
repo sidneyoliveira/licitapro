@@ -21,9 +21,31 @@ from .models import (
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'first_name', 'last_name']
-        read_only_fields = ['id']
+        fields = [
+            'id',
+            'username',
+            'email',
+            'first_name',
+            'last_name',
+            'cpf',
+            'phone',
+            'data_nascimento',
+            'password'
+        ]
+        read_only_fields = ['id', 'username']
+        extra_kwargs = {
+            'password': {'write_only': True, 'required': False}
+        }
 
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        user = super().update(instance, validated_data)
+
+        if password:
+            user.set_password(password)
+            user.save()
+
+        return user
 
 # ============================================================
 # 2️⃣ ENTIDADE / ÓRGÃO
