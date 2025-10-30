@@ -50,8 +50,8 @@ class LoteInline(admin.TabularInline):
 
 @admin.register(ProcessoLicitatorio)
 class ProcessoLicitatorioAdmin(admin.ModelAdmin):
-    list_display = ('id', 'processo__numero', 'situacao', 'modalidade', 'data_abertura')
-    search_fields = ('processo__numero', 'objeto', 'orgao__nome')
+    list_display = ('id', 'situacao', 'modalidade', 'data_abertura')
+    search_fields = ('objeto', 'orgao__nome')
     list_filter = ('modalidade', 'situacao')
     inlines = [LoteInline]
 
