@@ -258,11 +258,26 @@ class CreateUserView(generics.CreateAPIView):
 
 
 class ManageUserView(generics.RetrieveUpdateAPIView):
+    """
+    Endpoint para obter e atualizar os dados do usuário autenticado.
+    Aceita JSON e multipart/form-data (para upload de imagem de perfil).
+    """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
         return self.request.user
+
+    def put(self, request, *args, **kwargs):
+        """
+        PUT personalizado para permitir upload de imagem e atualização parcial.
+        """
+        partial = True  # Permite atualizar apenas alguns campos
+        serializer = self.get_serializer(self.get_object(), data=request.data, partial=partial)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class DashboardStatsView(APIView):
@@ -283,6 +298,7 @@ class DashboardStatsView(APIView):
             'total_itens': total_itens,
         }
         return Response(data)
+
 
 # ============================================================
 # 🔟 LOGIN COM GOOGLE (Atualizado)

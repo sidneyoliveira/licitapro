@@ -19,6 +19,8 @@ from .models import (
 # ============================================================
 
 class UserSerializer(serializers.ModelSerializer):
+    profile_image = serializers.ImageField(required=False, allow_null=True)
+
     class Meta:
         model = CustomUser
         fields = [
@@ -31,6 +33,7 @@ class UserSerializer(serializers.ModelSerializer):
             'phone',
             'data_nascimento',
             'password'
+            'profile_image',
         ]
         read_only_fields = ['id', 'username']
         extra_kwargs = {
@@ -147,15 +150,15 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             'data_abertura',
             'situacao',
             'entidade',
-            'entidade_nome',       # 👈 adicionado
+            'entidade_nome',       
             'orgao',
-            'orgao_nome',          # 👈 adicionado
+            'orgao_nome',         
             'valor_referencia',
             'vigencia_meses',
             'classificacao',
             'tipo_organizacao',
-            'registro_preco',      # campo original (bool)
-            'registro_preco_display',  # 👈 exibição “Sim/Não”
+            'registro_preco',      
+            'registro_preco_display',  
             'data_processo',
             'numero_processo',
             'numero_certame',
