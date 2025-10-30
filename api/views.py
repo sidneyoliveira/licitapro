@@ -75,7 +75,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     serializer_class = ProcessoLicitatorioSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    search_fields = ['numero', 'objeto']
+    search_fields = ['numero_processo', 'objeto']
     filterset_fields = ['modalidade', 'situacao'] 
 
     @action(detail=True, methods=['get'])

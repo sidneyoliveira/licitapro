@@ -61,7 +61,6 @@ class Orgao(models.Model):
 # ============================================================
 
 class ProcessoLicitatorio(models.Model):
-    numero = models.CharField(max_length=50, unique=True, blank=True)
     numero_processo = models.CharField(max_length=50, blank=True, null=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
     objeto = models.TextField()
@@ -118,13 +117,14 @@ class ProcessoLicitatorio(models.Model):
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
 
+
     class Meta:
         ordering = ['-data_processo']
         verbose_name = "Processo Licitatório"
         verbose_name_plural = "Processos Licitatórios"
 
     def __str__(self):
-        return f"{self.numero_certame or self.numero}"
+        return f"{self.numero_certame}"
 
 
 # ============================================================
@@ -141,7 +141,7 @@ class Lote(models.Model):
         ordering = ['numero']
 
     def __str__(self):
-        return f"Lote {self.numero} ({self.processo.numero})"
+        return f"Lote {self.numero} ({self.processo.numero_processo})"
 
 
 # ============================================================
@@ -193,7 +193,7 @@ class Item(models.Model):
         unique_together = (('processo', 'ordem'),)
 
     def __str__(self):
-        return f"{self.descricao} ({self.processo.numero})"
+        return f"{self.descricao} ({self.processo.numero_processo})"
 
 
 # ============================================================
@@ -212,7 +212,7 @@ class FornecedorProcesso(models.Model):
         verbose_name_plural = "Fornecedores do Processo"
 
     def __str__(self):
-        return f"{self.fornecedor.razao_social or self.fornecedor.cnpj} - {self.processo.numero}"
+        return f"{self.fornecedor.razao_social or self.fornecedor.cnpj} - {self.processo.numero_processo}"
 
 
 # ============================================================

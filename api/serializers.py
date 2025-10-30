@@ -39,7 +39,7 @@ class UserSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True, 'required': False}
         }
-        
+
     def get_profile_image(self, obj):
         request = self.context.get('request')
         if obj.profile_image and hasattr(obj.profile_image, 'url'):
@@ -95,7 +95,7 @@ class FornecedorSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class LoteSerializer(serializers.ModelSerializer):
-    processo_numero = serializers.CharField(source='processo.numero', read_only=True)
+    processo_numero = serializers.CharField(source='processo.numero_processo', read_only=True)
 
     class Meta:
         model = Lote
@@ -108,7 +108,7 @@ class LoteSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ItemSerializer(serializers.ModelSerializer):
-    processo_numero = serializers.CharField(source='processo.numero', read_only=True)
+    processo_numero = serializers.CharField(source='processo.numero_processo', read_only=True)
     lote_numero = serializers.CharField(source='lote.numero', read_only=True)
     fornecedor_nome = serializers.CharField(source='fornecedor.nome', read_only=True)
 
@@ -150,7 +150,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         model = ProcessoLicitatorio
         fields = [
             'id',
-            'numero',
             'objeto',
             'modalidade',
             'data_abertura',
@@ -179,7 +178,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
 
 class FornecedorProcessoSerializer(serializers.ModelSerializer):
     fornecedor_nome = serializers.CharField(source='fornecedor.nome', read_only=True)
-    processo_numero = serializers.CharField(source='processo.numero', read_only=True)
+    processo_numero = serializers.CharField(source='processo.numero_processo', read_only=True)
 
     class Meta:
         model = FornecedorProcesso
