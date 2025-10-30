@@ -259,8 +259,8 @@ class CreateUserView(generics.CreateAPIView):
 
 class ManageUserView(generics.RetrieveUpdateAPIView):
     """
-    Endpoint para obter e atualizar os dados do usuário autenticado.
-    Aceita JSON e multipart/form-data (para upload de imagem de perfil).
+    GET /me/  -> retorna usuário autenticado
+    PUT /me/  -> atualiza parcialmente (JSON ou multipart para foto)
     """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
@@ -268,17 +268,25 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         return self.request.user
 
-    def put(self, request, *args, **kwargs):
-        """
-        PUT personalizado para permitir upload de imagem e atualização parcial.
-        """
-        partial = True  # Permite atualizar apenas alguns campos
-        serializer = self.get_serializer(self.get_object(), data=request.data, partial=partial)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    # ✅ injeta o request no serializer (necessário p/ URL absoluta)
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['request'] = self.request
+        return ctx
 
+    # opcional: garantir partial update e multipart
+    def put(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    # se quiser PATCH também:
+    def patch(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data)
 
 class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
