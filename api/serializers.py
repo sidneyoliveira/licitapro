@@ -32,7 +32,7 @@ class UserSerializer(serializers.ModelSerializer):
             'cpf',
             'phone',
             'data_nascimento',
-            'password'
+            'password',
             'profile_image',
         ]
         read_only_fields = ['id', 'username']
