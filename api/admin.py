@@ -58,8 +58,8 @@ class ProcessoLicitatorioAdmin(admin.ModelAdmin):
 
 @admin.register(Lote)
 class LoteAdmin(admin.ModelAdmin):
-    list_display = ('processo__numero', 'processo', 'descricao')
-    search_fields = ('processo__numero', 'descricao')
+    list_display = ('numero', 'processo', 'descricao')
+    search_fields = ('numero', 'descricao')
     list_filter = ('processo',)
 
 
