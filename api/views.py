@@ -453,7 +453,7 @@ class DashboardStatsView(APIView):
 # ============================================================
 
 from google.oauth2 import id_token
-from google.auth.transport import requests
+from google.auth.transport import requests as google_requests
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.conf import settings
 import logging
@@ -475,7 +475,7 @@ class GoogleLoginView(APIView):
             logger.info("Validando token com Google...")
             id_info = id_token.verify_oauth2_token(
                 google_token,
-                requests.Request(),
+                google_requests.Request(),
                 settings.GOOGLE_CLIENT_ID,
             )
             logger.info("Token validado com sucesso!")

@@ -116,13 +116,14 @@ class LoteSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# 5️⃣ ITEM
+# 5️⃣ ITEM (melhorias)
 # ============================================================
+from django.db.models import Max
 
 class ItemSerializer(serializers.ModelSerializer):
     processo_numero = serializers.CharField(source='processo.numero_processo', read_only=True)
-    lote_numero = serializers.IntegerField(source='lote.numero', read_only=True)
-    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True)
+    lote_numero = serializers.CharField(source='lote.numero', read_only=True)
+    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True)  # <- campo certo
 
     class Meta:
         model = Item
@@ -138,19 +139,8 @@ class ItemSerializer(serializers.ModelSerializer):
             'lote_numero',
             'fornecedor',
             'fornecedor_nome',
-            'ordem',
         ]
-        read_only_fields = ['id', 'processo_numero', 'lote_numero', 'fornecedor_nome', 'ordem']
-
-    def create(self, validated_data):
-        """
-        Define ordem incremental por processo (Max('ordem') + 1).
-        """
-        processo = validated_data.get('processo')
-        if processo:
-            last_ord = Item.objects.filter(processo=processo).aggregate(m=Max('ordem'))['m'] or 0
-            validated_data['ordem'] = last_ord + 1
-        return super().create(validated_data)
+        read_only_fields = ['id', 'processo_numero', 'lote_numero', 'fornecedor_nome']
 
     def validate(self, attrs):
         """
@@ -164,16 +154,12 @@ class ItemSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# 6️⃣ PROCESSO LICITATÓRIO
+# 6️⃣ PROCESSO LICITATÓRIO (corrigido)
 # ============================================================
-
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     entidade_nome = serializers.CharField(source='entidade.nome', read_only=True)
     orgao_nome = serializers.CharField(source='orgao.nome', read_only=True)
-
-    # compatibilidade: expõe o campo do banco e um alias amigável ao front
     registro_preco_display = serializers.SerializerMethodField()
-    registro_precos = serializers.BooleanField(source='registro_precos', required=False)  # alias (property no model)
 
     class Meta:
         model = ProcessoLicitatorio
@@ -191,24 +177,22 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             'vigencia_meses',
             'classificacao',
             'tipo_organizacao',
-            'registro_preco',           # campo real do banco
-            'registro_precos',          # alias (front)
-            'registro_preco_display',   # "Sim"/"Não"
+            'registro_preco',         
+            'registro_preco_display',
             'data_processo',
             'numero_processo',
             'numero_certame',
         ]
+        read_only_fields = ['id', 'entidade_nome', 'orgao_nome', 'registro_preco_display']
 
     def get_registro_preco_display(self, obj):
         return "Sim" if obj.registro_preco else "Não"
 
-
 # ============================================================
-# 7️⃣ FORNECEDOR ↔ PROCESSO (participantes)
+# 7️⃣ FORNECEDOR ↔ PROCESSO (participantes) — nomes corretos
 # ============================================================
-
 class FornecedorProcessoSerializer(serializers.ModelSerializer):
-    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True)
+    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True)  # <- campo certo
     processo_numero = serializers.CharField(source='processo.numero_processo', read_only=True)
 
     class Meta:
@@ -220,10 +204,9 @@ class FornecedorProcessoSerializer(serializers.ModelSerializer):
             'fornecedor',
             'fornecedor_nome',
             'data_participacao',
-            'habilitado'
+            'habilitado',
         ]
         read_only_fields = ['id', 'data_participacao', 'fornecedor_nome', 'processo_numero']
-
 
 # ============================================================
 # 8️⃣ ITEM ↔ FORNECEDOR (propostas e vencedores)
