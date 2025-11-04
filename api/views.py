@@ -306,8 +306,8 @@ class ItemViewSet(viewsets.ModelViewSet):
     search_fields = ['descricao', 'unidade']
 
     def perform_create(self, serializer):
-        """A criação automática de ordem é tratada no serializer."""
-        return serializer.save()
+        # Garante que 'ordem' será sempre calculado no serializer
+        serializer.save()
 
     @action(detail=True, methods=['post'], url_path='definir-fornecedor')
     def definir_fornecedor(self, request, pk=None):

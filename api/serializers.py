@@ -123,7 +123,7 @@ from django.db.models import Max
 class ItemSerializer(serializers.ModelSerializer):
     processo_numero = serializers.CharField(source='processo.numero_processo', read_only=True)
     lote_numero = serializers.CharField(source='lote.numero', read_only=True)
-    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True)  # <- campo certo
+    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True)  # opcional: use o campo correto
 
     class Meta:
         model = Item
@@ -139,18 +139,27 @@ class ItemSerializer(serializers.ModelSerializer):
             'lote_numero',
             'fornecedor',
             'fornecedor_nome',
+            # 'ordem'  # NÃO exponha 'ordem' para criação/edição pelo cliente
         ]
         read_only_fields = ['id', 'processo_numero', 'lote_numero', 'fornecedor_nome']
 
-    def validate(self, attrs):
+    def create(self, validated_data):
         """
-        Garante que, se houver lote, ele pertença ao mesmo processo.
+        Define a próxima ordem de forma segura (MAX(ordem) + 1) para o processo.
         """
-        processo = attrs.get('processo') or getattr(self.instance, 'processo', None)
-        lote = attrs.get('lote') or getattr(self.instance, 'lote', None)
-        if lote and processo and lote.processo_id != processo.id:
-            raise serializers.ValidationError("O lote selecionado pertence a outro processo.")
-        return attrs
+        processo = validated_data.get('processo')
+        if not processo:
+            # se por algum motivo não veio, DRF já validaria, mas deixamos claro
+            raise serializers.ValidationError({"processo": "Processo é obrigatório."})
+
+        with transaction.atomic():
+            next_ordem = (
+                Item.objects
+                .filter(processo=processo)
+                .aggregate(max_o=Max('ordem'))['max_o'] or 0
+            ) + 1
+            validated_data['ordem'] = next_ordem
+            return super().create(validated_data)
 
 
 # ============================================================
