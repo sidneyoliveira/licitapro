@@ -1,12 +1,11 @@
-from rest_framework import viewsets, generics, status, serializers
+from rest_framework import viewsets, generics, status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter
-from django.db.models import Count
 
 from .models import (
     CustomUser,
@@ -30,7 +29,6 @@ from .serializers import (
     FornecedorProcessoSerializer,
     ItemFornecedorSerializer
 )
-
 
 # ============================================================
 # 1️⃣ ENTIDADE / ÓRGÃO
@@ -66,33 +64,41 @@ class FornecedorViewSet(viewsets.ModelViewSet):
 # ============================================================
 # 3️⃣ PROCESSO LICITATÓRIO
 # ============================================================
+
 class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     """
-    Gerencia os processos licitatórios.
-    Inclui ações para adicionar, remover e listar fornecedores participantes.
+    Gerencia os processos licitatórios e expõe actions de:
+    - itens do processo
+    - fornecedores (adicionar/listar/remover)
+    - lotes (listar/criar) e organização de lotes
     """
     queryset = ProcessoLicitatorio.objects.all().order_by('-data_abertura')
     serializer_class = ProcessoLicitatorioSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    search_fields = ['numero_processo', 'objeto']
-    filterset_fields = ['modalidade', 'situacao'] 
+    search_fields = ['numero_processo', 'numero_certame', 'objeto']
+    filterset_fields = ['modalidade', 'situacao', 'entidade', 'orgao']
 
+    # ---------------- ITENS DO PROCESSO ----------------
     @action(detail=True, methods=['get'])
     def itens(self, request, pk=None):
         """
+        GET /api/processos/<pk>/itens/
         Retorna todos os itens vinculados a um processo.
         """
         processo = self.get_object()
-        itens = Item.objects.filter(processo=processo).order_by('id')
+        itens = Item.objects.filter(processo=processo).select_related('lote', 'fornecedor').order_by('ordem', 'id')
         serializer = ItemSerializer(itens, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    # ------------------------------------------------------------
-    # 🔹 ADICIONAR FORNECEDOR
-    # ------------------------------------------------------------
+
+    # ---------------- FORNECEDORES (VÍNCULO) ----------------
     @action(detail=True, methods=['post'], url_path='adicionar_fornecedor')
     def adicionar_fornecedor(self, request, pk=None):
-        """Adiciona fornecedor participante a um processo."""
+        """
+        POST /api/processos/<pk>/adicionar_fornecedor/
+        Body: { "fornecedor_id": <id> }
+        Vincula um fornecedor ao processo.
+        """
         processo = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
 
@@ -106,32 +112,33 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             obj, created = FornecedorProcesso.objects.get_or_create(processo=processo, fornecedor=fornecedor)
-            return Response(
-                {
-                    'detail': 'Fornecedor vinculado ao processo com sucesso!',
-                    'fornecedor': FornecedorSerializer(fornecedor).data,
-                    'created': created
-                },
-                status=status.HTTP_201_CREATED
-            )
-    # ------------------------------------------------------------
-    # 🔹 LISTAR FORNECEDORES DO PROCESSO
-    # ------------------------------------------------------------
+        return Response(
+            {
+                'detail': 'Fornecedor vinculado ao processo com sucesso!',
+                'fornecedor': FornecedorSerializer(fornecedor).data,
+                'created': created
+            },
+            status=status.HTTP_201_CREATED
+        )
+
     @action(detail=True, methods=['get'], url_path='fornecedores')
     def fornecedores(self, request, pk=None):
-        """Lista fornecedores vinculados a um processo."""
+        """
+        GET /api/processos/<pk>/fornecedores/
+        Lista fornecedores vinculados a um processo.
+        """
         processo = self.get_object()
-        # 🔧 Corrigido o nome do related_name: Fornecedor tem `processos`
-        fornecedores = Fornecedor.objects.filter(processos__processo=processo)
+        fornecedores = Fornecedor.objects.filter(processos__processo=processo).order_by('razao_social')
         serializer = FornecedorSerializer(fornecedores, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    # ------------------------------------------------------------
-    # 🔹 REMOVER FORNECEDOR
-    # ------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='remover_fornecedor')
     def remover_fornecedor(self, request, pk=None):
-        """Remove fornecedor participante de um processo."""
+        """
+        POST /api/processos/<pk>/remover_fornecedor/
+        Body: { "fornecedor_id": <id> }
+        Remove vínculo de fornecedor com o processo.
+        """
         processo = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
 
@@ -144,8 +151,135 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         if deleted:
             return Response({'detail': 'Fornecedor removido com sucesso.'}, status=status.HTTP_200_OK)
-        else:
-            return Response({'detail': 'Nenhum vínculo encontrado para remover.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'detail': 'Nenhum vínculo encontrado para remover.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # ---------------- LOTES (NESTED) ----------------
+    @action(detail=True, methods=['get', 'post'], url_path='lotes')
+    def lotes(self, request, pk=None):
+        """
+        GET  /api/processos/<pk>/lotes/  -> lista lotes do processo
+        POST /api/processos/<pk>/lotes/  -> cria lote(s)
+
+        POST payloads aceitos:
+          { "numero": 3, "descricao": "Lote 3" }                      # cria único
+          { "descricao": "Auto" }                                     # cria único com próximo número disponível
+          [ { "numero": 1, "descricao": "A" }, { "numero": 2, ... } ] # cria vários
+          { "quantidade": 5, "descricao_prefixo": "Lote " }           # cria N sequenciais
+        """
+        processo = self.get_object()
+
+        if request.method.lower() == 'get':
+            qs = processo.lotes.order_by('numero')
+            return Response(LoteSerializer(qs, many=True).data)
+
+        payload = request.data
+
+        def next_numero():
+            ultimo = processo.lotes.order_by('-numero').first()
+            return (ultimo.numero + 1) if ultimo else 1
+
+        created = []
+        with transaction.atomic():
+            # lista explícita
+            if isinstance(payload, list):
+                for item in payload:
+                    n = item.get('numero') or next_numero()
+                    d = item.get('descricao', '')
+                    obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
+                    created.append(obj)
+
+            # por quantidade
+            elif isinstance(payload, dict) and 'quantidade' in payload:
+                try:
+                    qtd = int(payload.get('quantidade') or 0)
+                except (TypeError, ValueError):
+                    return Response({"detail": "quantidade inválida."}, status=400)
+                if qtd <= 0:
+                    return Response({"detail": "quantidade deve ser > 0"}, status=400)
+
+                prefixo = payload.get('descricao_prefixo', 'Lote ')
+                start = next_numero()
+                for i in range(qtd):
+                    n = start + i
+                    d = f"{prefixo}{n}"
+                    obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
+                    created.append(obj)
+
+            # único
+            elif isinstance(payload, dict):
+                n = payload.get('numero') or next_numero()
+                d = payload.get('descricao', '')
+                obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
+                created.append(obj)
+
+            else:
+                return Response({"detail": "Payload inválido."}, status=400)
+
+        return Response(LoteSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['patch'], url_path='lotes/organizar')
+    def organizar_lotes(self, request, pk=None):
+        """
+        PATCH /api/processos/<pk>/lotes/organizar/
+
+        Payloads aceitos:
+        1) Renumerar pela ordem de IDs:
+           { "ordem_ids": [5, 2, 7], "inicio": 1 }
+        2) Normalizar (sem buracos) a partir de 'inicio':
+           { "normalizar": true, "inicio": 1 }
+        3) Mapear números explicitamente:
+           { "mapa": [ {"id": 5, "numero": 10}, {"id": 2, "numero": 11} ] }
+        """
+        processo = self.get_object()
+        data = request.data
+
+        with transaction.atomic():
+            # 1) pela ordem enviada
+            ordem_ids = data.get('ordem_ids')
+            if isinstance(ordem_ids, list) and ordem_ids:
+                qs = list(processo.lotes.filter(id__in=ordem_ids))
+                id2obj = {o.id: o for o in qs}
+                numero = int(data.get('inicio') or 1)
+                for _id in ordem_ids:
+                    obj = id2obj.get(_id)
+                    if obj:
+                        obj.numero = numero
+                        obj.save(update_fields=['numero'])
+                        numero += 1
+                out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
+                return Response(out)
+
+            # 2) normalizar
+            if data.get('normalizar'):
+                inicio = int(data.get('inicio') or 1)
+                numero = inicio
+                for obj in processo.lotes.order_by('numero', 'id'):
+                    if obj.numero != numero:
+                        obj.numero = numero
+                        obj.save(update_fields=['numero'])
+                    numero += 1
+                out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
+                return Response(out)
+
+            # 3) mapear id->numero
+            mapa = data.get('mapa')
+            if isinstance(mapa, list) and mapa:
+                ids = [m.get('id') for m in mapa if m.get('id') is not None]
+                qs = processo.lotes.filter(id__in=ids)
+                id2obj = {o.id: o for o in qs}
+                for m in mapa:
+                    _id = m.get('id')
+                    num = m.get('numero')
+                    if _id in id2obj and isinstance(num, int) and num > 0:
+                        obj = id2obj[_id]
+                        obj.numero = num
+                        obj.save(update_fields=['numero'])
+                out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
+                return Response(out)
+
+        return Response({"detail": "Payload inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+
 # ============================================================
 # 4️⃣ LOTE
 # ============================================================
@@ -177,7 +311,11 @@ class ItemViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='definir-fornecedor')
     def definir_fornecedor(self, request, pk=None):
-        """Vincula um fornecedor a um item (vencedor)."""
+        """
+        POST /api/itens/<id>/definir-fornecedor/
+        Body: { "fornecedor_id": <id> }
+        Vincula um fornecedor ao item.
+        """
         item = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
 
@@ -190,7 +328,7 @@ class ItemViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Fornecedor não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         item.fornecedor = fornecedor
-        item.save()
+        item.save(update_fields=['fornecedor'])
         return Response({'detail': 'Fornecedor vinculado ao item com sucesso.'}, status=status.HTTP_200_OK)
 
 
@@ -204,7 +342,8 @@ class FornecedorProcessoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['processo', 'fornecedor']
-    search_fields = ['fornecedor__razaosocial', 'processo__numero']
+    # corrigido: campos existentes
+    search_fields = ['fornecedor__razao_social', 'fornecedor__cnpj', 'processo__numero_processo', 'processo__numero_certame']
 
 
 # ============================================================
@@ -217,7 +356,8 @@ class ItemFornecedorViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['item', 'fornecedor', 'vencedor']
-    search_fields = ['item__descricao', 'fornecedor__razaosocial']
+    # corrigido: campos existentes
+    search_fields = ['item__descricao', 'fornecedor__razao_social', 'fornecedor__cnpj']
 
 
 # ============================================================
@@ -228,12 +368,13 @@ class ReorderItensView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, format=None):
+        """
+        Body: { "item_ids": [ <id1>, <id2>, ... ] }
+        Reordena itens atribuindo ordem 1..N segundo a lista enviada.
+        """
         item_ids = request.data.get('item_ids', [])
         if not isinstance(item_ids, list):
-            return Response(
-                {"error": "O corpo do pedido deve conter uma lista de 'item_ids'."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "O corpo deve conter uma lista 'item_ids'."}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
             for index, item_id in enumerate(item_ids):
@@ -260,7 +401,7 @@ class CreateUserView(generics.CreateAPIView):
 class ManageUserView(generics.RetrieveUpdateAPIView):
     """
     GET /me/  -> retorna usuário autenticado
-    PUT /me/  -> atualiza parcialmente (JSON ou multipart para foto)
+    PUT/PATCH -> atualiza parcialmente (JSON ou multipart para foto)
     """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
@@ -268,32 +409,31 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         return self.request.user
 
-    # ✅ injeta o request no serializer (necessário p/ URL absoluta)
     def get_serializer_context(self):
+        # necessário para montar URL absoluta da imagem
         ctx = super().get_serializer_context()
         ctx['request'] = self.request
         return ctx
 
-    # opcional: garantir partial update e multipart
     def put(self, request, *args, **kwargs):
         serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
 
-    # se quiser PATCH também:
     def patch(self, request, *args, **kwargs):
         serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
+        serializer.save()
         return Response(serializer.data)
+
 
 class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, format=None):
         total_processos = ProcessoLicitatorio.objects.count()
-        processos_em_andamento = ProcessoLicitatorio.objects.filter(situacao="Em Contratação").count()  # 🔹 corrigido
+        processos_em_andamento = ProcessoLicitatorio.objects.filter(situacao="Em Contratação").count()
         total_fornecedores = Fornecedor.objects.count()
         total_orgaos = Orgao.objects.count()
         total_itens = Item.objects.count()
@@ -309,7 +449,7 @@ class DashboardStatsView(APIView):
 
 
 # ============================================================
-# 🔟 LOGIN COM GOOGLE (Atualizado)
+# 🔟 LOGIN COM GOOGLE
 # ============================================================
 
 from google.oauth2 import id_token
@@ -324,14 +464,12 @@ class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-
         # Token vindo do front via Google Identity Services
         google_token = request.data.get("token")
         logger.info(f"Token recebido: {bool(google_token)}")
 
         if not google_token:
-            return Response({"detail": "Token do Google ausente."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Token do Google ausente."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             logger.info("Validando token com Google...")
@@ -340,23 +478,18 @@ class GoogleLoginView(APIView):
                 requests.Request(),
                 settings.GOOGLE_CLIENT_ID,
             )
-
             logger.info("Token validado com sucesso!")
 
-            # Verifica e-mail verificado no Google
             if not id_info.get("email_verified"):
-                return Response({"detail": "Email não verificado pelo Google."},
-                                status=status.HTTP_401_UNAUTHORIZED)
+                return Response({"detail": "Email não verificado pelo Google."}, status=status.HTTP_401_UNAUTHORIZED)
 
             email = id_info.get("email")
             nome = id_info.get("name") or ""
             picture = id_info.get("picture", "")
 
             if not email:
-                return Response({"detail": "E-mail não fornecido pelo Google."},
-                                status=status.HTTP_400_BAD_REQUEST)
+                return Response({"detail": "E-mail não fornecido pelo Google."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Criar ou obter usuário com base no e-mail
             user, created = CustomUser.objects.get_or_create(
                 email=email,
                 defaults={
@@ -366,13 +499,11 @@ class GoogleLoginView(APIView):
                 }
             )
 
-            # Gera tokens JWT
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
 
             logger.info(f"Usuário autenticado: {email}")
 
-            # Resposta final
             return Response({
                 "access": access_token,
                 "refresh": str(refresh),
@@ -387,10 +518,8 @@ class GoogleLoginView(APIView):
 
         except ValueError as e:
             logger.error(f"Token inválido: {e}")
-            return Response({"detail": "Token inválido do Google."},
-                            status=status.HTTP_401_UNAUTHORIZED)
+            return Response({"detail": "Token inválido do Google."}, status=status.HTTP_401_UNAUTHORIZED)
 
         except Exception as e:
             logger.exception("Erro inesperado no login Google")
-            return Response({"detail": "Erro no login com Google."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"detail": "Erro no login com Google."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

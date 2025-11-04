@@ -1,6 +1,7 @@
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 
 
 # ============================================================
@@ -14,16 +15,8 @@ class CustomUser(AbstractUser):
     profile_image = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
 
     # Corrige conflitos de related_name duplicados no admin
-    groups = models.ManyToManyField(
-        'auth.Group',
-        related_name='customuser_groups',
-        blank=True
-    )
-    user_permissions = models.ManyToManyField(
-        'auth.Permission',
-        related_name='customuser_permissions',
-        blank=True
-    )
+    groups = models.ManyToManyField('auth.Group', related_name='customuser_groups', blank=True)
+    user_permissions = models.ManyToManyField('auth.Permission', related_name='customuser_permissions', blank=True)
 
     def __str__(self):
         return self.get_full_name() or self.username
@@ -108,15 +101,17 @@ class ProcessoLicitatorio(models.Model):
 
     data_processo = models.DateField(blank=True, null=True)
     data_abertura = models.DateTimeField(blank=True, null=True)
+
     valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
+
+    # ⚠️ Banco tem 'registro_preco'. O front usa 'registro_precos'.
     registro_preco = models.BooleanField(default=False, verbose_name="Registro de Preço")
 
     entidade = models.ForeignKey('Entidade', on_delete=models.PROTECT, related_name='processos')
     orgao = models.ForeignKey('Orgao', on_delete=models.PROTECT, related_name='processos')
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
-
 
     class Meta:
         ordering = ['-data_processo']
@@ -125,6 +120,130 @@ class ProcessoLicitatorio(models.Model):
 
     def __str__(self):
         return f"{self.numero_certame}"
+
+    # -------------------------------
+    # 🔁 Alias para compatibilidade com o front (registro_precos)
+    # -------------------------------
+    @property
+    def registro_precos(self):
+        return self.registro_preco
+
+    @registro_precos.setter
+    def registro_precos(self, value):
+        self.registro_preco = bool(value)
+
+    # -------------------------------
+    # 📦 Lotes – helpers nativos
+    # -------------------------------
+    def next_lote_numero(self) -> int:
+        """Retorna o próximo número sequencial de lote deste processo."""
+        ultimo = self.lotes.order_by('-numero').first()
+        return (ultimo.numero + 1) if ultimo else 1
+
+    @transaction.atomic
+    def criar_lotes(
+        self,
+        quantidade: int = None,
+        descricao_prefixo: str = "Lote ",
+        *,
+        lotes: list = None,
+        numero: int = None,
+        descricao: str = ""
+    ):
+        """
+        Formas de uso:
+          - criar_lotes(quantidade=5) → cria 5 lotes: 'Lote 1', 'Lote 2', ...
+          - criar_lotes(lotes=[{'numero':1,'descricao':'A'}, {'numero':2,'descricao':'B'}])
+          - criar_lotes(numero=10, descricao='Equipamentos')
+
+        Retorna a lista de objetos Lote criados.
+        """
+        created = []
+
+        # lista explícita
+        if isinstance(lotes, list) and lotes:
+            for item in lotes:
+                n = item.get('numero') or self.next_lote_numero()
+                d = item.get('descricao') or ""
+                obj = Lote.objects.create(processo=self, numero=n, descricao=d)
+                created.append(obj)
+            return created
+
+        # único
+        if numero is not None or descricao:
+            n = numero or self.next_lote_numero()
+            obj = Lote.objects.create(processo=self, numero=n, descricao=descricao or "")
+            created.append(obj)
+            return created
+
+        # em quantidade
+        if quantidade and quantidade > 0:
+            start = self.next_lote_numero()
+            for i in range(quantidade):
+                n = start + i
+                d = f"{descricao_prefixo}{n}"
+                obj = Lote.objects.create(processo=self, numero=n, descricao=d)
+                created.append(obj)
+            return created
+
+        raise ValidationError("Parâmetros inválidos para criação de lotes.")
+
+    @transaction.atomic
+    def organizar_lotes(
+        self,
+        ordem_ids: list[int] = None,
+        normalizar: bool = False,
+        inicio: int = 1,
+        mapa: list[dict] = None
+    ):
+        """
+        Renumeração/organização dos lotes do processo.
+
+        - ordem_ids=[5,2,7] → define números 1..N nessa ordem.
+        - normalizar=True, inicio=1 → renumera sem buracos a partir de 'inicio'.
+        - mapa=[{'id':5,'numero':10}, {'id':2,'numero':11}] → aplica números específicos.
+
+        Retorna QuerySet atualizado (ordenado por numero).
+        """
+        # 1) pela ordem de IDs
+        if isinstance(ordem_ids, list) and ordem_ids:
+            qs = list(self.lotes.filter(id__in=ordem_ids))
+            id2obj = {o.id: o for o in qs}
+            numero = inicio or 1
+            for _id in ordem_ids:
+                obj = id2obj.get(_id)
+                if obj:
+                    obj.numero = numero
+                    obj.save(update_fields=['numero'])
+                    numero += 1
+            return self.lotes.order_by('numero')
+
+        # 2) normalização simples
+        if normalizar:
+            numero = inicio or 1
+            for obj in self.lotes.order_by('numero', 'id'):
+                if obj.numero != numero:
+                    obj.numero = numero
+                    obj.save(update_fields=['numero'])
+                numero += 1
+            return self.lotes.order_by('numero')
+
+        # 3) mapeamento id->numero
+        if isinstance(mapa, list) and mapa:
+            ids = [m.get('id') for m in mapa if m.get('id') is not None]
+            qs = self.lotes.filter(id__in=ids)
+            id2obj = {o.id: o for o in qs}
+            for m in mapa:
+                _id = m.get('id')
+                num = m.get('numero')
+                if _id in id2obj and isinstance(num, int) and num > 0:
+                    obj = id2obj[_id]
+                    obj.numero = num
+                    obj.save(update_fields=['numero'])
+            # opcionalmente normaliza após mapear
+            return self.lotes.order_by('numero')
+
+        raise ValidationError("Parâmetros inválidos para organização de lotes.")
 
 
 # ============================================================
@@ -137,8 +256,10 @@ class Lote(models.Model):
     descricao = models.TextField(blank=True, null=True)
 
     class Meta:
-        unique_together = (('processo', 'numero'),)
         ordering = ['numero']
+        constraints = [
+            models.UniqueConstraint(fields=['processo', 'numero'], name='uniq_lote_processo_numero'),
+        ]
 
     def __str__(self):
         return f"Lote {self.numero} ({self.processo.numero_processo})"
@@ -153,7 +274,7 @@ class Fornecedor(models.Model):
     razao_social = models.CharField(max_length=255)
     nome_fantasia = models.CharField(max_length=255, blank=True, null=True)
     porte = models.CharField(max_length=100, blank=True, null=True)
-    telefone = models.CharField(max_length=20, blank=True, null=True) 
+    telefone = models.CharField(max_length=20, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
     cep = models.CharField(max_length=20, blank=True, null=True)
     logradouro = models.CharField(max_length=255, blank=True, null=True)
@@ -190,10 +311,24 @@ class Item(models.Model):
 
     class Meta:
         ordering = ['ordem']
-        unique_together = (('processo', 'ordem'),)
+        constraints = [
+            models.UniqueConstraint(fields=['processo', 'ordem'], name='uniq_item_processo_ordem'),
+        ]
 
     def __str__(self):
         return f"{self.descricao} ({self.processo.numero_processo})"
+
+    def clean(self):
+        # se tem lote, ele precisa pertencer ao mesmo processo
+        if self.lote and self.lote.processo_id != self.processo_id:
+            raise ValidationError("O lote selecionado pertence a outro processo.")
+
+    def save(self, *args, **kwargs):
+        # atribui próxima ordem automaticamente se não vier definida
+        if not self.pk and (self.ordem is None or self.ordem <= 0):
+            last = Item.objects.filter(processo=self.processo).order_by('-ordem').first()
+            self.ordem = (last.ordem + 1) if last else 1
+        super().save(*args, **kwargs)
 
 
 # ============================================================
