@@ -35,6 +35,57 @@ class CustomUserSerializer(serializers.ModelSerializer):
         )
 
 
+class UserSerializer(serializers.ModelSerializer):
+    """
+    Serializer usado por CreateUserView/ManageUserView/GoogleLoginView.
+    Aceita 'password' na criação/atualização e monta URL absoluta para a foto.
+    """
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    profile_image = serializers.ImageField(required=False, allow_null=True)
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "cpf",
+            "data_nascimento",
+            "phone",
+            "profile_image",
+            "password",
+        ]
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        request = self.context.get("request")
+        if rep.get("profile_image") and request:
+            rep["profile_image"] = request.build_absolute_uri(rep["profile_image"])
+        rep.pop("password", None)
+        return rep
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+        user = CustomUser(**validated_data)
+        if password:
+            user.set_password(password)
+        else:
+            user.set_unusable_password()
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("password", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
+
+
 # ============================================================
 # 🏛️ ENTIDADE / ÓRGÃO
 # ============================================================
@@ -73,15 +124,18 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "numero_processo",
             "numero_certame",
             "objeto",
+
             "modalidade",
             "classificacao",
             "tipo_organizacao",
             "situacao",
+
             "data_processo",
             "data_abertura",
             "valor_referencia",
             "vigencia_meses",
             "registro_preco",
+
             "entidade",
             "orgao",
             "data_criacao_sistema",
@@ -102,6 +156,10 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "link_sistema_origem",
             "link_processo_eletronico",
 
+            # status PNCP de contratação (usado no front)
+            "situacao_contratacao_id",
+
+            # controle de publicação (logs/controle)
             "sequencial_publicacao",
             "id_controle_publicacao",
             "ultima_atualizacao_publicacao",
@@ -177,7 +235,7 @@ class ItemSerializer(serializers.ModelSerializer):
             "fornecedor",
             "ordem",
 
-            # complementos genéricos para publicação
+            # complementos genéricos para publicação (seus campos de modelo)
             "natureza",
             "tipo_beneficio_id",
             "criterio_julgamento_id",
