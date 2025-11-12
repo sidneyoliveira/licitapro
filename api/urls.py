@@ -1,7 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from api.views import GoogleLoginView
 from django.conf.urls.static import static
 from django.conf import settings
 
@@ -14,11 +13,13 @@ from .views import (
     FornecedorViewSet,
     FornecedorProcessoViewSet,
     ItemFornecedorViewSet,
+    # NOVO: contratos/empenhos
+    ContratoEmpenhoViewSet,
     ReorderItensView,
     CreateUserView,
     ManageUserView,
     DashboardStatsView,
-    GoogleLoginView
+    GoogleLoginView,
 )
 
 # ============================================================
@@ -43,6 +44,8 @@ router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'fornecedores-processo', FornecedorProcessoViewSet, basename='fornecedor-processo')
 router.register(r'itens-fornecedor', ItemFornecedorViewSet, basename='item-fornecedor')
 
+# NOVO: CONTRATOS / EMPENHOS
+router.register(r'contratos', ContratoEmpenhoViewSet, basename='contrato')
 
 # ============================================================
 # 🛣️ URLPATTERNS COMPLETO
@@ -64,6 +67,7 @@ urlpatterns = [
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
+    # Login Google
     path('google/', GoogleLoginView.as_view(), name='google-login'),
 ]
 

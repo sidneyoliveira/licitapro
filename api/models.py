@@ -40,6 +40,15 @@ class Entidade(models.Model):
 
 class Orgao(models.Model):
     nome = models.CharField(max_length=255)
+
+    # Código da Unidade Compradora (genérico, atende PNCP e outros)
+    codigo_unidade = models.CharField(
+        max_length=32,
+        blank=True,
+        null=True,
+        help_text='Código da Unidade Compradora (ex.: 1010)'
+    )
+
     entidade = models.ForeignKey(Entidade, related_name='orgaos', on_delete=models.CASCADE)
 
     class Meta:
@@ -105,13 +114,42 @@ class ProcessoLicitatorio(models.Model):
     valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
 
-    # ⚠️ Banco tem 'registro_preco'. O front usa 'registro_precos'.
+    # SRP (Registro de Preço) – já existente; será mapeado para PNCP
     registro_preco = models.BooleanField(default=False, verbose_name="Registro de Preço")
 
     entidade = models.ForeignKey('Entidade', on_delete=models.PROTECT, related_name='processos')
     orgao = models.ForeignKey('Orgao', on_delete=models.PROTECT, related_name='processos')
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
+
+    # ========================================================
+    # 🧩 CAMPOS MÍNIMOS PARA PUBLICAR "CONTRATAÇÃO" (GENÉRICOS)
+    # (Somente complementam o que já existe; não duplicam nomes PNCP)
+    # ========================================================
+
+    # Domínios (IDs oficiais dos catálogos; permitem selects/validação)
+    instrumento_convocatorio_id = models.PositiveIntegerField(blank=True, null=True)
+    modalidade_id = models.PositiveIntegerField(blank=True, null=True)
+    modo_disputa_id = models.PositiveIntegerField(blank=True, null=True)
+    criterio_julgamento_id = models.PositiveIntegerField(blank=True, null=True)
+    amparo_legal_id = models.PositiveIntegerField(blank=True, null=True)
+
+    # Identificação da compra
+    numero_compra = models.CharField(max_length=32, blank=True, null=True)
+    ano_compra = models.PositiveIntegerField(blank=True, null=True)
+
+    # Janela de propostas
+    abertura_propostas = models.DateTimeField(blank=True, null=True)
+    encerramento_propostas = models.DateTimeField(blank=True, null=True)
+
+    # Links
+    link_sistema_origem = models.URLField(blank=True, null=True)
+    link_processo_eletronico = models.URLField(blank=True, null=True)
+
+    # Controle/retornos da publicação (genéricos)
+    sequencial_publicacao = models.PositiveIntegerField(blank=True, null=True)
+    id_controle_publicacao = models.CharField(max_length=64, blank=True, null=True)
+    ultima_atualizacao_publicacao = models.DateTimeField(blank=True, null=True)
 
     class Meta:
         ordering = ['-data_processo']
@@ -307,7 +345,25 @@ class Item(models.Model):
     lote = models.ForeignKey(Lote, related_name='itens', on_delete=models.SET_NULL, blank=True, null=True)
     fornecedor = models.ForeignKey('Fornecedor', related_name='itens', on_delete=models.SET_NULL, blank=True, null=True)
 
+    # Ordem sequencial no processo (pode ser usado como número do item no envio)
     ordem = models.PositiveIntegerField(default=1)
+
+    # ================================================
+    # COMPLEMENTOS GENÉRICOS PARA PUBLICAÇÃO
+    # ================================================
+    natureza = models.CharField(
+        max_length=1,
+        choices=(('M', 'Material'), ('S', 'Serviço')),
+        blank=True,
+        null=True,
+        help_text='M = Material, S = Serviço'
+    )
+    tipo_beneficio_id = models.PositiveIntegerField(blank=True, null=True)
+    criterio_julgamento_id = models.PositiveIntegerField(blank=True, null=True)
+
+    catalogo_id = models.PositiveIntegerField(blank=True, null=True)
+    categoria_item_catalogo_id = models.PositiveIntegerField(blank=True, null=True)
+    catalogo_codigo_item = models.CharField(max_length=64, blank=True, null=True)
 
     class Meta:
         ordering = ['ordem']
@@ -367,3 +423,42 @@ class ItemFornecedor(models.Model):
 
     def __str__(self):
         return f"{self.item.descricao} - {self.fornecedor.razao_social or self.fornecedor.cnpj}"
+
+
+# ============================================================
+# 📑 CONTRATO / EMPENHO (GENÉRICO PARA PUBLICAÇÃO)
+# ============================================================
+
+class ContratoEmpenho(models.Model):
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name='contratos', on_delete=models.PROTECT)
+
+    tipo_contrato_id = models.PositiveIntegerField()
+    numero_contrato_empenho = models.CharField(max_length=64)
+    ano_contrato = models.PositiveIntegerField()
+    processo_ref = models.CharField(max_length=64, blank=True, null=True)  # Nº do processo administrativo
+    categoria_processo_id = models.PositiveIntegerField(blank=True, null=True)
+    receita = models.BooleanField(default=False)
+
+    # Unidade compradora
+    unidade_codigo = models.CharField(max_length=32, blank=True, null=True)
+
+    # Fornecedor
+    ni_fornecedor = models.CharField(max_length=14, blank=True, null=True)  # CNPJ/CPF sem formatação
+    tipo_pessoa_fornecedor = models.CharField(
+        max_length=2,
+        choices=(('PJ', 'Pessoa Jurídica'), ('PF', 'Pessoa Física')),
+        blank=True,
+        null=True
+    )
+
+    # Controle de publicação (genérico)
+    sequencial_publicacao = models.PositiveIntegerField(blank=True, null=True)
+
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-criado_em']
+
+    def __str__(self):
+        return f"Contrato/Empenho {self.numero_contrato_empenho}/{self.ano_contrato}"

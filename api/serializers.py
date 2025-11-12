@@ -1,240 +1,244 @@
 from rest_framework import serializers
-from django.db.models import Max
-from django.db import transaction
 from .models import (
     CustomUser,
     Entidade,
     Orgao,
     ProcessoLicitatorio,
     Lote,
-    Item,
     Fornecedor,
+    Item,
     FornecedorProcesso,
-    ItemFornecedor
+    ItemFornecedor,
+    ContratoEmpenho,
 )
 
 # ============================================================
-# 1️⃣ USUÁRIO
+# 👤 USUÁRIO
 # ============================================================
 
-class UserSerializer(serializers.ModelSerializer):
-    profile_image = serializers.ImageField(required=False, allow_null=True)
-
+class CustomUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = [
-            'id',
-            'username',
-            'email',
-            'first_name',
-            'last_name',
-            'cpf',
-            'phone',
-            'data_nascimento',
-            'password',
-            'profile_image',
-        ]
-        read_only_fields = ['id', 'username']
-        extra_kwargs = {
-            'password': {'write_only': True, 'required': False}
-        }
-
-    def get_profile_image(self, obj):
-        request = self.context.get('request')
-        if request and obj.profile_image and hasattr(obj.profile_image, 'url'):
-            return request.build_absolute_uri(obj.profile_image.url)
-        return None
-
-    def update(self, instance, validated_data):
-        password = validated_data.pop('password', None)
-        user = super().update(instance, validated_data)
-        if password:
-            user.set_password(password)
-            user.save()
-        return user
+        fields = (
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "email",
+            "cpf",
+            "data_nascimento",
+            "phone",
+            "profile_image",
+            "is_active",
+            "is_staff",
+            "date_joined",
+        )
 
 
 # ============================================================
-# 2️⃣ ENTIDADE / ÓRGÃO
+# 🏛️ ENTIDADE / ÓRGÃO
 # ============================================================
 
 class EntidadeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Entidade
-        fields = '__all__'
-        read_only_fields = ['id']
+        fields = (
+            "id",
+            "nome",
+            "cnpj",
+            "ano",
+        )
 
 
 class OrgaoSerializer(serializers.ModelSerializer):
-    entidade_nome = serializers.CharField(source='entidade.nome', read_only=True)
-
     class Meta:
         model = Orgao
-        fields = '__all__'
-        read_only_fields = ['id', 'entidade_nome']
+        fields = (
+            "id",
+            "nome",
+            "codigo_unidade",   # campo genérico que atende PNCP
+            "entidade",
+        )
 
 
 # ============================================================
-# 3️⃣ FORNECEDOR
+# 📄 PROCESSO LICITATÓRIO
+# ============================================================
+
+class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProcessoLicitatorio
+        fields = (
+            "id",
+            "numero_processo",
+            "numero_certame",
+            "objeto",
+            "modalidade",
+            "classificacao",
+            "tipo_organizacao",
+            "situacao",
+            "data_processo",
+            "data_abertura",
+            "valor_referencia",
+            "vigencia_meses",
+            "registro_preco",
+            "entidade",
+            "orgao",
+            "data_criacao_sistema",
+
+            # ====== campos mínimos para publicação (genéricos) ======
+            "instrumento_convocatorio_id",
+            "modalidade_id",
+            "modo_disputa_id",
+            "criterio_julgamento_id",
+            "amparo_legal_id",
+
+            "numero_compra",
+            "ano_compra",
+
+            "abertura_propostas",
+            "encerramento_propostas",
+
+            "link_sistema_origem",
+            "link_processo_eletronico",
+
+            "sequencial_publicacao",
+            "id_controle_publicacao",
+            "ultima_atualizacao_publicacao",
+        )
+
+    def validate(self, attrs):
+        # Se as duas datas existirem, encerramento deve ser após a abertura
+        ap = attrs.get("abertura_propostas")
+        ep = attrs.get("encerramento_propostas")
+        if ap and ep and ep <= ap:
+            raise serializers.ValidationError(
+                {"encerramento_propostas": "Deve ser posterior à data de abertura de propostas."}
+            )
+        return attrs
+
+
+# ============================================================
+# 📦 LOTE
+# ============================================================
+
+class LoteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lote
+        fields = (
+            "id",
+            "processo",
+            "numero",
+            "descricao",
+        )
+
+
+# ============================================================
+# 🏭 FORNECEDOR
 # ============================================================
 
 class FornecedorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Fornecedor
-        fields = [
-            'id', 'cnpj', 'razao_social', 'nome_fantasia', 'porte',
-            'telefone', 'email', 'cep', 'logradouro', 'numero',
-            'bairro', 'complemento', 'uf', 'municipio', 'criado_em'
-        ]
-        read_only_fields = ['id', 'criado_em']
+        fields = (
+            "id",
+            "cnpj",
+            "razao_social",
+            "nome_fantasia",
+            "porte",
+            "telefone",
+            "email",
+            "cep",
+            "logradouro",
+            "numero",
+            "bairro",
+            "complemento",
+            "uf",
+            "municipio",
+            "criado_em",
+        )
 
 
 # ============================================================
-# 4️⃣ LOTE
+# 📋 ITEM
 # ============================================================
-
-class LoteSerializer(serializers.ModelSerializer):
-    processo_numero = serializers.CharField(source='processo.numero_processo', read_only=True)
-
-    class Meta:
-        model = Lote
-        fields = ['id', 'processo', 'processo_numero', 'numero', 'descricao']
-        read_only_fields = ['id', 'processo_numero']
-
-    def validate(self, attrs):
-        """
-        Evita conflito de (processo, numero) duplicados quando informado manualmente.
-        """
-        processo = attrs.get('processo') or getattr(self.instance, 'processo', None)
-        numero = attrs.get('numero') or getattr(self.instance, 'numero', None)
-        if processo and numero:
-            qs = Lote.objects.filter(processo=processo, numero=numero)
-            if self.instance:
-                qs = qs.exclude(pk=self.instance.pk)
-            if qs.exists():
-                raise serializers.ValidationError("Já existe um lote com esse número para este processo.")
-        return attrs
-
-
-# ============================================================
-# 5️⃣ ITEM (melhorias)
-# ============================================================
-from django.db.models import Max
 
 class ItemSerializer(serializers.ModelSerializer):
-    processo_numero = serializers.CharField(source='processo.numero_processo', read_only=True)
-    lote_numero = serializers.CharField(source='lote.numero', read_only=True)
-    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True)  # opcional: use o campo correto
-
     class Meta:
         model = Item
-        fields = [
-            'id',
-            'processo',
-            'processo_numero',
-            'descricao',
-            'unidade',
-            'quantidade',
-            'valor_estimado',
-            'lote',
-            'lote_numero',
-            'fornecedor',
-            'fornecedor_nome',
-            # 'ordem'  # NÃO exponha 'ordem' para criação/edição pelo cliente
-        ]
-        read_only_fields = ['id', 'processo_numero', 'lote_numero', 'fornecedor_nome']
+        fields = (
+            "id",
+            "processo",
+            "descricao",
+            "unidade",
+            "quantidade",
+            "valor_estimado",
+            "lote",
+            "fornecedor",
+            "ordem",
 
-    def create(self, validated_data):
-        """
-        Define a próxima ordem de forma segura (MAX(ordem) + 1) para o processo.
-        """
-        processo = validated_data.get('processo')
-        if not processo:
-            # se por algum motivo não veio, DRF já validaria, mas deixamos claro
-            raise serializers.ValidationError({"processo": "Processo é obrigatório."})
-
-        with transaction.atomic():
-            next_ordem = (
-                Item.objects
-                .filter(processo=processo)
-                .aggregate(max_o=Max('ordem'))['max_o'] or 0
-            ) + 1
-            validated_data['ordem'] = next_ordem
-            return super().create(validated_data)
+            # complementos genéricos para publicação
+            "natureza",
+            "tipo_beneficio_id",
+            "criterio_julgamento_id",
+            "catalogo_id",
+            "categoria_item_catalogo_id",
+            "catalogo_codigo_item",
+        )
 
 
 # ============================================================
-# 6️⃣ PROCESSO LICITATÓRIO (corrigido)
+# 🔗 FORNECEDOR ↔ PROCESSO
 # ============================================================
-class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
-    entidade_nome = serializers.CharField(source='entidade.nome', read_only=True)
-    orgao_nome = serializers.CharField(source='orgao.nome', read_only=True)
-    registro_preco_display = serializers.SerializerMethodField()
 
-    class Meta:
-        model = ProcessoLicitatorio
-        fields = [
-            'id',
-            'objeto',
-            'modalidade',
-            'data_abertura',
-            'situacao',
-            'entidade',
-            'entidade_nome',
-            'orgao',
-            'orgao_nome',
-            'valor_referencia',
-            'vigencia_meses',
-            'classificacao',
-            'tipo_organizacao',
-            'registro_preco',         
-            'registro_preco_display',
-            'data_processo',
-            'numero_processo',
-            'numero_certame',
-        ]
-        read_only_fields = ['id', 'entidade_nome', 'orgao_nome', 'registro_preco_display']
-
-    def get_registro_preco_display(self, obj):
-        return "Sim" if obj.registro_preco else "Não"
-
-# ============================================================
-# 7️⃣ FORNECEDOR ↔ PROCESSO (participantes) — nomes corretos
-# ============================================================
 class FornecedorProcessoSerializer(serializers.ModelSerializer):
-    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True)  # <- campo certo
-    processo_numero = serializers.CharField(source='processo.numero_processo', read_only=True)
-
     class Meta:
         model = FornecedorProcesso
-        fields = [
-            'id',
-            'processo',
-            'processo_numero',
-            'fornecedor',
-            'fornecedor_nome',
-            'data_participacao',
-            'habilitado',
-        ]
-        read_only_fields = ['id', 'data_participacao', 'fornecedor_nome', 'processo_numero']
+        fields = (
+            "id",
+            "processo",
+            "fornecedor",
+            "data_participacao",
+            "habilitado",
+        )
+
 
 # ============================================================
-# 8️⃣ ITEM ↔ FORNECEDOR (propostas e vencedores)
+# 💰 ITEM ↔ FORNECEDOR (propostas)
 # ============================================================
 
 class ItemFornecedorSerializer(serializers.ModelSerializer):
-    item_descricao = serializers.CharField(source='item.descricao', read_only=True)
-    fornecedor_nome = serializers.CharField(source='fornecedor.razao_social', read_only=True)
-
     class Meta:
         model = ItemFornecedor
-        fields = [
-            'id',
-            'item',
-            'item_descricao',
-            'fornecedor',
-            'fornecedor_nome',
-            'valor_proposto',
-            'vencedor'
-        ]
-        read_only_fields = ['id', 'item_descricao', 'fornecedor_nome']
+        fields = (
+            "id",
+            "item",
+            "fornecedor",
+            "valor_proposto",
+            "vencedor",
+        )
+
+
+# ============================================================
+# 📑 CONTRATO / EMPENHO (genérico)
+# ============================================================
+
+class ContratoEmpenhoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContratoEmpenho
+        fields = (
+            "id",
+            "processo",
+            "tipo_contrato_id",
+            "numero_contrato_empenho",
+            "ano_contrato",
+            "processo_ref",
+            "categoria_processo_id",
+            "receita",
+            "unidade_codigo",
+            "ni_fornecedor",
+            "tipo_pessoa_fornecedor",
+            "sequencial_publicacao",
+            "criado_em",
+            "atualizado_em",
+        )

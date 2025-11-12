@@ -7,6 +7,19 @@ from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter
 
+from rest_framework import viewsets, status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from django.utils import timezone
+from django.db import transaction
+import re, json
+from urllib import request as urlrequest
+from urllib.error import URLError, HTTPError
+
+from .models import Orgao, Entidade
+from .serializers import OrgaoSerializer
+
 from .models import (
     CustomUser,
     Entidade,
@@ -16,7 +29,9 @@ from .models import (
     Item,
     Fornecedor,
     FornecedorProcesso,
-    ItemFornecedor
+    ItemFornecedor,
+    # NOVO: contratos/empenhos
+    ContratoEmpenho,
 )
 from .serializers import (
     UserSerializer,
@@ -27,7 +42,9 @@ from .serializers import (
     ItemSerializer,
     FornecedorSerializer,
     FornecedorProcessoSerializer,
-    ItemFornecedorSerializer
+    ItemFornecedorSerializer,
+    # NOVO: contratos/empenhos
+    ContratoEmpenhoSerializer,
 )
 
 # ============================================================
@@ -40,12 +57,141 @@ class EntidadeViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
+
 class OrgaoViewSet(viewsets.ModelViewSet):
     queryset = Orgao.objects.all().order_by('nome')
     serializer_class = OrgaoSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend]
+    filter_backends = []
     filterset_fields = ['entidade']
+
+    # =============== NOVO: importar unidades do PNCP por CNPJ ===============
+    @action(detail=False, methods=['post'], url_path='importar-pncp')
+    def importar_pncp(self, request):
+        """
+        POST /api/orgaos/importar-pncp/
+        Body: { "cnpj": "07663941000154" }
+
+        - Busca as unidades no PNCP (server-side)
+        - Cria/atualiza Entidade (por CNPJ) e Órgãos (por codigo_unidade ou nome)
+        - Retorna contagem e lista atualizada de órgãos dessa entidade
+        """
+        raw_cnpj = (request.data.get('cnpj') or '').strip()
+        cnpj_digits = re.sub(r'\D', '', raw_cnpj)
+
+        if len(cnpj_digits) != 14:
+            return Response({"detail": "CNPJ inválido. Informe 14 dígitos."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        url = f"https://pncp.gov.br/api/pncp/v1/orgaos/{cnpj_digits}/unidades"
+
+        try:
+            with urlrequest.urlopen(url, timeout=20) as resp:
+                if resp.status != 200:
+                    return Response({"detail": f"PNCP respondeu {resp.status}"},
+                                    status=status.HTTP_502_BAD_GATEWAY)
+                data = json.loads(resp.read().decode('utf-8'))
+        except HTTPError as e:
+            return Response({"detail": f"Falha ao consultar PNCP: HTTP {e.code}"},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        except URLError:
+            return Response({"detail": "Não foi possível alcançar o PNCP."},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        except Exception as e:
+            return Response({"detail": f"Erro inesperado ao consultar PNCP: {e}"},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if not isinstance(data, list) or not data:
+            return Response({"detail": "Nenhuma unidade retornada pelo PNCP."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # Helper: localizar entidade por CNPJ (comparando só dígitos)
+        def find_entidade_by_cnpj_digits(digits: str):
+            for ent in Entidade.objects.all():
+                ent_digits = re.sub(r'\D', '', ent.cnpj or '')
+                if ent_digits == digits:
+                    return ent
+            return None
+
+        razao = (data[0].get('orgao') or {}).get('razaoSocial') or ''
+        ano_atual = timezone.now().year
+
+        with transaction.atomic():
+            entidade = find_entidade_by_cnpj_digits(cnpj_digits)
+            if not entidade:
+                # cria entidade se não existir
+                entidade = Entidade.objects.create(
+                    nome=razao or f"Entidade {cnpj_digits}",
+                    cnpj=cnpj_digits,
+                    ano=ano_atual
+                )
+            else:
+                # opcional: atualiza nome pelo PNCP se vier preenchido
+                if razao and entidade.nome != razao:
+                    entidade.nome = razao
+                    entidade.save(update_fields=['nome'])
+
+            created, updated = 0, 0
+            afetados = []
+
+            for u in data:
+                codigo = (u.get('codigoUnidade') or '').strip()
+                nome = (u.get('nomeUnidade') or '').strip()
+
+                if not nome:
+                    continue  # ignora registros sem nome
+
+                # 1) tenta pelo codigo_unidade
+                orgao = None
+                if codigo:
+                    orgao = Orgao.objects.filter(
+                        entidade=entidade, codigo_unidade=codigo
+                    ).first()
+
+                # 2) fallback: tenta por nome (case-insensitive)
+                if not orgao:
+                    orgao = Orgao.objects.filter(
+                        entidade=entidade, nome__iexact=nome
+                    ).first()
+
+                if orgao:
+                    # atualiza se mudou algo
+                    changed = False
+                    if codigo and orgao.codigo_unidade != codigo:
+                        orgao.codigo_unidade = codigo
+                        changed = True
+                    if orgao.nome != nome:
+                        orgao.nome = nome
+                        changed = True
+                    if changed:
+                        orgao.save(update_fields=['nome', 'codigo_unidade'])
+                        updated += 1
+                else:
+                    # cria novo
+                    orgao = Orgao.objects.create(
+                        entidade=entidade,
+                        nome=nome,
+                        codigo_unidade=codigo or None
+                    )
+                    created += 1
+
+                afetados.append(orgao.id)
+
+            # retorna todos os órgãos da entidade (ordenados)
+            orgaos_entidade = Orgao.objects.filter(entidade=entidade).order_by('nome')
+            payload = {
+                "entidade": {
+                    "id": entidade.id,
+                    "nome": entidade.nome,
+                    "cnpj": entidade.cnpj,
+                    "ano": entidade.ano,
+                },
+                "created": created,
+                "updated": updated,
+                "total_orgaos_entidade": orgaos_entidade.count(),
+                "orgaos": OrgaoSerializer(orgaos_entidade, many=True).data
+            }
+            return Response(payload, status=status.HTTP_200_OK)
 
 
 # ============================================================
@@ -76,8 +222,40 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     serializer_class = ProcessoLicitatorioSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    search_fields = ['numero_processo', 'numero_certame', 'objeto']
-    filterset_fields = ['modalidade', 'situacao', 'entidade', 'orgao']
+    search_fields = [
+        'numero_processo',
+        'numero_certame',
+        'objeto',
+        # NOVO: permite buscar por atributos úteis na publicação
+        'orgao__nome',
+        'entidade__nome',
+        'orgao__codigo_unidade',
+        'numero_compra',
+    ]
+    # NOVO: expor filtros para os campos complementares usados na publicação
+    filterset_fields = [
+        'modalidade',
+        'situacao',
+        'entidade',
+        'orgao',
+
+        # domínios/IDs
+        'instrumento_convocatorio_id',
+        'modalidade_id',
+        'modo_disputa_id',
+        'criterio_julgamento_id',
+        'amparo_legal_id',
+
+        # identificação da compra / período de propostas
+        'numero_compra',
+        'ano_compra',
+        'abertura_propostas',
+        'encerramento_propostas',
+
+        # controle/retornos
+        'sequencial_publicacao',
+        'id_controle_publicacao',
+    ]
 
     # ---------------- ITENS DO PROCESSO ----------------
     @action(detail=True, methods=['get'])
@@ -302,11 +480,22 @@ class ItemViewSet(viewsets.ModelViewSet):
     serializer_class = ItemSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['processo', 'lote', 'fornecedor']
-    search_fields = ['descricao', 'unidade']
+    # NOVO: permitir filtros pelos complementos usados na publicação
+    filterset_fields = [
+        'processo',
+        'lote',
+        'fornecedor',
+        'natureza',
+        'tipo_beneficio_id',
+        'criterio_julgamento_id',
+        'catalogo_id',
+        'categoria_item_catalogo_id',
+    ]
+    # NOVO: buscar também por código do item no catálogo
+    search_fields = ['descricao', 'unidade', 'catalogo_codigo_item']
 
     def perform_create(self, serializer):
-        # Garante que 'ordem' será sempre calculado no serializer
+        # Garante que 'ordem' será sempre calculado no serializer/model
         serializer.save()
 
     @action(detail=True, methods=['post'], url_path='definir-fornecedor')
@@ -523,3 +712,17 @@ class GoogleLoginView(APIView):
         except Exception as e:
             logger.exception("Erro inesperado no login Google")
             return Response({"detail": "Erro no login com Google."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================
+# 1️⃣1️⃣ CONTRATO / EMPENHO (NOVO ENDPOINT)
+# ============================================================
+
+class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
+    queryset = ContratoEmpenho.objects.select_related('processo').all().order_by('-criado_em', 'id')
+    serializer_class = ContratoEmpenhoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    # filtros úteis para publicação/consulta
+    filterset_fields = ['processo', 'ano_contrato', 'tipo_contrato_id', 'categoria_processo_id', 'receita']
+    search_fields = ['numero_contrato_empenho', 'processo__numero_processo', 'ni_fornecedor']
