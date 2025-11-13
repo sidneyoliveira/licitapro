@@ -212,11 +212,8 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     # ---------------- ITENS DO PROCESSO ----------------
     @action(detail=True, methods=['get'])
-    def itens(self, _request, _pk=None):
-        """
-        GET /api/processos/<pk>/itens/
-        Retorna todos os itens vinculados a um processo.
-        """
+    def itens(self, _request):
+
         processo = self.get_object()
         itens = Item.objects.filter(processo=processo).select_related('lote', 'fornecedor').order_by('ordem', 'id')
         serializer = ItemSerializer(itens, many=True)
@@ -224,7 +221,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     # ---------------- FORNECEDORES (VÍNCULO) ----------------
     @action(detail=True, methods=['post'], url_path='adicionar_fornecedor')
-    def adicionar_fornecedor(self, request, _pk=None):
+    def adicionar_fornecedor(self, request):
         """
         POST /api/processos/<pk>/adicionar_fornecedor/
         Body: { "fornecedor_id": <id> }
@@ -253,7 +250,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=['get'], url_path='fornecedores')
-    def fornecedores(self, _request, _pk=None):
+    def fornecedores(self, _request, ):
         """
         GET /api/processos/<pk>/fornecedores/
         Lista fornecedores vinculados a um processo.
@@ -264,7 +261,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='remover_fornecedor')
-    def remover_fornecedor(self, request, _pk=None):
+    def remover_fornecedor(self, request, ):
         """
         POST /api/processos/<pk>/remover_fornecedor/
         Body: { "fornecedor_id": <id> }
@@ -286,7 +283,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     # ---------------- LOTES (NESTED) ----------------
     @action(detail=True, methods=['get', 'post'], url_path='lotes')
-    def lotes(self, request, _pk=None):
+    def lotes(self, request, ):
         """
         GET  /api/processos/<pk>/lotes/  -> lista lotes do processo
         POST /api/processos/<pk>/lotes/  -> cria lote(s)
@@ -349,7 +346,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         return Response(LoteSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['patch'], url_path='lotes/organizar')
-    def organizar_lotes(self, request, _pk=None):
+    def organizar_lotes(self, request, ):
         """
         PATCH /api/processos/<pk>/lotes/organizar/
 
@@ -441,7 +438,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     @action(detail=True, methods=['post'], url_path='definir-fornecedor')
-    def definir_fornecedor(self, request, _pk=None):
+    def definir_fornecedor(self, request, ):
         """
         POST /api/itens/<id>/definir-fornecedor/
         Body: { "fornecedor_id": <id> }

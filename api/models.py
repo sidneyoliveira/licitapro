@@ -377,8 +377,8 @@ class Item(models.Model):
             raise ValidationError("O lote selecionado pertence a outro processo.")
 
     def save(self, *args, **kwargs):
-        # atribui próxima ordem automaticamente se não vier definida
-        if not self.pk and (self.ordem is None or self.ordem <= 0):
+        # atribui próxima ordem automaticamente se não vier definida (apenas na criação)
+        if getattr(self, "_state", None) and self._state.adding and (self.ordem is None or self.ordem <= 0):
             last = Item.objects.filter(processo=self.processo).order_by('-ordem').first()
             self.ordem = (last.ordem + 1) if last else 1
         super().save(*args, **kwargs)
