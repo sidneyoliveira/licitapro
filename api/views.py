@@ -34,7 +34,8 @@ from .serializers import (
     ItemSerializer,
     FornecedorSerializer,
     FornecedorProcessoSerializer,
-    ItemFornecedorSerializer
+    ItemFornecedorSerializer,
+    ContratoEmpenhoSerializer
 )
 
 # ============================================================
