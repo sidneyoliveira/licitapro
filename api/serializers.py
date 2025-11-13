@@ -119,8 +119,8 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     # Exibição amigável
     entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
     orgao_nome = serializers.CharField(source="orgao.nome", read_only=True)
-    entidade_obj = EntidadeMiniSerializer(source="entidade", read_only=True)
-    orgao_obj = OrgaoMiniSerializer(source="orgao", read_only=True)
+    entidade_obj = EntidadeSerializer(source="entidade", read_only=True)
+    orgao_obj = OrgaoSerializer(source="orgao", read_only=True)
 
     # Sobrescreve para aceitar string livre (código) e mapear manualmente
     modalidade = serializers.CharField()
@@ -347,7 +347,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             data[out_field] = inv_map.get(rotulo, rotulo)
         return data
     
-    
+
 # ============================================================
 # 📦 LOTE
 # ============================================================
