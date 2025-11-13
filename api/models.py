@@ -75,12 +75,12 @@ class ProcessoLicitatorio(models.Model):
     modalidade = models.CharField(
         max_length=50,
         choices=[
-            ('Pregão Eletrônico', 'Pregão Eletrônico'),
-            ('Concorrência Eletrônica', 'Concorrência Eletrônica'),
-            ('Dispensa Eletrônica', 'Dispensa Eletrônica'),
-            ('Inexigibilidade Eletrônica', 'Inexigibilidade Eletrônica'),
-            ('Adesão a Registro de Preços', 'Adesão a Registro de Preços'),
-            ('Credenciamento', 'Credenciamento'),
+            (1, 'Pregão Eletrônico'),
+            (2, 'Concorrência Eletrônica'),
+            (3, 'Dispensa Eletrônica'),
+            (4, 'Inexigibilidade Eletrônica'),
+            (5, 'Adesão a Registro de Preços'),
+            (6, 'Credenciamento'),
         ],
     )
     classificacao = models.CharField(
