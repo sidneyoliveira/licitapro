@@ -203,7 +203,12 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     - fornecedores (adicionar/listar/remover)
     - lotes (listar/criar) e organização de lotes
     """
-    queryset = ProcessoLicitatorio.objects.all().order_by('-data_abertura')
+    queryset = (
+        ProcessoLicitatorio.objects
+        .select_related('entidade', 'orgao')
+        .all()
+        .order_by('-data_abertura')
+    )
     serializer_class = ProcessoLicitatorioSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -212,16 +217,24 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     # ---------------- ITENS DO PROCESSO ----------------
     @action(detail=True, methods=['get'])
-    def itens(self, _request):
-
+    def itens(self, request, *args, **kwargs):
+        """
+        GET /api/processos/<pk>/itens/
+        Retorna todos os itens vinculados a um processo.
+        """
         processo = self.get_object()
-        itens = Item.objects.filter(processo=processo).select_related('lote', 'fornecedor').order_by('ordem', 'id')
+        itens = (
+            Item.objects
+            .filter(processo=processo)
+            .select_related('lote', 'fornecedor')
+            .order_by('ordem', 'id')
+        )
         serializer = ItemSerializer(itens, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     # ---------------- FORNECEDORES (VÍNCULO) ----------------
     @action(detail=True, methods=['post'], url_path='adicionar_fornecedor')
-    def adicionar_fornecedor(self, request):
+    def adicionar_fornecedor(self, request, *args, **kwargs):
         """
         POST /api/processos/<pk>/adicionar_fornecedor/
         Body: { "fornecedor_id": <id> }
@@ -239,7 +252,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Fornecedor não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         with transaction.atomic():
-            _, created = FornecedorProcesso.objects.get_or_create(processo=processo, fornecedor=fornecedor)
+            obj, created = FornecedorProcesso.objects.get_or_create(processo=processo, fornecedor=fornecedor)
         return Response(
             {
                 'detail': 'Fornecedor vinculado ao processo com sucesso!',
@@ -250,7 +263,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=['get'], url_path='fornecedores')
-    def fornecedores(self, _request, ):
+    def fornecedores(self, request, *args, **kwargs):
         """
         GET /api/processos/<pk>/fornecedores/
         Lista fornecedores vinculados a um processo.
@@ -261,7 +274,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='remover_fornecedor')
-    def remover_fornecedor(self, request, ):
+    def remover_fornecedor(self, request, *args, **kwargs):
         """
         POST /api/processos/<pk>/remover_fornecedor/
         Body: { "fornecedor_id": <id> }
@@ -283,7 +296,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     # ---------------- LOTES (NESTED) ----------------
     @action(detail=True, methods=['get', 'post'], url_path='lotes')
-    def lotes(self, request, ):
+    def lotes(self, request, *args, **kwargs):
         """
         GET  /api/processos/<pk>/lotes/  -> lista lotes do processo
         POST /api/processos/<pk>/lotes/  -> cria lote(s)
@@ -346,7 +359,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         return Response(LoteSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['patch'], url_path='lotes/organizar')
-    def organizar_lotes(self, request, ):
+    def organizar_lotes(self, request, *args, **kwargs):
         """
         PATCH /api/processos/<pk>/lotes/organizar/
 
@@ -406,7 +419,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 return Response(out)
 
         return Response({"detail": "Payload inválido."}, status=status.HTTP_400_BAD_REQUEST)
-
 
 # ============================================================
 # 4️⃣ LOTE
