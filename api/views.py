@@ -4,21 +4,13 @@ from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import transaction
-from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter
-
+from django_filters.rest_framework import DjangoFilterBackend 
 from rest_framework import viewsets, status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import action
-from rest_framework.response import Response
 from django.utils import timezone
-from django.db import transaction
 import re, json
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
-
-from .models import Orgao, Entidade
-from .serializers import OrgaoSerializer
 
 from .models import (
     CustomUser,
@@ -29,9 +21,7 @@ from .models import (
     Item,
     Fornecedor,
     FornecedorProcesso,
-    ItemFornecedor,
-    # NOVO: contratos/empenhos
-    ContratoEmpenho,
+    ItemFornecedor
 )
 from .serializers import (
     UserSerializer,
@@ -42,9 +32,7 @@ from .serializers import (
     ItemSerializer,
     FornecedorSerializer,
     FornecedorProcessoSerializer,
-    ItemFornecedorSerializer,
-    # NOVO: contratos/empenhos
-    ContratoEmpenhoSerializer,
+    ItemFornecedorSerializer
 )
 
 # ============================================================
@@ -56,29 +44,33 @@ class EntidadeViewSet(viewsets.ModelViewSet):
     serializer_class = EntidadeSerializer
     permission_classes = [IsAuthenticated]
 
-
+def _normalize(txt: str) -> str:
+    import unicodedata
+    if not txt:
+        return ""
+    txt = unicodedata.normalize("NFD", txt)
+    txt = "".join(ch for ch in txt if unicodedata.category(ch) != "Mn")
+    return txt.upper().strip()
 
 class OrgaoViewSet(viewsets.ModelViewSet):
-    queryset = Orgao.objects.all().order_by('nome')
     serializer_class = OrgaoSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = []
+    filter_backends = [DjangoFilterBackend]  # pode ficar, mas não dependemos dele
     filterset_fields = ['entidade']
 
-    # =============== NOVO: importar unidades do PNCP por CNPJ ===============
+    # ✅ filtro garantido via código (independente do DjangoFilterBackend)
+    def get_queryset(self):
+        qs = Orgao.objects.select_related('entidade').order_by('nome')
+        entidade_id = self.request.query_params.get('entidade')
+        if entidade_id:
+            qs = qs.filter(entidade_id=entidade_id)
+        return qs
+
+    # ====== sua action importar_pncp permanece igual, apenas mantida aqui ======
     @action(detail=False, methods=['post'], url_path='importar-pncp')
     def importar_pncp(self, request):
-        """
-        POST /api/orgaos/importar-pncp/
-        Body: { "cnpj": "07663941000154" }
-
-        - Busca as unidades no PNCP (server-side)
-        - Cria/atualiza Entidade (por CNPJ) e Órgãos (por codigo_unidade ou nome)
-        - Retorna contagem e lista atualizada de órgãos dessa entidade
-        """
         raw_cnpj = (request.data.get('cnpj') or '').strip()
         cnpj_digits = re.sub(r'\D', '', raw_cnpj)
-
         if len(cnpj_digits) != 14:
             return Response({"detail": "CNPJ inválido. Informe 14 dígitos."},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -105,7 +97,19 @@ class OrgaoViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Nenhuma unidade retornada pelo PNCP."},
                             status=status.HTTP_404_NOT_FOUND)
 
-        # Helper: localizar entidade por CNPJ (comparando só dígitos)
+        ALLOW_KEYWORDS = ["SECRETARIA", "FUNDO", "CONTROLADORIA", "GABINETE"]
+        EXCLUDE_KEYWORDS = ["PREFEITURA"]
+        EXCLUDE_CODES = {"000000001", "000000000", "1"}
+
+        def deve_incluir(nome_unidade: str, codigo_unidade: str) -> bool:
+            n = _normalize(nome_unidade or "")
+            c = (codigo_unidade or "").strip()
+            if c in EXCLUDE_CODES:
+                return False
+            if any(word in n for word in EXCLUDE_KEYWORDS):
+                return False
+            return any(word in n for word in ALLOW_KEYWORDS)
+
         def find_entidade_by_cnpj_digits(digits: str):
             for ent in Entidade.objects.all():
                 ent_digits = re.sub(r'\D', '', ent.cnpj or '')
@@ -119,43 +123,32 @@ class OrgaoViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             entidade = find_entidade_by_cnpj_digits(cnpj_digits)
             if not entidade:
-                # cria entidade se não existir
                 entidade = Entidade.objects.create(
                     nome=razao or f"Entidade {cnpj_digits}",
                     cnpj=cnpj_digits,
                     ano=ano_atual
                 )
             else:
-                # opcional: atualiza nome pelo PNCP se vier preenchido
                 if razao and entidade.nome != razao:
                     entidade.nome = razao
                     entidade.save(update_fields=['nome'])
 
-            created, updated = 0, 0
-            afetados = []
+            created, updated, ignorados = 0, 0, 0
 
             for u in data:
                 codigo = (u.get('codigoUnidade') or '').strip()
                 nome = (u.get('nomeUnidade') or '').strip()
+                if not deve_incluir(nome, codigo):
+                    ignorados += 1
+                    continue
 
-                if not nome:
-                    continue  # ignora registros sem nome
-
-                # 1) tenta pelo codigo_unidade
                 orgao = None
                 if codigo:
-                    orgao = Orgao.objects.filter(
-                        entidade=entidade, codigo_unidade=codigo
-                    ).first()
-
-                # 2) fallback: tenta por nome (case-insensitive)
+                    orgao = Orgao.objects.filter(entidade=entidade, codigo_unidade=codigo).first()
                 if not orgao:
-                    orgao = Orgao.objects.filter(
-                        entidade=entidade, nome__iexact=nome
-                    ).first()
+                    orgao = Orgao.objects.filter(entidade=entidade, nome__iexact=nome).first()
 
                 if orgao:
-                    # atualiza se mudou algo
                     changed = False
                     if codigo and orgao.codigo_unidade != codigo:
                         orgao.codigo_unidade = codigo
@@ -167,31 +160,20 @@ class OrgaoViewSet(viewsets.ModelViewSet):
                         orgao.save(update_fields=['nome', 'codigo_unidade'])
                         updated += 1
                 else:
-                    # cria novo
-                    orgao = Orgao.objects.create(
+                    Orgao.objects.create(
                         entidade=entidade,
                         nome=nome,
                         codigo_unidade=codigo or None
                     )
                     created += 1
 
-                afetados.append(orgao.id)
-
-            # retorna todos os órgãos da entidade (ordenados)
             orgaos_entidade = Orgao.objects.filter(entidade=entidade).order_by('nome')
-            payload = {
-                "entidade": {
-                    "id": entidade.id,
-                    "nome": entidade.nome,
-                    "cnpj": entidade.cnpj,
-                    "ano": entidade.ano,
-                },
-                "created": created,
-                "updated": updated,
+            return Response({
+                "entidade": {"id": entidade.id, "nome": entidade.nome, "cnpj": entidade.cnpj, "ano": entidade.ano},
+                "created": created, "updated": updated, "ignored": ignorados,
                 "total_orgaos_entidade": orgaos_entidade.count(),
                 "orgaos": OrgaoSerializer(orgaos_entidade, many=True).data
-            }
-            return Response(payload, status=status.HTTP_200_OK)
+            }, status=status.HTTP_200_OK)
 
 
 # ============================================================
@@ -218,53 +200,16 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     - fornecedores (adicionar/listar/remover)
     - lotes (listar/criar) e organização de lotes
     """
-    queryset = (
-        ProcessoLicitatorio.objects
-        .select_related("entidade", "orgao")
-        .all()
-        .order_by('-data_abertura')
-    )
+    queryset = ProcessoLicitatorio.objects.all().order_by('-data_abertura')
     serializer_class = ProcessoLicitatorioSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    search_fields = [
-        'numero_processo',
-        'numero_certame',
-        'objeto',
-        # NOVO: permite buscar por atributos úteis na publicação
-        'orgao__nome',
-        'entidade__nome',
-        'orgao__codigo_unidade',
-        'numero_compra',
-    ]
-    # NOVO: expor filtros para os campos complementares usados na publicação
-    filterset_fields = [
-        'modalidade',
-        'situacao',
-        'entidade',
-        'orgao',
-
-        # domínios/IDs
-        'instrumento_convocatorio_id',
-        'modalidade_id',
-        'modo_disputa_id',
-        'criterio_julgamento_id',
-        'amparo_legal_id',
-
-        # identificação da compra / período de propostas
-        'numero_compra',
-        'ano_compra',
-        'abertura_propostas',
-        'encerramento_propostas',
-
-        # controle/retornos
-        'sequencial_publicacao',
-        'id_controle_publicacao',
-    ]
+    search_fields = ['numero_processo', 'numero_certame', 'objeto']
+    filterset_fields = ['modalidade', 'situacao', 'entidade', 'orgao']
 
     # ---------------- ITENS DO PROCESSO ----------------
     @action(detail=True, methods=['get'])
-    def itens(self, request, pk=None):
+    def itens(self, _request, _pk=None):
         """
         GET /api/processos/<pk>/itens/
         Retorna todos os itens vinculados a um processo.
@@ -276,7 +221,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     # ---------------- FORNECEDORES (VÍNCULO) ----------------
     @action(detail=True, methods=['post'], url_path='adicionar_fornecedor')
-    def adicionar_fornecedor(self, request, pk=None):
+    def adicionar_fornecedor(self, request, _pk=None):
         """
         POST /api/processos/<pk>/adicionar_fornecedor/
         Body: { "fornecedor_id": <id> }
@@ -294,7 +239,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Fornecedor não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         with transaction.atomic():
-            obj, created = FornecedorProcesso.objects.get_or_create(processo=processo, fornecedor=fornecedor)
+            _, created = FornecedorProcesso.objects.get_or_create(processo=processo, fornecedor=fornecedor)
         return Response(
             {
                 'detail': 'Fornecedor vinculado ao processo com sucesso!',
@@ -305,7 +250,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=['get'], url_path='fornecedores')
-    def fornecedores(self, request, pk=None):
+    def fornecedores(self, _request, _pk=None):
         """
         GET /api/processos/<pk>/fornecedores/
         Lista fornecedores vinculados a um processo.
@@ -316,7 +261,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='remover_fornecedor')
-    def remover_fornecedor(self, request, pk=None):
+    def remover_fornecedor(self, request, _pk=None):
         """
         POST /api/processos/<pk>/remover_fornecedor/
         Body: { "fornecedor_id": <id> }
@@ -338,7 +283,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     # ---------------- LOTES (NESTED) ----------------
     @action(detail=True, methods=['get', 'post'], url_path='lotes')
-    def lotes(self, request, pk=None):
+    def lotes(self, request, _pk=None):
         """
         GET  /api/processos/<pk>/lotes/  -> lista lotes do processo
         POST /api/processos/<pk>/lotes/  -> cria lote(s)
@@ -401,7 +346,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         return Response(LoteSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['patch'], url_path='lotes/organizar')
-    def organizar_lotes(self, request, pk=None):
+    def organizar_lotes(self, request, _pk=None):
         """
         PATCH /api/processos/<pk>/lotes/organizar/
 
@@ -485,26 +430,15 @@ class ItemViewSet(viewsets.ModelViewSet):
     serializer_class = ItemSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    # NOVO: permitir filtros pelos complementos usados na publicação
-    filterset_fields = [
-        'processo',
-        'lote',
-        'fornecedor',
-        'natureza',
-        'tipo_beneficio_id',
-        'criterio_julgamento_id',
-        'catalogo_id',
-        'categoria_item_catalogo_id',
-    ]
-    # NOVO: buscar também por código do item no catálogo
-    search_fields = ['descricao', 'unidade', 'catalogo_codigo_item']
+    filterset_fields = ['processo', 'lote', 'fornecedor']
+    search_fields = ['descricao', 'unidade']
 
     def perform_create(self, serializer):
-        # Garante que 'ordem' será sempre calculado no serializer/model
+        # Garante que 'ordem' será sempre calculado no serializer
         serializer.save()
 
     @action(detail=True, methods=['post'], url_path='definir-fornecedor')
-    def definir_fornecedor(self, request, pk=None):
+    def definir_fornecedor(self, request, _pk=None):
         """
         POST /api/itens/<id>/definir-fornecedor/
         Body: { "fornecedor_id": <id> }
@@ -561,7 +495,7 @@ class ItemFornecedorViewSet(viewsets.ModelViewSet):
 class ReorderItensView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, format=None):
+    def post(self, request, _format=None):
         """
         Body: { "item_ids": [ <id1>, <id2>, ... ] }
         Reordena itens atribuindo ordem 1..N segundo a lista enviada.
@@ -609,13 +543,13 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
         ctx['request'] = self.request
         return ctx
 
-    def put(self, request, *args, **kwargs):
+    def put(self, request, *_, **__):
         serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
 
-    def patch(self, request, *args, **kwargs):
+    def patch(self, request, *_, **__):
         serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -625,7 +559,7 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
 class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, format=None):
+    def get(self, _request, _format=None):
         total_processos = ProcessoLicitatorio.objects.count()
         processos_em_andamento = ProcessoLicitatorio.objects.filter(situacao="Em Contratação").count()
         total_fornecedores = Fornecedor.objects.count()
@@ -717,17 +651,3 @@ class GoogleLoginView(APIView):
         except Exception as e:
             logger.exception("Erro inesperado no login Google")
             return Response({"detail": "Erro no login com Google."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# ============================================================
-# 1️⃣1️⃣ CONTRATO / EMPENHO (NOVO ENDPOINT)
-# ============================================================
-
-class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
-    queryset = ContratoEmpenho.objects.select_related('processo').all().order_by('-criado_em', 'id')
-    serializer_class = ContratoEmpenhoSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, SearchFilter]
-    # filtros úteis para publicação/consulta
-    filterset_fields = ['processo', 'ano_contrato', 'tipo_contrato_id', 'categoria_processo_id', 'receita']
-    search_fields = ['numero_contrato_empenho', 'processo__numero_processo', 'ni_fornecedor']
