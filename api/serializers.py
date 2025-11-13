@@ -117,6 +117,10 @@ class OrgaoSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
+    # 🔎 campos somente-leitura para exibição no front
+    entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
+    orgao_nome = serializers.CharField(source="orgao.nome", read_only=True)
+
     class Meta:
         model = ProcessoLicitatorio
         fields = (
@@ -136,8 +140,10 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "vigencia_meses",
             "registro_preco",
 
+            # ⚠️ continuam como IDs para escrita
             "entidade",
             "orgao",
+
             "data_criacao_sistema",
 
             # ====== campos mínimos para publicação (genéricos) ======
@@ -156,17 +162,18 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "link_sistema_origem",
             "link_processo_eletronico",
 
-            # status PNCP de contratação (usado no front)
             "situacao_contratacao_id",
 
-            # controle de publicação (logs/controle)
             "sequencial_publicacao",
             "id_controle_publicacao",
             "ultima_atualizacao_publicacao",
+
+            # 👇 adicionados para exibição
+            "entidade_nome",
+            "orgao_nome",
         )
 
     def validate(self, attrs):
-        # Se as duas datas existirem, encerramento deve ser após a abertura
         ap = attrs.get("abertura_propostas")
         ep = attrs.get("encerramento_propostas")
         if ap and ep and ep <= ap:

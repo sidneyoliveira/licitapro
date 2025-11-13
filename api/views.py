@@ -218,7 +218,12 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     - fornecedores (adicionar/listar/remover)
     - lotes (listar/criar) e organização de lotes
     """
-    queryset = ProcessoLicitatorio.objects.all().order_by('-data_abertura')
+    queryset = (
+        ProcessoLicitatorio.objects
+        .select_related("entidade", "orgao")
+        .all()
+        .order_by('-data_abertura')
+    )
     serializer_class = ProcessoLicitatorioSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
