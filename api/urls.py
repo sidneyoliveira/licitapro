@@ -13,7 +13,6 @@ from .views import (
     FornecedorViewSet,
     FornecedorProcessoViewSet,
     ItemFornecedorViewSet,
-    # NOVO: contratos/empenhos
     ContratoEmpenhoViewSet,
     ReorderItensView,
     CreateUserView,

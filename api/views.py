@@ -21,8 +21,10 @@ from .models import (
     Item,
     Fornecedor,
     FornecedorProcesso,
-    ItemFornecedor
+    ItemFornecedor,
+    ContratoEmpenho
 )
+
 from .serializers import (
     UserSerializer,
     EntidadeSerializer,
@@ -651,3 +653,13 @@ class GoogleLoginView(APIView):
         except Exception as e:
             logger.exception("Erro inesperado no login Google")
             return Response({"detail": "Erro no login com Google."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
+    queryset = ContratoEmpenho.objects.select_related('processo').all().order_by('-criado_em', 'id')
+    serializer_class = ContratoEmpenhoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    # filtros úteis para publicação/consulta
+    filterset_fields = ['processo', 'ano_contrato', 'tipo_contrato_id', 'categoria_processo_id', 'receita']
+    search_fields = ['numero_contrato_empenho', 'processo__numero_processo', 'ni_fornecedor']
