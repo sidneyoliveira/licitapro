@@ -107,6 +107,8 @@ class ProcessoLicitatorio(models.Model):
         ],
         default='Em Pesquisa',
     )
+    
+    situacao_contratacao_id = models.PositiveIntegerField(blank=True, null=True)
 
     data_processo = models.DateField(blank=True, null=True)
     data_abertura = models.DateTimeField(blank=True, null=True)
