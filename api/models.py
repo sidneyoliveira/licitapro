@@ -61,12 +61,17 @@ class Orgao(models.Model):
 # ============================================================
 # 📄 PROCESSO LICITATÓRIO
 # ============================================================
-
 class ProcessoLicitatorio(models.Model):
+    # -------------------------------
+    # Identificação / objetos
+    # -------------------------------
     numero_processo = models.CharField(max_length=50, blank=True, null=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
     objeto = models.TextField()
 
+    # -------------------------------
+    # Classificadores principais
+    # -------------------------------
     modalidade = models.CharField(
         max_length=50,
         choices=[
@@ -78,7 +83,6 @@ class ProcessoLicitatorio(models.Model):
             ('Credenciamento', 'Credenciamento'),
         ],
     )
-
     classificacao = models.CharField(
         max_length=50,
         choices=[
@@ -88,7 +92,6 @@ class ProcessoLicitatorio(models.Model):
             ('Obras Comuns', 'Obras Comuns'),
         ],
     )
-
     tipo_organizacao = models.CharField(
         max_length=10,
         choices=[('Lote', 'Lote'), ('Item', 'Item')],
@@ -108,22 +111,29 @@ class ProcessoLicitatorio(models.Model):
         default='Em Pesquisa',
     )
 
-
+    # -------------------------------
+    # Datas e valores
+    # -------------------------------
     data_processo = models.DateField(blank=True, null=True)
     data_abertura = models.DateTimeField(blank=True, null=True)
 
     valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
 
-    # SRP (Registro de Preço) – já existente; será mapeado para PNCP
+    # SRP (Registro de Preço) – alias compatível com o front (registro_precos)
     registro_preco = models.BooleanField(default=False, verbose_name="Registro de Preço")
 
+    # -------------------------------
+    # Relações
+    # -------------------------------
     entidade = models.ForeignKey('Entidade', on_delete=models.PROTECT, related_name='processos')
     orgao = models.ForeignKey('Orgao', on_delete=models.PROTECT, related_name='processos')
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
 
-    # Domínios (IDs oficiais dos catálogos; permitem selects/validação)
+    # -------------------------------
+    # Domínios (IDs oficiais PNCP) – continuam aqui para publicação
+    # -------------------------------
     instrumento_convocatorio_id = models.PositiveIntegerField(blank=True, null=True)
     modalidade_id = models.PositiveIntegerField(blank=True, null=True)
     modo_disputa_id = models.PositiveIntegerField(blank=True, null=True)
@@ -131,19 +141,36 @@ class ProcessoLicitatorio(models.Model):
     amparo_legal_id = models.PositiveIntegerField(blank=True, null=True)
     situacao_contratacao_id = models.PositiveIntegerField(blank=True, null=True)
 
+    # -------------------------------
+    # Campos textuais selecionados no sistema (o front envia estes)
+    # Mantemos ambos: texto para UX/auditoria e *_id para PNCP
+    # -------------------------------
+    fundamentacao = models.CharField(max_length=32, blank=True, null=True)
+    amparo_legal = models.CharField(max_length=64, blank=True, null=True)
+    modo_disputa = models.CharField(max_length=24, blank=True, null=True)
+    criterio_julgamento = models.CharField(max_length=32, blank=True, null=True)
+
+    # -------------------------------
     # Identificação da compra
+    # -------------------------------
     numero_compra = models.CharField(max_length=32, blank=True, null=True)
     ano_compra = models.PositiveIntegerField(blank=True, null=True)
 
+    # -------------------------------
     # Janela de propostas
+    # -------------------------------
     abertura_propostas = models.DateTimeField(blank=True, null=True)
     encerramento_propostas = models.DateTimeField(blank=True, null=True)
 
+    # -------------------------------
     # Links
+    # -------------------------------
     link_sistema_origem = models.URLField(blank=True, null=True)
     link_processo_eletronico = models.URLField(blank=True, null=True)
 
-    # Controle/retornos da publicação (genéricos)
+    # -------------------------------
+    # Controle/retornos da publicação
+    # -------------------------------
     sequencial_publicacao = models.PositiveIntegerField(blank=True, null=True)
     id_controle_publicacao = models.CharField(max_length=64, blank=True, null=True)
     ultima_atualizacao_publicacao = models.DateTimeField(blank=True, null=True)
@@ -157,7 +184,7 @@ class ProcessoLicitatorio(models.Model):
         return f"{self.numero_certame}"
 
     # -------------------------------
-    # 🔁 Alias para compatibilidade com o front (registro_precos)
+    # Alias compatível com o front (registro_precos)
     # -------------------------------
     @property
     def registro_precos(self):
@@ -168,34 +195,17 @@ class ProcessoLicitatorio(models.Model):
         self.registro_preco = bool(value)
 
     # -------------------------------
-    # 📦 Lotes – helpers nativos
+    # Helpers de Lotes
     # -------------------------------
     def next_lote_numero(self) -> int:
-        """Retorna o próximo número sequencial de lote deste processo."""
         ultimo = self.lotes.order_by('-numero').first()
         return (ultimo.numero + 1) if ultimo else 1
 
     @transaction.atomic
-    def criar_lotes(
-        self,
-        quantidade: int = None,
-        descricao_prefixo: str = "Lote ",
-        *,
-        lotes: list = None,
-        numero: int = None,
-        descricao: str = ""
-    ):
-        """
-        Formas de uso:
-          - criar_lotes(quantidade=5) → cria 5 lotes: 'Lote 1', 'Lote 2', ...
-          - criar_lotes(lotes=[{'numero':1,'descricao':'A'}, {'numero':2,'descricao':'B'}])
-          - criar_lotes(numero=10, descricao='Equipamentos')
-
-        Retorna a lista de objetos Lote criados.
-        """
+    def criar_lotes(self, quantidade: int = None, descricao_prefixo: str = "Lote ",
+                    *, lotes: list = None, numero: int = None, descricao: str = ""):
         created = []
 
-        # lista explícita
         if isinstance(lotes, list) and lotes:
             for item in lotes:
                 n = item.get('numero') or self.next_lote_numero()
@@ -204,14 +214,12 @@ class ProcessoLicitatorio(models.Model):
                 created.append(obj)
             return created
 
-        # único
         if numero is not None or descricao:
             n = numero or self.next_lote_numero()
             obj = Lote.objects.create(processo=self, numero=n, descricao=descricao or "")
             created.append(obj)
             return created
 
-        # em quantidade
         if quantidade and quantidade > 0:
             start = self.next_lote_numero()
             for i in range(quantidade):
@@ -224,23 +232,8 @@ class ProcessoLicitatorio(models.Model):
         raise ValidationError("Parâmetros inválidos para criação de lotes.")
 
     @transaction.atomic
-    def organizar_lotes(
-        self,
-        ordem_ids: list[int] = None,
-        normalizar: bool = False,
-        inicio: int = 1,
-        mapa: list[dict] = None
-    ):
-        """
-        Renumeração/organização dos lotes do processo.
-
-        - ordem_ids=[5,2,7] → define números 1..N nessa ordem.
-        - normalizar=True, inicio=1 → renumera sem buracos a partir de 'inicio'.
-        - mapa=[{'id':5,'numero':10}, {'id':2,'numero':11}] → aplica números específicos.
-
-        Retorna QuerySet atualizado (ordenado por numero).
-        """
-        # 1) pela ordem de IDs
+    def organizar_lotes(self, ordem_ids: list[int] = None, normalizar: bool = False,
+                        inicio: int = 1, mapa: list[dict] = None):
         if isinstance(ordem_ids, list) and ordem_ids:
             qs = list(self.lotes.filter(id__in=ordem_ids))
             id2obj = {o.id: o for o in qs}
@@ -253,7 +246,6 @@ class ProcessoLicitatorio(models.Model):
                     numero += 1
             return self.lotes.order_by('numero')
 
-        # 2) normalização simples
         if normalizar:
             numero = inicio or 1
             for obj in self.lotes.order_by('numero', 'id'):
@@ -263,7 +255,6 @@ class ProcessoLicitatorio(models.Model):
                 numero += 1
             return self.lotes.order_by('numero')
 
-        # 3) mapeamento id->numero
         if isinstance(mapa, list) and mapa:
             ids = [m.get('id') for m in mapa if m.get('id') is not None]
             qs = self.lotes.filter(id__in=ids)
@@ -275,11 +266,9 @@ class ProcessoLicitatorio(models.Model):
                     obj = id2obj[_id]
                     obj.numero = num
                     obj.save(update_fields=['numero'])
-            # opcionalmente normaliza após mapear
             return self.lotes.order_by('numero')
 
         raise ValidationError("Parâmetros inválidos para organização de lotes.")
-
 
 # ============================================================
 # 📦 LOTE
