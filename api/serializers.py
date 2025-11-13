@@ -107,7 +107,7 @@ class OrgaoSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "nome",
-            "codigo_unidade",   # campo genérico que atende PNCP
+            "codigo_unidade",  
             "entidade",
         )
 
@@ -117,6 +117,12 @@ class OrgaoSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
+    
+    entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
+    orgao_nome = serializers.CharField(source="orgao.nome", read_only=True)
+    entidade_obj = EntidadeSerializer(source="entidade", read_only=True)
+    orgao_obj = OrgaoSerializer(source="orgao", read_only=True)
+
     class Meta:
         model = ProcessoLicitatorio
         fields = (
@@ -132,12 +138,12 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "data_abertura",
             "valor_referencia",
             "vigencia_meses",
-            "registro_preco",   # alias "registro_precos" chega e seta aqui via property
-            "entidade",
-            "orgao",
+            "registro_preco",
+            "entidade",          # <-- continua aceitando ID para escrita
+            "orgao",             # <-- continua aceitando ID para escrita
             "data_criacao_sistema",
 
-            # textuais do front
+            # campos textuais do sistema (UX)
             "fundamentacao",
             "amparo_legal",
             "modo_disputa",
@@ -151,7 +157,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "link_sistema_origem",
             "link_processo_eletronico",
 
-            # IDs PNCP (preenchidos automaticamente)
+            # IDs PNCP (preenchidos pelo mapeamento)
             "instrumento_convocatorio_id",
             "modalidade_id",
             "modo_disputa_id",
@@ -159,28 +165,33 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "amparo_legal_id",
             "situacao_contratacao_id",
 
-            # controle de publicação
+            # publicação
             "sequencial_publicacao",
             "id_controle_publicacao",
             "ultima_atualizacao_publicacao",
+
+            # ---- Somente leitura para exibir no front ----
+            "entidade_nome",
+            "orgao_nome",
+            "entidade_obj",
+            "orgao_obj",
         )
-        read_only_fields = ("data_criacao_sistema",)
+        read_only_fields = (
+            "data_criacao_sistema",
+            "entidade_nome",
+            "orgao_nome",
+            "entidade_obj",
+            "orgao_obj",
+        )
 
-    # ---------------------------
-    # Tabelas de mapeamento (coerentes com as constantes do front)
-    # ---------------------------
+    # ====== Deixe aqui suas tabelas e métodos de mapeamento FUND_MAP/AMPARO_MAP/etc. ======
     FUND_MAP = {"lei_8666": 1, "lei_10520": 2, "lei_14133": 3}
-
     AMPARO_MAP = {
-        "lei_8666": {
-            "art_23": 101, "art_24": 102, "art_25": 103
-        },
-        "lei_10520": {
-            "art_4": 201, "art_5": 202
-        },
+        "lei_8666": {"art_23": 101, "art_24": 102, "art_25": 103},
+        "lei_10520": {"art_4": 201, "art_5": 202},
         "lei_14133": {
-            "Pregão Eletrônico":     {"art_28_i": 301},
-            "Concorrência Eletrônica":{"art_28_ii": 302},
+            "Pregão Eletrônico": {"art_28_i": 301},
+            "Concorrência Eletrônica": {"art_28_ii": 302},
             "Dispensa Eletrônica": {
                 "art_75_par7": 311, "art_75_i": 312, "art_75_ii": 313,
                 "art_75_iii_a": 314, "art_75_iii_b": 315,
@@ -190,9 +201,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
                 "art_75_ix": 325, "art_75_viii": 326, "art_75_xv": 327,
                 "lei_11947_art14_1": 328
             },
-            "Credenciamento": {
-                "art_79_i": 331, "art_79_ii": 332, "art_79_iii": 333
-            },
+            "Credenciamento": {"art_79_i": 331, "art_79_ii": 332, "art_79_iii": 333},
             "Inexigibilidade Eletrônica": {
                 "art_74_caput": 341, "art_74_i": 342, "art_74_ii": 343,
                 "art_74_iii_a": 344, "art_74_iii_b": 345, "art_74_iii_c": 346,
@@ -202,18 +211,14 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             },
         },
     }
-
     MODO_MAP = {"aberto": 1, "fechado": 2, "aberto_e_fechado": 3}
     CRITERIO_MAP = {"menor_preco": 1, "maior_desconto": 2}
 
     def _apply_code_mappings(self, attrs):
-        # fundamentacao -> fundamentacao_id
         fund = attrs.get("fundamentacao")
         if fund:
-            attrs["modalidade_id"] = attrs.get("modalidade_id")  # preserva se vier
             attrs["fundamentacao_id"] = self.FUND_MAP.get(fund)
 
-        # amparo_legal -> amparo_legal_id (depende da fundamentação e, para 14.133, da modalidade)
         amparo = attrs.get("amparo_legal")
         modalidade_txt = attrs.get("modalidade")
         if amparo and fund:
@@ -223,12 +228,10 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             else:
                 attrs["amparo_legal_id"] = self.AMPARO_MAP.get(fund, {}).get(amparo)
 
-        # modo_disputa -> modo_disputa_id
         modo = attrs.get("modo_disputa")
         if modo:
             attrs["modo_disputa_id"] = self.MODO_MAP.get(modo)
 
-        # criterio_julgamento -> criterio_julgamento_id
         crit = attrs.get("criterio_julgamento")
         if crit:
             attrs["criterio_julgamento_id"] = self.CRITERIO_MAP.get(crit)
@@ -251,7 +254,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         validated_data = self._apply_code_mappings(validated_data)
         return super().update(instance, validated_data)
-    
+
 # ============================================================
 # 📦 LOTE
 # ============================================================
@@ -265,7 +268,6 @@ class LoteSerializer(serializers.ModelSerializer):
             "numero",
             "descricao",
         )
-
 
 # ============================================================
 # 🏭 FORNECEDOR
