@@ -108,7 +108,6 @@ class ProcessoLicitatorio(models.Model):
         default='Em Pesquisa',
     )
 
-
     data_processo = models.DateField(blank=True, null=True)
     data_abertura = models.DateTimeField(blank=True, null=True)
 
@@ -123,13 +122,17 @@ class ProcessoLicitatorio(models.Model):
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True)
 
+    # ========================================================
+    # 🧩 CAMPOS MÍNIMOS PARA PUBLICAR "CONTRATAÇÃO" (GENÉRICOS)
+    # (Somente complementam o que já existe; não duplicam nomes PNCP)
+    # ========================================================
+
     # Domínios (IDs oficiais dos catálogos; permitem selects/validação)
     instrumento_convocatorio_id = models.PositiveIntegerField(blank=True, null=True)
     modalidade_id = models.PositiveIntegerField(blank=True, null=True)
     modo_disputa_id = models.PositiveIntegerField(blank=True, null=True)
     criterio_julgamento_id = models.PositiveIntegerField(blank=True, null=True)
     amparo_legal_id = models.PositiveIntegerField(blank=True, null=True)
-    situacao_contratacao_id = models.PositiveIntegerField(blank=True, null=True)
 
     # Identificação da compra
     numero_compra = models.CharField(max_length=32, blank=True, null=True)
