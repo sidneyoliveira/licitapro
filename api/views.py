@@ -553,13 +553,13 @@ class ReorderItensView(APIView):
 # 9️⃣ USUÁRIOS E DASHBOARD
 # ============================================================
 
-class CreateUserView(viewsets.CreateAPIView):
+class CreateUserView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
 
 
-class ManageUserView(viewsets.RetrieveUpdateAPIView):
+class ManageUserView(generics.RetrieveUpdateAPIView):
     """
     GET /me/  -> retorna usuário autenticado
     PUT/PATCH -> atualiza parcialmente (JSON ou multipart para foto)
