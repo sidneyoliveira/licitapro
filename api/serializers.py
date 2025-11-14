@@ -34,56 +34,8 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "date_joined",
         )
 
-
-class UserSerializer(serializers.ModelSerializer):
-    """
-    Serializer usado por CreateUserView/ManageUserView/GoogleLoginView.
-    Aceita 'password' na criação/atualização e monta URL absoluta para a foto.
-    """
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    profile_image = serializers.ImageField(required=False, allow_null=True)
-
-    class Meta:
-        model = CustomUser
-        fields = [
-            "id",
-            "username",
-            "email",
-            "first_name",
-            "last_name",
-            "cpf",
-            "data_nascimento",
-            "phone",
-            "profile_image",
-            "password",
-        ]
-
-    def to_representation(self, instance):
-        rep = super().to_representation(instance)
-        request = self.context.get("request")
-        if rep.get("profile_image") and request:
-            rep["profile_image"] = request.build_absolute_uri(rep["profile_image"])
-        rep.pop("password", None)
-        return rep
-
-    def create(self, validated_data):
-        password = validated_data.pop("password", None)
-        user = CustomUser(**validated_data)
-        if password:
-            user.set_password(password)
-        else:
-            user.set_unusable_password()
-        user.save()
-        return user
-
-    def update(self, instance, validated_data):
-        password = validated_data.pop("password", None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        if password:
-            instance.set_password(password)
-        instance.save()
-        return instance
+# Alias para compatibilidade com views que importam UserSerializer
+UserSerializer = CustomUserSerializer
 
 
 # ============================================================
@@ -93,40 +45,56 @@ class UserSerializer(serializers.ModelSerializer):
 class EntidadeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Entidade
-        fields = (
-            "id",
-            "nome",
-            "cnpj",
-            "ano",
-        )
+        fields = ("id", "nome", "cnpj", "ano")
 
 
 class OrgaoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Orgao
-        fields = (
-            "id",
-            "nome",
-            "codigo_unidade",  
-            "entidade",
-        )
+        fields = ("id", "nome", "codigo_unidade", "entidade")
+
+
+# Mini serializers para embutir no Processo
+class EntidadeMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Entidade
+        fields = ("id", "nome", "cnpj", "ano")
+
+
+class OrgaoMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Orgao
+        fields = ("id", "nome", "codigo_unidade", "entidade")
 
 
 # ============================================================
 # 📄 PROCESSO LICITATÓRIO
 # ============================================================
+
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     # Exibição amigável
     entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
     orgao_nome = serializers.CharField(source="orgao.nome", read_only=True)
-    entidade_obj = EntidadeSerializer(source="entidade", read_only=True)
-    orgao_obj = OrgaoSerializer(source="orgao", read_only=True)
+    entidade_obj = EntidadeMiniSerializer(source="entidade", read_only=True)
+    orgao_obj = OrgaoMiniSerializer(source="orgao", read_only=True)
 
-    # Sobrescreve para aceitar string livre (código) e mapear manualmente
+    # Recebe códigos (front) e converte para rótulos do modelo
     modalidade = serializers.CharField()
     situacao = serializers.CharField()
     classificacao = serializers.CharField()
     tipo_organizacao = serializers.CharField()
+
+    # Campos de entrada (front) para mapear PNCP → IDs (não existem no model)
+    fundamentacao = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    amparo_legal = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    modo_disputa = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    criterio_julgamento = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    # Códigos de volta no response (somente leitura)
+    modalidade_code = serializers.SerializerMethodField(read_only=True)
+    situacao_code = serializers.SerializerMethodField(read_only=True)
+    classificacao_code = serializers.SerializerMethodField(read_only=True)
+    tipo_organizacao_code = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = ProcessoLicitatorio
@@ -135,10 +103,10 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "numero_processo",
             "numero_certame",
             "objeto",
-            "modalidade",              # recebe código e converte
-            "classificacao",           # idem
-            "tipo_organizacao",        # idem
-            "situacao",                # idem
+            "modalidade",               # aceita código; salva rótulo
+            "classificacao",            # idem
+            "tipo_organizacao",         # idem
+            "situacao",                 # idem
             "data_processo",
             "data_abertura",
             "valor_referencia",
@@ -148,7 +116,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "orgao",
             "data_criacao_sistema",
 
-            # textuais UX
+            # campos de entrada (write-only) para mapear PNCP
             "fundamentacao",
             "amparo_legal",
             "modo_disputa",
@@ -181,7 +149,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "entidade_obj",
             "orgao_obj",
 
-            # devolvemos também os *codes* para o front preencher selects
+            # códigos para o front manter selects
             "modalidade_code",
             "situacao_code",
             "classificacao_code",
@@ -220,10 +188,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     }
     CLASSIFICACAO_INV = {v: k for k, v in CLASSIFICACAO_MAP.items()}
 
-    ORGANIZACAO_MAP = {
-        "lote": "Lote",
-        "item": "Item",
-    }
+    ORGANIZACAO_MAP = {"lote": "Lote", "item": "Item"}
     ORGANIZACAO_INV = {v: k for k, v in ORGANIZACAO_MAP.items()}
 
     SITUACAO_MAP = {
@@ -237,7 +202,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     }
     SITUACAO_INV = {v: k for k, v in SITUACAO_MAP.items()}
 
-    # PNCP (como você já tinha)
+    # PNCP (IDs exemplificativos — ajuste conforme seu catálogo)
     FUND_MAP = {"lei_8666": 1, "lei_10520": 2, "lei_14133": 3}
     AMPARO_MAP = {
         "lei_8666": {"art_23": 101, "art_24": 102, "art_25": 103},
@@ -269,8 +234,11 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     CRITERIO_MAP = {"menor_preco": 1, "maior_desconto": 2}
 
     def _map_in_codes(self, attrs):
-        """Converte códigos do front para rótulos do modelo + IDs PNCP."""
-        # Choices com rótulos do modelo
+        """
+        Converte códigos do front em rótulos do modelo e popula IDs PNCP.
+        Remove do payload os campos write-only que não existem no model.
+        """
+        # Choices (rótulos do model)
         mod = attrs.get("modalidade")
         if mod:
             attrs["modalidade"] = self.MODALIDADE_MAP.get(mod, mod)
@@ -288,24 +256,24 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             attrs["situacao"] = self.SITUACAO_MAP.get(sit, sit)
 
         # PNCP mappings
-        fund = attrs.get("fundamentacao")
+        fund = attrs.pop("fundamentacao", None)
         if fund:
             attrs["instrumento_convocatorio_id"] = self.FUND_MAP.get(fund)
 
-        amparo = attrs.get("amparo_legal")
-        modalidade_rotulo = attrs.get("modalidade")
+        amparo = attrs.pop("amparo_legal", None)
         if amparo and fund:
+            modalidade_rotulo = attrs.get("modalidade")
             if fund == "lei_14133":
                 bloco = self.AMPARO_MAP["lei_14133"].get(modalidade_rotulo or "", {})
                 attrs["amparo_legal_id"] = bloco.get(amparo)
             else:
                 attrs["amparo_legal_id"] = self.AMPARO_MAP.get(fund, {}).get(amparo)
 
-        modo = attrs.get("modo_disputa")
+        modo = attrs.pop("modo_disputa", None)
         if modo:
             attrs["modo_disputa_id"] = self.MODO_MAP.get(modo)
 
-        crit = attrs.get("criterio_julgamento")
+        crit = attrs.pop("criterio_julgamento", None)
         if crit:
             attrs["criterio_julgamento_id"] = self.CRITERIO_MAP.get(crit)
 
@@ -328,25 +296,19 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         validated_data = self._map_in_codes(validated_data)
         return super().update(instance, validated_data)
 
-    # Devolvemos *_code junto com os rótulos para o front popular selects
-    @property
-    def _code_fields(self):
-        return {
-            "modalidade_code": self.MODALIDADE_INV,
-            "situacao_code": self.SITUACAO_INV,
-            "classificacao_code": self.CLASSIFICACAO_INV,
-            "tipo_organizacao_code": self.ORGANIZACAO_INV,
-        }
+    # ---- getters dos *_code (somente leitura) ----
+    def get_modalidade_code(self, obj):
+        return self.MODALIDADE_INV.get(obj.modalidade, obj.modalidade)
 
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        # acrescenta os *_code
-        for out_field, inv_map in self._code_fields.items():
-            plain_field = out_field.replace("_code", "")
-            rotulo = data.get(plain_field)
-            data[out_field] = inv_map.get(rotulo, rotulo)
-        return data
-    
+    def get_situacao_code(self, obj):
+        return self.SITUACAO_INV.get(obj.situacao, obj.situacao)
+
+    def get_classificacao_code(self, obj):
+        return self.CLASSIFICACAO_INV.get(obj.classificacao, obj.classificacao)
+
+    def get_tipo_organizacao_code(self, obj):
+        return self.ORGANIZACAO_INV.get(obj.tipo_organizacao, obj.tipo_organizacao)
+
 
 # ============================================================
 # 📦 LOTE
@@ -355,12 +317,8 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
 class LoteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lote
-        fields = (
-            "id",
-            "processo",
-            "numero",
-            "descricao",
-        )
+        fields = ("id", "processo", "numero", "descricao")
+
 
 # ============================================================
 # 🏭 FORNECEDOR
@@ -405,8 +363,7 @@ class ItemSerializer(serializers.ModelSerializer):
             "lote",
             "fornecedor",
             "ordem",
-
-            # complementos genéricos para publicação (seus campos de modelo)
+            # complementos genéricos para publicação
             "natureza",
             "tipo_beneficio_id",
             "criterio_julgamento_id",
@@ -423,13 +380,7 @@ class ItemSerializer(serializers.ModelSerializer):
 class FornecedorProcessoSerializer(serializers.ModelSerializer):
     class Meta:
         model = FornecedorProcesso
-        fields = (
-            "id",
-            "processo",
-            "fornecedor",
-            "data_participacao",
-            "habilitado",
-        )
+        fields = ("id", "processo", "fornecedor", "data_participacao", "habilitado")
 
 
 # ============================================================
@@ -439,13 +390,7 @@ class FornecedorProcessoSerializer(serializers.ModelSerializer):
 class ItemFornecedorSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItemFornecedor
-        fields = (
-            "id",
-            "item",
-            "fornecedor",
-            "valor_proposto",
-            "vencedor",
-        )
+        fields = ("id", "item", "fornecedor", "valor_proposto", "vencedor")
 
 
 # ============================================================
