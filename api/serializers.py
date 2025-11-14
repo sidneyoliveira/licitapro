@@ -12,6 +12,9 @@ from .models import (
     ContratoEmpenho,
 )
 
+from django.contrib.auth import get_user_model
+from rest_framework import serializers
+
 # ============================================================
 # 👤 USUÁRIO
 # ============================================================
@@ -34,8 +37,54 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "date_joined",
         )
 
-# Alias para compatibilidade com views que importam UserSerializer
-UserSerializer = CustomUserSerializer
+User = get_user_model()
+
+
+class GroupNameField(serializers.StringRelatedField):
+    def to_representation(self, value):
+        # retorna apenas o nome do grupo
+        return value.name
+
+
+class UsuarioSerializer(serializers.ModelSerializer):
+    groups = GroupNameField(many=True, read_only=True)
+    # senha opcional na criação/edição
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "is_active",
+            "last_login",
+            "date_joined",
+            "groups",
+            "password",
+        ]
+        read_only_fields = ["last_login", "date_joined", "groups"]
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+        user = User(**validated_data)
+        if password:
+            user.set_password(password)
+        else:
+            user.set_unusable_password()
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("password", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password is not None and password != "":
+            instance.set_password(password)
+        instance.save()
+        return instance
 
 
 # ============================================================
@@ -85,7 +134,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     tipo_organizacao = serializers.CharField()
 
     # Campos de entrada (front) para mapear PNCP → IDs (não existem no model)
-    fundamentacao = serializers.CharField(required=False, allow_blank=True)
+    fundamentacao = serializers.CharField(required=False, allow_blank=True, write_only=True)
     amparo_legal = serializers.CharField(required=False, allow_blank=True, write_only=True)
     modo_disputa = serializers.CharField(required=False, allow_blank=True, write_only=True)
     criterio_julgamento = serializers.CharField(required=False, allow_blank=True, write_only=True)
