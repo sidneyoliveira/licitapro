@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, filters
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import permissions
 from rest_framework.views import APIView
+from rest_framework import generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import transaction
@@ -552,13 +553,13 @@ class ReorderItensView(APIView):
 # 9️⃣ USUÁRIOS E DASHBOARD
 # ============================================================
 
-class CreateUserView(generics.CreateAPIView):
+class CreateUserView(viewsets.CreateAPIView):
     queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
 
 
-class ManageUserView(generics.RetrieveUpdateAPIView):
+class ManageUserView(viewsets.RetrieveUpdateAPIView):
     """
     GET /me/  -> retorna usuário autenticado
     PUT/PATCH -> atualiza parcialmente (JSON ou multipart para foto)
