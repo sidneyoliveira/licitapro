@@ -145,7 +145,16 @@ class ProcessoLicitatorio(models.Model):
     # Campos textuais selecionados no sistema (o front envia estes)
     # Mantemos ambos: texto para UX/auditoria e *_id para PNCP
     # -------------------------------
-    fundamentacao = models.CharField(max_length=32, blank=True, null=True)
+    fundamentacao = models.CharField(
+        max_length=16,
+        choices=[
+            ("lei_14133", "Lei 14.133/21"),
+            ("lei_8666",  "Lei 8.666/93"),
+            ("lei_10520", "Lei 10.520/02"),
+        ],
+        blank=True,
+        null=True,
+    )
     amparo_legal = models.CharField(max_length=64, blank=True, null=True)
     modo_disputa = models.CharField(max_length=24, blank=True, null=True)
     criterio_julgamento = models.CharField(max_length=32, blank=True, null=True)
