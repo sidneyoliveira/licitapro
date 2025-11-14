@@ -36,6 +36,9 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "is_staff",
             "date_joined",
         )
+        
+UserSerializer = CustomUserSerializer
+
 
 User = get_user_model()
 
