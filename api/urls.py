@@ -19,6 +19,7 @@ from .views import (
     ManageUserView,
     DashboardStatsView,
     GoogleLoginView,
+    UsuarioViewSet,
 )
 
 # ============================================================
@@ -43,8 +44,9 @@ router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'fornecedores-processo', FornecedorProcessoViewSet, basename='fornecedor-processo')
 router.register(r'itens-fornecedor', ItemFornecedorViewSet, basename='item-fornecedor')
 
-# NOVO: CONTRATOS / EMPENHOS
 router.register(r'contratos', ContratoEmpenhoViewSet, basename='contrato')
+
+router.register(r'usuarios', UsuarioViewSet, basename='usuario')
 
 # ============================================================
 # 🛣️ URLPATTERNS COMPLETO

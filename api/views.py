@@ -1,5 +1,6 @@
-from rest_framework import viewsets, generics, status
+from rest_framework import viewsets, permissions, filters
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework import permissions
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -11,6 +12,8 @@ from django.utils import timezone
 import re, json
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
+from django.contrib.auth import get_user_model
+
 
 from .models import (
     CustomUser,
@@ -35,8 +38,25 @@ from .serializers import (
     FornecedorSerializer,
     FornecedorProcessoSerializer,
     ItemFornecedorSerializer,
-    ContratoEmpenhoSerializer
+    ContratoEmpenhoSerializer,
+    UsuarioSerializer
 )
+
+User = get_user_model()
+
+
+class UsuarioViewSet(viewsets.ModelViewSet):
+    """
+    CRUD de usuários do sistema.
+    Acesso restrito a staff/admin.
+    """
+    queryset = User.objects.all().order_by("id")
+    serializer_class = UsuarioSerializer
+    permission_classes = [permissions.IsAdminUser]  # só staff/admin acessa
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["username", "email", "first_name", "last_name"]
+    ordering_fields = ["id", "username", "email", "first_name", "last_name", "last_login", "date_joined"]
+    ordering = ["username"]
 
 # ============================================================
 # 1️⃣ ENTIDADE / ÓRGÃO
