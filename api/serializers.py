@@ -85,7 +85,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     tipo_organizacao = serializers.CharField()
 
     # Campos de entrada (front) para mapear PNCP → IDs (não existem no model)
-    fundamentacao = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    fundamentacao = serializers.CharField(required=False, allow_blank=True)
     amparo_legal = serializers.CharField(required=False, allow_blank=True, write_only=True)
     modo_disputa = serializers.CharField(required=False, allow_blank=True, write_only=True)
     criterio_julgamento = serializers.CharField(required=False, allow_blank=True, write_only=True)
@@ -103,10 +103,10 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "numero_processo",
             "numero_certame",
             "objeto",
-            "modalidade",               # aceita código; salva rótulo
-            "classificacao",            # idem
-            "tipo_organizacao",         # idem
-            "situacao",                 # idem
+            "modalidade",               
+            "classificacao",            
+            "tipo_organizacao",         
+            "situacao",                 
             "data_processo",
             "data_abertura",
             "valor_referencia",
