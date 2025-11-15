@@ -71,6 +71,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
             "last_login",
             "date_joined",
             "groups",
+            "password",
         ]
         read_only_fields = ["last_login", "date_joined", "groups"]
 
