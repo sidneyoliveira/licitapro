@@ -14,6 +14,7 @@ import re, json
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 from django.contrib.auth import get_user_model
+from rest_framework import viewsets, permissions, parsers
 
 
 from .models import (
@@ -55,6 +56,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     serializer_class = UsuarioSerializer
     permission_classes = [permissions.IsAdminUser]  # só staff/admin acessa
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
     search_fields = ["username", "email", "first_name", "last_name"]
     ordering_fields = ["id", "username", "email", "first_name", "last_name", "last_login", "date_joined"]
     ordering = ["username"]

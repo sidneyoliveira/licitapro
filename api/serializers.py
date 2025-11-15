@@ -36,7 +36,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "is_staff",
             "date_joined",
         )
-        
+
 UserSerializer = CustomUserSerializer
 
 
@@ -62,11 +62,15 @@ class UsuarioSerializer(serializers.ModelSerializer):
             "email",
             "first_name",
             "last_name",
+            "email",
+            "cpf",
+            "data_nascimento",
+            "phone",
+            "profile_image",
             "is_active",
             "last_login",
             "date_joined",
             "groups",
-            "password",
         ]
         read_only_fields = ["last_login", "date_joined", "groups"]
 
