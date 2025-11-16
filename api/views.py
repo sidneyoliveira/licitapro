@@ -50,6 +50,8 @@ from .serializers import (
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
     UsuarioSerializer,
+    EntidadeMiniSerializer,
+    OrgaoMiniSerializer
 )
 
 logger = logging.getLogger(__name__)
@@ -224,7 +226,6 @@ class FornecedorViewSet(viewsets.ModelViewSet):
     search_fields = ['razao_social', 'cnpj']
     filterset_fields = ['cnpj']
 
-
 # ============================================================
 # 3) PROCESSO LICITATÓRIO
 # ============================================================
@@ -235,6 +236,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     - fornecedores (adicionar/listar/remover)
     - lotes (listar/criar) e organização de lotes
     - importar_xlsx (POST multipart)
+    - importar (POST JSON)
     """
     queryset = (
         ProcessoLicitatorio.objects
@@ -248,6 +250,162 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     search_fields = ['numero_processo', 'numero_certame', 'objeto']
     filterset_fields = ['modalidade', 'situacao', 'entidade', 'orgao']
 
+    # -------------------- Helpers comuns --------------------
+    @staticmethod
+    def _only_digits(s):
+        return re.sub(r"\D", "", str(s or ""))
+
+    @staticmethod
+    def _as_bool(v):
+        if isinstance(v, bool):
+            return v
+        s = str(v or "").strip().lower()
+        if s in ("sim", "s", "true", "1", "yes"):
+            return True
+        if s in ("nao", "não", "n", "false", "0", "no"):
+            return False
+        return None
+
+    @staticmethod
+    def _to_date_str(v):
+        """
+        Converte valores vindos do Excel ou string para 'YYYY-MM-DD'.
+        """
+        if not v:
+            return None
+        if isinstance(v, (datetime, date)):
+            try:
+                return v.date().isoformat()
+            except Exception:
+                return v.isoformat()[:10]
+        s = str(v).strip()
+        m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", s)
+        if m:
+            return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+        # já pode estar em ISO
+        return s[:10]
+
+    @staticmethod
+    def _join_date_time(date_val, time_val):
+        """
+        Junta data + hora (vindo do Excel ou string "HH:MM") e devolve ISO.
+        Se não houver hora, devolve só a data em ISO (00:00).
+        """
+        if not date_val and not time_val:
+            return None
+
+        # Resolve data
+        if isinstance(date_val, datetime):
+            d = date_val
+        elif isinstance(date_val, date):
+            d = datetime(date_val.year, date_val.month, date_val.day)
+        elif isinstance(date_val, (int, float)):
+            # Pode ser número serial do Excel -> trate acima se estiver usando openpyxl.utils.datetime
+            # Aqui assumimos string/iso; fallback para simples parse
+            try:
+                d = datetime.fromordinal(datetime(1899, 12, 30).toordinal() + int(date_val))
+            except Exception:
+                try:
+                    d = datetime.fromisoformat(str(date_val))
+                except Exception:
+                    d = None
+        else:
+            try:
+                d = datetime.fromisoformat(str(date_val))
+            except Exception:
+                d = None
+
+        if d is None:
+            return None
+
+        hh, mm = 0, 0
+        if isinstance(time_val, datetime):
+            hh, mm = time_val.hour, time_val.minute
+        elif isinstance(time_val, time):
+            hh, mm = time_val.hour, time_val.minute
+        elif isinstance(time_val, (int, float)):
+            total_minutes = round(float(time_val) * 24 * 60)
+            hh, mm = total_minutes // 60, total_minutes % 60
+        elif isinstance(time_val, str) and ":" in time_val:
+            try:
+                parts = time_val.split(":")
+                hh, mm = int(parts[0]), int(parts[1])
+            except Exception:
+                hh, mm = 0, 0
+
+        out = datetime(d.year, d.month, d.day, hh, mm, 0)
+        return out.isoformat()
+
+    def _resolve_entidade_id(self, ent_id, ent_nome, ent_cnpj):
+        """
+        Tenta resolver Entidade -> id. Não cria entidade nova aqui.
+        """
+        if ent_id:
+            return ent_id
+        if ent_cnpj:
+            digits = self._only_digits(ent_cnpj)
+            if digits:
+                for e in Entidade.objects.only('id', 'cnpj').all():
+                    if self._only_digits(e.cnpj) == digits:
+                        return e.id
+        if ent_nome:
+            ent = Entidade.objects.filter(nome__iexact=str(ent_nome).strip()).first()
+            if ent:
+                return ent.id
+        return None
+
+    def _resolve_orgao_id(self, org_id, org_nome, org_cod, entidade_id):
+        """
+        Tenta resolver Órgão -> id. Não cria órgão novo aqui.
+        """
+        if org_id:
+            return org_id
+        if entidade_id:
+            qs = Orgao.objects.filter(entidade_id=entidade_id)
+            if org_cod:
+                qs = qs.filter(codigo_unidade=str(org_cod).strip())
+            if org_nome:
+                org = qs.filter(nome__iexact=str(org_nome).strip()).first() or qs.first()
+            else:
+                org = qs.first()
+            if org:
+                return org.id
+        return None
+
+    def _apply_defaults(self, base: dict) -> dict:
+        """
+        Garante que campos opcionais tenham 'defaults' para evitar erros de required/not-null
+        quando o serializer/modelo ainda exige algo.
+        """
+        return {
+            # Identificação
+            "numero_processo": (base.get("numero_processo") or "").strip(),
+            "numero_certame": (base.get("numero_certame") or None),
+            "objeto": base.get("objeto") or "",
+
+            # Opcionais com defaults "amigáveis"
+            "modalidade": base.get("modalidade") or None,                 # pode ficar None
+            "classificacao": base.get("classificacao") or "OUTROS",       # default
+            "tipo_organizacao": base.get("tipo_organizacao") or "MUNICIPAL",  # default
+            "situacao": base.get("situacao") or "RASCUNHO",               # default
+
+            # Datas/locais
+            "data_abertura": base.get("data_abertura"),                   # ou None
+            "data_sessao_iso": base.get("data_sessao_iso"),               # usado por serializer "inteligente"
+            "local_sessao": base.get("local_sessao") or "",
+            "tipo_disputa": base.get("tipo_disputa") or "",
+            "registro_precos": self._as_bool(base.get("registro_precos")),
+
+            # Resolução de entidade/órgão (auxiliares OU ids diretos)
+            "entidade": base.get("entidade"),  # id se já resolvido
+            "orgao": base.get("orgao"),        # id se já resolvido
+            "entidade_id": base.get("entidade_id"),
+            "entidade_nome": base.get("entidade_nome"),
+            "entidade_cnpj": base.get("entidade_cnpj"),
+            "orgao_codigo_unidade": base.get("orgao_codigo_unidade"),
+            "orgao_nome": base.get("orgao_nome"),
+        }
+
     # ---------------- IMPORTAÇÃO XLSX ----------------
     @action(
         detail=False,
@@ -256,7 +414,12 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         parser_classes=[parsers.MultiPartParser, parsers.FormParser]
     )
     def importar_xlsx(self, request, *args, **kwargs):
-        # Garantir dependência
+        """
+        POST /api/processos/importar-xlsx/
+        Body: multipart/form-data com campo 'arquivo' (aceita também 'file'/'xlsx'/'planilha')
+        Lê a planilha (aba IMPORTACAO ou ativa), resolve entidade/órgão e cria processos + (opcional) data/hora.
+        """
+        # Dependência
         try:
             import openpyxl
         except ImportError:
@@ -267,23 +430,32 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         # Arquivo
         arquivo = (
-            request.FILES.get('file')
+            request.FILES.get('arquivo')
+            or request.FILES.get('file')
             or request.FILES.get('xlsx')
-            or request.FILES.get('arquivo')
             or request.FILES.get('planilha')
         )
         if not arquivo:
             return Response(
-                {"detail": 'Envie o arquivo XLSX no campo "file" (ou "xlsx"/"arquivo"/"planilha").'},
+                {"detail": 'Envie o arquivo XLSX no campo "arquivo" (ou "file"/"xlsx"/"planilha").'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # Abre planilha
         try:
             wb = openpyxl.load_workbook(arquivo, data_only=True)
-            ws = wb.active
         except Exception as e:
             return Response({"detail": f"Não foi possível ler o XLSX: {e}"}, status=400)
+
+        # Aba IMPORTACAO (ou que contenha 'import')
+        ws = wb.active
+        if "IMPORTACAO" in wb.sheetnames:
+            ws = wb["IMPORTACAO"]
+        else:
+            for name in wb.sheetnames:
+                if "import" in name.lower():
+                    ws = wb[name]
+                    break
 
         rows = list(ws.iter_rows(values_only=True))
         if not rows or len(rows) < 2:
@@ -298,91 +470,76 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     return row[idx] if idx < len(row) else None
             return None
 
-        def only_digits(s):
-            return re.sub(r"\D", "", str(s or ""))
-
-        def to_date_str(v):
-            if not v:
-                return None
-            if isinstance(v, (datetime, date)):
-                try:
-                    return v.date().isoformat()
-                except Exception:
-                    return v.isoformat()[:10]
-            s = str(v).strip()
-            m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", s)
-            if m:
-                return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-            return s[:10]
-
-        items = []
+        items_payload = []
         for r in rows[1:]:
-            if not r or all(val in (None, "", 0) for val in r):
+            if not r or all(v in (None, "", 0) for v in r):
                 continue
 
-            # Campos
-            numero = get_val(r, ['numero_processo','nº processo','processo','numero'])
-            numero_certame = get_val(r, ['numero_certame','certame','nº certame'])
-            objeto = get_val(r, ['objeto','descricao','descritivo'])
+            # Leitura robusta dos campos possíveis
+            numero = get_val(r, ['numero_processo', 'nº processo', 'processo', 'numero'])
+            numero_certame = get_val(r, ['numero_certame', 'certame', 'nº certame'])
+            objeto = get_val(r, ['objeto', 'descricao', 'descritivo'])
             modalidade = get_val(r, ['modalidade'])
-            situacao = get_val(r, ['situacao','situação'])
-            data_abr = get_val(r, ['data_abertura','abertura','data do certame','data'])
+            classificacao = get_val(r, ['classificacao', 'classificação'])
+            tipo_organizacao = get_val(r, ['tipo_organizacao', 'tipo de organizacao', 'tipo org'])
+            situacao = get_val(r, ['situacao', 'situação'])
 
-            ent_id = get_val(r, ['entidade_id','id_entidade'])
-            ent_nome = get_val(r, ['entidade','entidade_nome','nome_entidade'])
-            ent_cnpj = get_val(r, ['entidade_cnpj','cnpj_entidade','cnpj'])
+            data_abr = get_val(r, ['data_abertura', 'abertura', 'data do certame', 'data'])
+            hora_sessao = get_val(r, ['hora_certame', 'hora', 'horario'])
 
-            org_id = get_val(r, ['orgao_id','id_orgao'])
-            org_nome = get_val(r, ['orgao','órgão','orgao_nome','nome_orgao'])
-            org_cod  = get_val(r, ['codigo_unidade','orgao_codigo','codigo_orgao'])
+            ent_id = get_val(r, ['entidade_id', 'id_entidade'])
+            ent_nome = get_val(r, ['entidade', 'entidade_nome', 'nome_entidade'])
+            ent_cnpj = get_val(r, ['entidade_cnpj', 'cnpj_entidade', 'cnpj'])
 
-            # Resolve Entidade
-            entidade_id = ent_id
-            if not entidade_id and (ent_nome or ent_cnpj):
-                ent = None
-                if ent_cnpj:
-                    digits = only_digits(ent_cnpj)
-                    if digits:
-                        for e in Entidade.objects.all():
-                            if only_digits(e.cnpj) == digits:
-                                ent = e
-                                break
-                if not ent and ent_nome:
-                    ent = Entidade.objects.filter(nome__iexact=str(ent_nome).strip()).first()
-                if ent:
-                    entidade_id = ent.id
+            org_id = get_val(r, ['orgao_id', 'id_orgao'])
+            org_nome = get_val(r, ['orgao', 'órgão', 'orgao_nome', 'nome_orgao'])
+            org_cod = get_val(r, ['codigo_unidade', 'orgao_codigo', 'codigo_orgao'])
 
-            # Resolve Órgão
-            orgao_id = org_id
-            if not orgao_id and (org_nome or org_cod) and entidade_id:
-                qs = Orgao.objects.filter(entidade_id=entidade_id)
-                if org_cod:
-                    qs = qs.filter(codigo_unidade=str(org_cod).strip())
-                if org_nome:
-                    org = qs.filter(nome__iexact=str(org_nome).strip()).first() or qs.first()
-                else:
-                    org = qs.first()
-                if org:
-                    orgao_id = org.id
+            # Resolve relacionamentos (se possível)
+            entidade_res = self._resolve_entidade_id(ent_id, ent_nome, ent_cnpj)
+            orgao_res = self._resolve_orgao_id(org_id, org_nome, org_cod, entidade_res)
 
-            item = {
-                "numero_processo": str(numero).strip() if numero else None,
-                "numero_certame": str(numero_certame).strip() if numero_certame else None,
-                "objeto": objeto or "",
-                "modalidade": modalidade or None,
-                "situacao": situacao or None,
-                "data_abertura": to_date_str(data_abr),
-                "entidade": entidade_id,
-                "orgao": orgao_id,
+            base = {
+                "numero_processo": numero,
+                "numero_certame": numero_certame,
+                "objeto": objeto,
+                "modalidade": modalidade,
+                "classificacao": classificacao,
+                "tipo_organizacao": tipo_organizacao,
+                "situacao": situacao,
+                "data_abertura": self._to_date_str(data_abr),
+                "data_sessao_iso": self._join_date_time(self._to_date_str(data_abr), hora_sessao),
+
+                # relacionamento (id, se resolvido)
+                "entidade": entidade_res,
+                "orgao": orgao_res,
+
+                # auxiliares (para serializer "inteligente")
+                "entidade_id": ent_id,
+                "entidade_nome": ent_nome,
+                "entidade_cnpj": ent_cnpj,
+                "orgao_codigo_unidade": org_cod,
+                "orgao_nome": org_nome,
+
+                # extras
+                "tipo_disputa": get_val(r, ['tipo_disputa', 'tipo de disputa']),
+                "registro_precos": get_val(r, ['registro_precos', 'rp', 'registro de preços']),
+                "local_sessao": get_val(r, ['local_sessao', 'local', 'local da sessao']),
             }
-            if not (item["numero_processo"] or item["objeto"]):
-                continue
-            items.append(item)
 
-        if not items:
+            payload = self._apply_defaults(base)
+
+            # filtro básico: precisa pelo menos nº processo OU objeto
+            if not (payload["numero_processo"] or payload["objeto"]):
+                continue
+
+            items_payload.append(payload)
+
+        if not items_payload:
             return Response({"detail": "Nenhuma linha válida após o mapeamento."}, status=400)
 
-        ser = ProcessoLicitatorioSerializer(data=items, many=True, context={'request': request})
+        # Criação em lote
+        ser = ProcessoLicitatorioSerializer(data=items_payload, many=True, context={'request': request})
         ser.is_valid(raise_exception=True)
         with transaction.atomic():
             objs = ser.save()
@@ -391,9 +548,24 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             {"importados": len(objs), "objetos": ProcessoLicitatorioSerializer(objs, many=True).data},
             status=status.HTTP_201_CREATED
         )
-    
+
+    # ---------------- IMPORTAÇÃO JSON ----------------
     @action(detail=False, methods=["post"], url_path="importar")
     def importar_json(self, request):
+        """
+        POST /api/processos/importar/
+        Body JSON:
+        {
+          "processos": [
+            {
+              ...campos do processo (podem ser parciais)...
+              "itens": [
+                { "item_ordem": 1, "lote": 2, "item_descricao": "...", ... }
+              ]
+            }
+          ]
+        }
+        """
         processos = request.data.get("processos")
         if not isinstance(processos, list) or not processos:
             return Response({"detail": "Envie uma LISTA JSON em 'processos'."}, status=400)
@@ -402,7 +574,28 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             for i, p in enumerate(processos, start=1):
                 try:
-                    ser = ProcessoLicitatorioSerializer(data=p, context={"request": request})
+                    # Constrói base e aplica defaults
+                    ent_id = p.get("entidade_id")
+                    ent_nome = p.get("entidade_nome")
+                    ent_cnpj = p.get("entidade_cnpj")
+                    org_nome = p.get("orgao_nome")
+                    org_cod = p.get("orgao_codigo_unidade")
+
+                    entidade_res = self._resolve_entidade_id(ent_id, ent_nome, ent_cnpj)
+                    orgao_res = self._resolve_orgao_id(p.get("orgao_id"), org_nome, org_cod, entidade_res)
+
+                    base = dict(p)
+                    base.update({
+                        "entidade": entidade_res,
+                        "orgao": orgao_res,
+                        "data_sessao_iso": self._join_date_time(
+                            p.get("data_abertura") or p.get("data_sessao"),
+                            p.get("hora_certame")
+                        )
+                    })
+                    payload = self._apply_defaults(base)
+
+                    ser = ProcessoLicitatorioSerializer(data=payload, context={"request": request})
                     ser.is_valid(raise_exception=True)
                     proc = ser.save()
 
@@ -419,11 +612,16 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                         }
                         lote_num = it.get("lote")
                         if lote_num:
-                            lote_obj, _ = Lote.objects.get_or_create(
-                                processo=proc, numero=int(lote_num),
-                                defaults={"descricao": f"Lote {lote_num}"}
-                            )
-                            item_data["lote"] = lote_obj.id
+                            try:
+                                n = int(lote_num)
+                            except Exception:
+                                n = None
+                            if n:
+                                lote_obj, _ = Lote.objects.get_or_create(
+                                    processo=proc, numero=n,
+                                    defaults={"descricao": f"Lote {n}"}
+                                )
+                                item_data["lote"] = lote_obj.id
 
                         iser = ItemSerializer(data=item_data, context={"request": request})
                         iser.is_valid(raise_exception=True)
@@ -436,7 +634,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         if erros:
             return Response({"criados": criados, "erros": erros}, status=207)
         return Response({"criados": criados}, status=201)
-
+    
     # ---------------- ITENS DO PROCESSO ----------------
     @action(detail=True, methods=['get'])
     def itens(self, request, *args, **kwargs):
