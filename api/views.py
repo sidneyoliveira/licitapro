@@ -391,6 +391,51 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             {"importados": len(objs), "objetos": ProcessoLicitatorioSerializer(objs, many=True).data},
             status=status.HTTP_201_CREATED
         )
+    
+    @action(detail=False, methods=["post"], url_path="importar")
+    def importar_json(self, request):
+        processos = request.data.get("processos")
+        if not isinstance(processos, list) or not processos:
+            return Response({"detail": "Envie uma LISTA JSON em 'processos'."}, status=400)
+
+        criados, erros = 0, []
+        with transaction.atomic():
+            for i, p in enumerate(processos, start=1):
+                try:
+                    ser = ProcessoLicitatorioSerializer(data=p, context={"request": request})
+                    ser.is_valid(raise_exception=True)
+                    proc = ser.save()
+
+                    # Itens (opcional)
+                    for ordem, it in enumerate(p.get("itens") or [], start=1):
+                        item_data = {
+                            "processo": proc.id,
+                            "descricao": it.get("item_descricao") or "",
+                            "especificacao": it.get("item_especificacao") or "",
+                            "quantidade": it.get("quantidade") or 0,
+                            "unidade": it.get("unidade") or "",
+                            "valor_unitario_estimado": it.get("valor_unitario_estimado"),
+                            "ordem": it.get("item_ordem") or ordem,
+                        }
+                        lote_num = it.get("lote")
+                        if lote_num:
+                            lote_obj, _ = Lote.objects.get_or_create(
+                                processo=proc, numero=int(lote_num),
+                                defaults={"descricao": f"Lote {lote_num}"}
+                            )
+                            item_data["lote"] = lote_obj.id
+
+                        iser = ItemSerializer(data=item_data, context={"request": request})
+                        iser.is_valid(raise_exception=True)
+                        iser.save()
+
+                    criados += 1
+                except Exception as e:
+                    erros.append({"linha": i, "erro": str(e)})
+
+        if erros:
+            return Response({"criados": criados, "erros": erros}, status=207)
+        return Response({"criados": criados}, status=201)
 
     # ---------------- ITENS DO PROCESSO ----------------
     @action(detail=True, methods=['get'])

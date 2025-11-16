@@ -155,74 +155,15 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProcessoLicitatorio
-        fields = (
-            "id",
-            "numero_processo",
-            "numero_certame",
-            "objeto",
-            "modalidade",               
-            "classificacao",            
-            "tipo_organizacao",         
-            "situacao",                 
-            "data_processo",
-            "data_abertura",
-            "valor_referencia",
-            "vigencia_meses",
-            "registro_preco",
-            "entidade",
-            "orgao",
-            "data_criacao_sistema",
-
-            # campos de entrada (write-only) para mapear PNCP
-            "fundamentacao",
-            "amparo_legal",
-            "modo_disputa",
-            "criterio_julgamento",
-
-            # identificação / janelas / links
-            "numero_compra",
-            "ano_compra",
-            "abertura_propostas",
-            "encerramento_propostas",
-            "link_sistema_origem",
-            "link_processo_eletronico",
-
-            # IDs PNCP
-            "instrumento_convocatorio_id",
-            "modalidade_id",
-            "modo_disputa_id",
-            "criterio_julgamento_id",
-            "amparo_legal_id",
-            "situacao_contratacao_id",
-
-            # publicação
-            "sequencial_publicacao",
-            "id_controle_publicacao",
-            "ultima_atualizacao_publicacao",
-
-            # extras somente leitura
-            "entidade_nome",
-            "orgao_nome",
-            "entidade_obj",
-            "orgao_obj",
-
-            # códigos para o front manter selects
-            "modalidade_code",
-            "situacao_code",
-            "classificacao_code",
-            "tipo_organizacao_code",
-        )
-        read_only_fields = (
-            "data_criacao_sistema",
-            "entidade_nome",
-            "orgao_nome",
-            "entidade_obj",
-            "orgao_obj",
-            "modalidade_code",
-            "situacao_code",
-            "classificacao_code",
-            "tipo_organizacao_code",
-        )
+        fields = "__all__"
+        extra_kwargs = {
+            "modalidade":       {"required": False, "allow_null": True, "allow_blank": True},
+            "classificacao":    {"required": False, "allow_null": True, "allow_blank": True},
+            "tipo_organizacao": {"required": False, "allow_null": True, "allow_blank": True},
+            "situacao":         {"required": False, "allow_null": True, "allow_blank": True},
+            "entidade":         {"required": False, "allow_null": True},
+            "orgao":            {"required": False, "allow_null": True},
+        }
 
     # ---------------------------
     # MAPAS código <-> rótulo
@@ -336,21 +277,73 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
 
         return attrs
 
-    def validate(self, attrs):
-        ap = attrs.get("abertura_propostas")
-        ep = attrs.get("encerramento_propostas")
-        if ap and ep and ep <= ap:
-            raise serializers.ValidationError(
-                {"encerramento_propostas": "Deve ser posterior à data de abertura de propostas."}
+    def _resolve_entidade(self, attrs):
+        ent = attrs.get("entidade")
+        if ent:
+            return ent
+        ent_id = attrs.pop("entidade_id", None)
+        ent_nome = (attrs.pop("entidade_nome", "") or "").strip()
+        if ent_id:
+            return Entidade.objects.filter(pk=ent_id).first()
+        if ent_nome:
+            ent, _ = Entidade.objects.get_or_create(
+                nome=ent_nome,
+                defaults={"ano": timezone.now().year},
             )
+            return ent
+        return None
+
+    def _resolve_orgao(self, attrs, entidade):
+        org = attrs.get("orgao")
+        if org or not entidade:
+            return org
+        cod = (attrs.pop("orgao_codigo_unidade", "") or "").strip()
+        nome = (attrs.pop("orgao_nome", "") or "").strip()
+        if cod:
+            org = Orgao.objects.filter(entidade=entidade, codigo_unidade=cod).first()
+            if org:
+                return org
+        if nome:
+            org, _ = Orgao.objects.get_or_create(entidade=entidade, nome=nome)
+            return org
+        return None
+
+    def validate(self, attrs):
+        # Resolver entidade/órgão a partir dos campos auxiliares
+        entidade = self._resolve_entidade(attrs)
+        if entidade:
+            attrs["entidade"] = entidade
+        orgao = self._resolve_orgao(attrs, entidade)
+        if orgao:
+            attrs["orgao"] = orgao
+
+        # Defaults “amigáveis”
+        attrs.setdefault("situacao", "Rascunho")
+
+        # Se você usa 'data_abertura' como data da sessão
+        # e o front está mandando em 'data_sessao_iso', normaliza aqui:
+        if not attrs.get("data_abertura") and attrs.get("data_sessao_iso"):
+            attrs["data_abertura"] = attrs.pop("data_sessao_iso")
+
+        # Proteções leves para importação
+        attrs.setdefault("numero_processo", attrs.get("numero_processo") or "")
+        attrs.setdefault("ano", attrs.get("ano") or timezone.now().year)
+        attrs.setdefault("objeto", attrs.get("objeto") or "")
+        attrs.setdefault("tipo_disputa", attrs.get("tipo_disputa") or "")
+        attrs.setdefault("local_sessao", attrs.get("local_sessao") or "")
+        # 'observacoes_processo' vindo da planilha vira 'observacoes'
+        if not attrs.get("observacoes") and attrs.get("observacoes_processo"):
+            attrs["observacoes"] = attrs.pop("observacoes_processo")
+
         return attrs
 
     def create(self, validated_data):
-        validated_data = self._map_in_codes(validated_data)
+        # Garanta default de situacao em create também
+        validated_data.setdefault("situacao", "Rascunho")
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        validated_data = self._map_in_codes(validated_data)
+        validated_data.setdefault("situacao", instance.situacao or "Rascunho")
         return super().update(instance, validated_data)
 
     # ---- getters dos *_code (somente leitura) ----
