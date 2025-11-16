@@ -1,21 +1,30 @@
-from rest_framework import viewsets, permissions, filters
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework import permissions
-from rest_framework.views import APIView
-from rest_framework import generics
-from rest_framework.decorators import action
-from rest_framework.response import Response
+# backend/api/views.py
+from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import transaction
-from rest_framework.filters import SearchFilter
-from django_filters.rest_framework import DjangoFilterBackend 
-from rest_framework import viewsets, status
 from django.utils import timezone
-import re, json
+
+from rest_framework import status, viewsets, permissions, parsers, generics, filters
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
-from django.contrib.auth import get_user_model
-from rest_framework import viewsets, permissions, parsers
+import json
+import re
+import logging
 
+import openpyxl
+from datetime import datetime, date
+
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
     CustomUser,
@@ -27,7 +36,7 @@ from .models import (
     Fornecedor,
     FornecedorProcesso,
     ItemFornecedor,
-    ContratoEmpenho
+    ContratoEmpenho,
 )
 
 from .serializers import (
@@ -41,34 +50,42 @@ from .serializers import (
     FornecedorProcessoSerializer,
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
-    UsuarioSerializer
+    UsuarioSerializer,
 )
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
 
-
+# ============================================================
+# 0️⃣ USUÁRIOS (ADMIN)
+# ============================================================
 class UsuarioViewSet(viewsets.ModelViewSet):
     """
-    CRUD de usuários do sistema.
-    Acesso restrito a staff/admin.
+    CRUD de usuários do sistema (apenas staff/admin).
+    Aceita JSON, form e multipart (para foto).
     """
     queryset = User.objects.all().order_by("id")
     serializer_class = UsuarioSerializer
-    permission_classes = [permissions.IsAdminUser]  # só staff/admin acessa
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    permission_classes = [IsAdminUser]
+    filter_backends = [SearchFilter, OrderingFilter]
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
-    search_fields = ["username", "email", "first_name", "last_name"]
-    ordering_fields = ["id", "username", "email", "first_name", "last_name", "last_login", "date_joined"]
+
+    search_fields = ["username", "email", "first_name", "last_name", "cpf", "phone"]
+    ordering_fields = [
+        "id", "username", "email", "first_name", "last_name",
+        "last_login", "date_joined",
+    ]
     ordering = ["username"]
+
 
 # ============================================================
 # 1️⃣ ENTIDADE / ÓRGÃO
 # ============================================================
-
 class EntidadeViewSet(viewsets.ModelViewSet):
     queryset = Entidade.objects.all().order_by('nome')
     serializer_class = EntidadeSerializer
     permission_classes = [IsAuthenticated]
+
 
 def _normalize(txt: str) -> str:
     import unicodedata
@@ -78,13 +95,13 @@ def _normalize(txt: str) -> str:
     txt = "".join(ch for ch in txt if unicodedata.category(ch) != "Mn")
     return txt.upper().strip()
 
+
 class OrgaoViewSet(viewsets.ModelViewSet):
     serializer_class = OrgaoSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend]  # pode ficar, mas não dependemos dele
+    filter_backends = [DjangoFilterBackend]
     filterset_fields = ['entidade']
 
-    # ✅ filtro garantido via código (independente do DjangoFilterBackend)
     def get_queryset(self):
         qs = Orgao.objects.select_related('entidade').order_by('nome')
         entidade_id = self.request.query_params.get('entidade')
@@ -92,7 +109,6 @@ class OrgaoViewSet(viewsets.ModelViewSet):
             qs = qs.filter(entidade_id=entidade_id)
         return qs
 
-    # ====== sua action importar_pncp permanece igual, apenas mantida aqui ======
     @action(detail=False, methods=['post'], url_path='importar-pncp')
     def importar_pncp(self, request):
         raw_cnpj = (request.data.get('cnpj') or '').strip()
@@ -205,7 +221,6 @@ class OrgaoViewSet(viewsets.ModelViewSet):
 # ============================================================
 # 2️⃣ FORNECEDOR
 # ============================================================
-
 class FornecedorViewSet(viewsets.ModelViewSet):
     queryset = Fornecedor.objects.all().order_by('razao_social')
     serializer_class = FornecedorSerializer
@@ -216,15 +231,16 @@ class FornecedorViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================
-# 3️⃣ PROCESSO LICITATÓRIO
+# 3️⃣ PROCESSO LICITATÓRIO (+ IMPORTAÇÕES)
 # ============================================================
-
 class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     """
-    Gerencia os processos licitatórios e expõe actions de:
-    - itens do processo
+    Gerencia processos licitatórios e expõe actions auxiliares:
+    - itens
     - fornecedores (adicionar/listar/remover)
     - lotes (listar/criar) e organização de lotes
+    - importar-xlsx (POST multipart)
+    - importar (POST JSON em lote)
     """
     queryset = (
         ProcessoLicitatorio.objects
@@ -237,14 +253,11 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['numero_processo', 'numero_certame', 'objeto']
     filterset_fields = ['modalidade', 'situacao', 'entidade', 'orgao']
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     # ---------------- ITENS DO PROCESSO ----------------
     @action(detail=True, methods=['get'])
     def itens(self, request, *args, **kwargs):
-        """
-        GET /api/processos/<pk>/itens/
-        Retorna todos os itens vinculados a um processo.
-        """
         processo = self.get_object()
         itens = (
             Item.objects
@@ -258,11 +271,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     # ---------------- FORNECEDORES (VÍNCULO) ----------------
     @action(detail=True, methods=['post'], url_path='adicionar_fornecedor')
     def adicionar_fornecedor(self, request, *args, **kwargs):
-        """
-        POST /api/processos/<pk>/adicionar_fornecedor/
-        Body: { "fornecedor_id": <id> }
-        Vincula um fornecedor ao processo.
-        """
         processo = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
 
@@ -287,10 +295,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='fornecedores')
     def fornecedores(self, request, *args, **kwargs):
-        """
-        GET /api/processos/<pk>/fornecedores/
-        Lista fornecedores vinculados a um processo.
-        """
         processo = self.get_object()
         fornecedores = Fornecedor.objects.filter(processos__processo=processo).order_by('razao_social')
         serializer = FornecedorSerializer(fornecedores, many=True)
@@ -298,11 +302,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='remover_fornecedor')
     def remover_fornecedor(self, request, *args, **kwargs):
-        """
-        POST /api/processos/<pk>/remover_fornecedor/
-        Body: { "fornecedor_id": <id> }
-        Remove vínculo de fornecedor com o processo.
-        """
         processo = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
 
@@ -320,16 +319,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     # ---------------- LOTES (NESTED) ----------------
     @action(detail=True, methods=['get', 'post'], url_path='lotes')
     def lotes(self, request, *args, **kwargs):
-        """
-        GET  /api/processos/<pk>/lotes/  -> lista lotes do processo
-        POST /api/processos/<pk>/lotes/  -> cria lote(s)
-
-        POST payloads aceitos:
-          { "numero": 3, "descricao": "Lote 3" }                      # cria único
-          { "descricao": "Auto" }                                     # cria único com próximo número disponível
-          [ { "numero": 1, "descricao": "A" }, { "numero": 2, ... } ] # cria vários
-          { "quantidade": 5, "descricao_prefixo": "Lote " }           # cria N sequenciais
-        """
         processo = self.get_object()
 
         if request.method.lower() == 'get':
@@ -383,17 +372,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path='lotes/organizar')
     def organizar_lotes(self, request, *args, **kwargs):
-        """
-        PATCH /api/processos/<pk>/lotes/organizar/
-
-        Payloads aceitos:
-        1) Renumerar pela ordem de IDs:
-           { "ordem_ids": [5, 2, 7], "inicio": 1 }
-        2) Normalizar (sem buracos) a partir de 'inicio':
-           { "normalizar": true, "inicio": 1 }
-        3) Mapear números explicitamente:
-           { "mapa": [ {"id": 5, "numero": 10}, {"id": 2, "numero": 11} ] }
-        """
         processo = self.get_object()
         data = request.data
 
@@ -443,10 +421,98 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         return Response({"detail": "Payload inválido."}, status=status.HTTP_400_BAD_REQUEST)
 
+    # ---------------- IMPORTAÇÃO XLSX ----------------
+    @action(detail=False, methods=['post'], url_path='importar-xlsx',
+            parser_classes=[parsers.MultiPartParser, parsers.FormParser])
+    def importar_xlsx(self, request, *args, **kwargs):
+        """
+        Envie multipart/form-data com:
+          - file: <arquivo.xlsx>
+        A primeira linha deve conter cabeçalhos. Os nomes serão normalizados
+        (lowercase) e usados como chaves diretas no serializer.
+        """
+        arquivo = request.FILES.get('file') or request.FILES.get('xlsx')
+        if not arquivo:
+            return Response({'detail': 'Envie o arquivo XLSX no campo "file".'}, status=400)
+
+        try:
+            wb = openpyxl.load_workbook(arquivo, data_only=True)
+            ws = wb.active
+        except Exception as e:
+            return Response({'detail': f'Não foi possível ler o XLSX: {e}'}, status=400)
+
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows or len(rows) < 2:
+            return Response({'detail': 'Planilha sem dados.'}, status=400)
+
+        header = [str(c).strip().lower() if c is not None else "" for c in rows[0]]
+
+        def normalize_cell(v):
+            if isinstance(v, (datetime, date)):
+                # to ISO date
+                try:
+                    return v.date().isoformat()
+                except Exception:
+                    return v.isoformat()
+            return v
+
+        dados = []
+        for i in range(1, len(rows)):
+            line = rows[i]
+            if not line:
+                continue
+            item = {}
+            for idx, col in enumerate(header):
+                if not col:
+                    continue
+                val = normalize_cell(line[idx]) if idx < len(line) else None
+                if val is None or val == "":
+                    continue
+                item[col] = val
+            # Exemplo de aliases comuns (opcional)
+            if 'numero' in item and 'numero_processo' not in item:
+                item['numero_processo'] = item.pop('numero')
+            if 'data_certame' in item and 'data_abertura' not in item:
+                # se seu serializer usa data_abertura, ajuste conforme sua modelagem
+                pass
+            dados.append(item)
+
+        if not dados:
+            return Response({'detail': 'Nenhuma linha válida encontrada.'}, status=400)
+
+        ser = ProcessoLicitatorioSerializer(data=dados, many=True)
+        ser.is_valid(raise_exception=True)
+        with transaction.atomic():
+            instances = ser.save()
+
+        return Response(
+            {
+                'importados': len(instances),
+                'objetos': ProcessoLicitatorioSerializer(instances, many=True).data
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+    # ---------------- IMPORTAÇÃO JSON ----------------
+    @action(detail=False, methods=['post'], url_path='importar',
+            parser_classes=[parsers.JSONParser])
+    def importar_json(self, request, *args, **kwargs):
+        """
+        Envie uma LISTA JSON de processos para importação em lote.
+        """
+        if not isinstance(request.data, list):
+            return Response({'detail': 'Envie uma LISTA JSON.'}, status=400)
+
+        ser = ProcessoLicitatorioSerializer(data=request.data, many=True)
+        ser.is_valid(raise_exception=True)
+        with transaction.atomic():
+            instances = ser.save()
+        return Response(ProcessoLicitatorioSerializer(instances, many=True).data, status=201)
+
+
 # ============================================================
 # 4️⃣ LOTE
 # ============================================================
-
 class LoteViewSet(viewsets.ModelViewSet):
     queryset = Lote.objects.select_related('processo').all()
     serializer_class = LoteSerializer
@@ -459,7 +525,6 @@ class LoteViewSet(viewsets.ModelViewSet):
 # ============================================================
 # 5️⃣ ITEM
 # ============================================================
-
 class ItemViewSet(viewsets.ModelViewSet):
     queryset = Item.objects.select_related('processo', 'lote', 'fornecedor').all()
     serializer_class = ItemSerializer
@@ -469,16 +534,10 @@ class ItemViewSet(viewsets.ModelViewSet):
     search_fields = ['descricao', 'unidade']
 
     def perform_create(self, serializer):
-        # Garante que 'ordem' será sempre calculado no serializer
         serializer.save()
 
     @action(detail=True, methods=['post'], url_path='definir-fornecedor')
-    def definir_fornecedor(self, request, ):
-        """
-        POST /api/itens/<id>/definir-fornecedor/
-        Body: { "fornecedor_id": <id> }
-        Vincula um fornecedor ao item.
-        """
+    def definir_fornecedor(self, request, *args, **kwargs):
         item = self.get_object()
         fornecedor_id = request.data.get('fornecedor_id')
 
@@ -498,43 +557,37 @@ class ItemViewSet(viewsets.ModelViewSet):
 # ============================================================
 # 6️⃣ FORNECEDOR ↔ PROCESSO (participantes)
 # ============================================================
-
 class FornecedorProcessoViewSet(viewsets.ModelViewSet):
     queryset = FornecedorProcesso.objects.select_related('processo', 'fornecedor').all()
     serializer_class = FornecedorProcessoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['processo', 'fornecedor']
-    # corrigido: campos existentes
-    search_fields = ['fornecedor__razao_social', 'fornecedor__cnpj', 'processo__numero_processo', 'processo__numero_certame']
+    search_fields = [
+        'fornecedor__razao_social', 'fornecedor__cnpj',
+        'processo__numero_processo', 'processo__numero_certame'
+    ]
 
 
 # ============================================================
 # 7️⃣ ITEM ↔ FORNECEDOR (propostas)
 # ============================================================
-
 class ItemFornecedorViewSet(viewsets.ModelViewSet):
     queryset = ItemFornecedor.objects.select_related('item', 'fornecedor').all()
     serializer_class = ItemFornecedorSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['item', 'fornecedor', 'vencedor']
-    # corrigido: campos existentes
     search_fields = ['item__descricao', 'fornecedor__razao_social', 'fornecedor__cnpj']
 
 
 # ============================================================
 # 8️⃣ REORDENAÇÃO DE ITENS
 # ============================================================
-
 class ReorderItensView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, _format=None):
-        """
-        Body: { "item_ids": [ <id1>, <id2>, ... ] }
-        Reordena itens atribuindo ordem 1..N segundo a lista enviada.
-        """
         item_ids = request.data.get('item_ids', [])
         if not isinstance(item_ids, list):
             return Response({"error": "O corpo deve conter uma lista 'item_ids'."}, status=status.HTTP_400_BAD_REQUEST)
@@ -552,9 +605,8 @@ class ReorderItensView(APIView):
 
 
 # ============================================================
-# 9️⃣ USUÁRIOS E DASHBOARD
+# 9️⃣ USUÁRIO AUTENTICADO (perfil /me/)
 # ============================================================
-
 class CreateUserView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
@@ -568,14 +620,14 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
     """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_object(self):
         return self.request.user
 
     def get_serializer_context(self):
-        # necessário para montar URL absoluta da imagem
         ctx = super().get_serializer_context()
-        ctx['request'] = self.request
+        ctx['request'] = self.request  # para URLs absolutas da foto
         return ctx
 
     def put(self, request, *_, **__):
@@ -591,6 +643,9 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
         return Response(serializer.data)
 
 
+# ============================================================
+# 🔟 DASHBOARD
+# ============================================================
 class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -612,22 +667,12 @@ class DashboardStatsView(APIView):
 
 
 # ============================================================
-# 🔟 LOGIN COM GOOGLE
+# 1️⃣1️⃣ LOGIN COM GOOGLE
 # ============================================================
-
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.conf import settings
-import logging
-
-logger = logging.getLogger(__name__)
-
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        # Token vindo do front via Google Identity Services
         google_token = request.data.get("token")
         logger.info(f"Token recebido: {bool(google_token)}")
 
@@ -682,17 +727,18 @@ class GoogleLoginView(APIView):
         except ValueError as e:
             logger.error(f"Token inválido: {e}")
             return Response({"detail": "Token inválido do Google."}, status=status.HTTP_401_UNAUTHORIZED)
-
         except Exception as e:
             logger.exception("Erro inesperado no login Google")
             return Response({"detail": "Erro no login com Google."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+# ============================================================
+# 1️⃣2️⃣ CONTRATO/EMPENHO
+# ============================================================
 class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
     queryset = ContratoEmpenho.objects.select_related('processo').all().order_by('-criado_em', 'id')
     serializer_class = ContratoEmpenhoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    # filtros úteis para publicação/consulta
     filterset_fields = ['processo', 'ano_contrato', 'tipo_contrato_id', 'categoria_processo_id', 'receita']
     search_fields = ['numero_contrato_empenho', 'processo__numero_processo', 'ni_fornecedor']
