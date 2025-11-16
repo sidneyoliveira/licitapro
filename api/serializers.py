@@ -115,18 +115,20 @@ class OrgaoSerializer(serializers.ModelSerializer):
 class EntidadeMiniSerializer(serializers.ModelSerializer):
     class Meta:
         model = Entidade
-        fields = ("id", "nome", "cnpj", "ano")
-
+        fields = ("id", "nome", "cnpj")
 
 class OrgaoMiniSerializer(serializers.ModelSerializer):
     class Meta:
         model = Orgao
-        fields = ("id", "nome", "codigo_unidade", "entidade")
+        fields = ("id", "nome", "codigo_unidade")
+
 
 
 # ============================================================
 # 📄 PROCESSO LICITATÓRIO
 # ============================================================
+
+
 
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     # Exibição amigável
@@ -135,32 +137,30 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     entidade_obj = EntidadeMiniSerializer(source="entidade", read_only=True)
     orgao_obj = OrgaoMiniSerializer(source="orgao", read_only=True)
 
-    # Recebe texto/código e converte para rótulos do modelo (não exigir no input)
+    # Recebe texto/código e converte para rótulos do modelo
     modalidade = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     situacao = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     classificacao = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     tipo_organizacao = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
-    # Campos auxiliares (write-only) vindos de planilha/JSON
-    fundamentacao = serializers.CharField(required=False, allow_blank=True, write_only=True)
-    amparo_legal = serializers.CharField(required=False, allow_blank=True, write_only=True)
-    modo_disputa = serializers.CharField(required=False, allow_blank=True, write_only=True)
-    criterio_julgamento = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    # Auxiliares PNCP (write-only)
+    fundamentacao = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
+    amparo_legal = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
+    modo_disputa = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
+    criterio_julgamento = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
 
-    # Auxiliares para resolver entidade/órgão
+    # Auxiliares para resolver entidade/órgão (write-only)
     entidade_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
-    entidade_nome_in = serializers.CharField(required=False, allow_blank=True, write_only=True, source="entidade_nome")  # alias interno
-    entidade_nome = serializers.CharField(required=False, allow_blank=True, write_only=True)  # aceita também com este nome
-    entidade_cnpj = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    entidade_nome = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
+    entidade_cnpj = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
 
     orgao_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
-    orgao_nome_in = serializers.CharField(required=False, allow_blank=True, write_only=True, source="orgao_nome")  # alias interno
-    orgao_nome = serializers.CharField(required=False, allow_blank=True, write_only=True)
-    orgao_codigo_unidade = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    orgao_nome = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
+    orgao_codigo_unidade = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
 
-    # Campos auxiliares de datas/observações
-    data_sessao_iso = serializers.CharField(required=False, allow_blank=True, write_only=True)
-    observacoes_processo = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    # Auxiliares de datas/observações (write-only)
+    data_sessao_iso = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
+    observacoes_processo = serializers.CharField(required=False, allow_blank=True, allow_null=True, write_only=True)
 
     # Códigos de volta no response
     modalidade_code = serializers.SerializerMethodField(read_only=True)
@@ -172,7 +172,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         model = ProcessoLicitatorio
         fields = "__all__"
         extra_kwargs = {
-            # Deixa tudo tolerante para importações parciais
             "numero_processo": {"required": False, "allow_blank": True},
             "ano": {"required": False, "allow_null": True},
             "objeto": {"required": False, "allow_blank": True},
@@ -181,6 +180,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "classificacao":    {"required": False, "allow_null": True, "allow_blank": True},
             "tipo_organizacao": {"required": False, "allow_null": True, "allow_blank": True},
             "situacao":         {"required": False, "allow_null": True, "allow_blank": True},
+
             "entidade":         {"required": False, "allow_null": True},
             "orgao":            {"required": False, "allow_null": True},
             "data_abertura":    {"required": False, "allow_null": True},
@@ -189,9 +189,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "observacoes":      {"required": False, "allow_blank": True},
         }
 
-    # ---------------------------
-    # MAPAS código <-> rótulo
-    # ---------------------------
+    # --------- MAPAS código <-> rótulo ---------
     MODALIDADE_MAP = {
         "pregao_eletronico": "Pregão Eletrônico",
         "concorrencia_eletronica": "Concorrência Eletrônica",
@@ -207,15 +205,11 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         "servicos_comuns": "Serviços Comuns",
         "servicos_engenharia_comuns": "Serviços de Engenharia Comuns",
         "obras_comuns": "Obras Comuns",
-        # se quiser ter um default, pode incluir:
         "outros": "Outros",
     }
     CLASSIFICACAO_INV = {v: k for k, v in CLASSIFICACAO_MAP.items()}
 
-    ORGANIZACAO_MAP = {
-        "lote": "Lote",
-        "item": "Item",
-    }
+    ORGANIZACAO_MAP = {"lote": "Lote", "item": "Item"}
     ORGANIZACAO_INV = {v: k for k, v in ORGANIZACAO_MAP.items()}
 
     SITUACAO_MAP = {
@@ -226,11 +220,11 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         "em_contratacao": "Em Contratação",
         "adjudicado_homologado": "Adjudicado/Homologado",
         "revogado_cancelado": "Revogado/Cancelado",
-        # Serializer aceita também rótulos fora do mapa (ex.: "Rascunho")
+        # "Rascunho" pode vir direto como rótulo e é aceito
     }
     SITUACAO_INV = {v: k for k, v in SITUACAO_MAP.items()}
 
-    # PNCP (IDs exemplificativos — ajuste conforme seu catálogo)
+    # PNCP (ids exemplificativos)
     FUND_MAP = {"lei_8666": 1, "lei_10520": 2, "lei_14133": 3}
     AMPARO_MAP = {
         "lei_8666": {"art_23": 101, "art_24": 102, "art_25": 103},
@@ -261,9 +255,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     MODO_MAP = {"aberto": 1, "fechado": 2, "aberto_e_fechado": 3}
     CRITERIO_MAP = {"menor_preco": 1, "maior_desconto": 2}
 
-    # ---------------------------
-    # Helpers de mapeamento
-    # ---------------------------
+    # --------- helpers de mapeamento ---------
     @staticmethod
     def _norm_code(val):
         return (str(val or "").strip().lower() or None)
@@ -274,24 +266,14 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         return re.sub(r"\D", "", str(s or ""))
 
     def _map_choice(self, attrs, field, mapping):
-        """
-        Aceita tanto código quanto rótulo.
-        - Se vier código conhecido → converte para rótulo.
-        - Se vier rótulo já pronto → mantém.
-        - Se vier vazio/None → mantém None.
-        """
         raw = attrs.get(field)
         if raw in (None, ""):
             return
-
         code = self._norm_code(raw)
         if code in mapping:
             attrs[field] = mapping[code]
             return
-
-        # Se já veio com o rótulo (idêntico) passa direto
-        # (mantém o valor original).
-        return
+        # Se já veio rótulo “humano”, mantém.
 
     def _map_in_codes(self, attrs):
         self._map_choice(attrs, "modalidade", self.MODALIDADE_MAP)
@@ -299,7 +281,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         self._map_choice(attrs, "tipo_organizacao", self.ORGANIZACAO_MAP)
         self._map_choice(attrs, "situacao", self.SITUACAO_MAP)
 
-        # PNCP mappings (escrevem nos *_id do model)
+        # PNCP
         fund = attrs.pop("fundamentacao", None)
         if fund:
             attrs["instrumento_convocatorio_id"] = self.FUND_MAP.get(self._norm_code(fund))
@@ -324,11 +306,8 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
 
         return attrs
 
-    # ---------------------------
-    # Resolução de entidade/órgão
-    # ---------------------------
+    # --------- resolver entidade/órgão ---------
     def _resolve_entidade(self, attrs):
-        # Se já veio um PK válido, DRF aceita o int diretamente.
         ent = attrs.get("entidade")
         if ent:
             return ent
@@ -350,7 +329,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
                         return e
 
         if ent_nome:
-            # cria se não existir
             obj, _ = Entidade.objects.get_or_create(
                 nome=ent_nome,
                 defaults={"ano": timezone.now().year},
@@ -373,20 +351,15 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
                 return found
 
         if nome:
-            # cria se não existir
             obj, _ = Orgao.objects.get_or_create(entidade=entidade, nome=nome)
             return obj
 
         return None
 
-    # ---------------------------
-    # Validação / Normalização
-    # ---------------------------
+    # --------- validação/normalização ---------
     def validate(self, attrs):
-        # Mapeia códigos -> rótulos + PNCP ids
         attrs = self._map_in_codes(dict(attrs))
 
-        # Resolver entidade/órgão a partir dos campos auxiliares
         entidade = self._resolve_entidade(attrs)
         if entidade:
             attrs["entidade"] = entidade
@@ -394,7 +367,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         if orgao:
             attrs["orgao"] = orgao
 
-        # Defaults amigáveis
+        # Defaults
         attrs.setdefault("situacao", "Rascunho")
         attrs.setdefault("numero_processo", attrs.get("numero_processo") or "")
         attrs.setdefault("ano", attrs.get("ano") or timezone.now().year)
@@ -402,11 +375,11 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         attrs.setdefault("tipo_disputa", attrs.get("tipo_disputa") or "")
         attrs.setdefault("local_sessao", attrs.get("local_sessao") or "")
 
-        # 'observacoes_processo' (planilha) → 'observacoes'
+        # observacoes_processo → observacoes
         if not attrs.get("observacoes") and attrs.get("observacoes_processo"):
             attrs["observacoes"] = attrs.pop("observacoes_processo")
 
-        # Se front mandou 'data_sessao_iso' e 'data_abertura' não veio, usa-a
+        # data_sessao_iso → data_abertura (se não veio)
         if not attrs.get("data_abertura") and attrs.get("data_sessao_iso"):
             attrs["data_abertura"] = attrs.pop("data_sessao_iso")
 
@@ -420,9 +393,8 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         validated_data.setdefault("situacao", instance.situacao or "Rascunho")
         return super().update(instance, validated_data)
 
-    # ---- getters dos *_code (somente leitura) ----
+    # ---- getters *_code ----
     def get_modalidade_code(self, obj):
-        # tenta inverter; se não achar, devolve o próprio valor
         return self.MODALIDADE_INV.get(getattr(obj, "modalidade", None), getattr(obj, "modalidade", None))
 
     def get_situacao_code(self, obj):
@@ -433,7 +405,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
 
     def get_tipo_organizacao_code(self, obj):
         return self.ORGANIZACAO_INV.get(getattr(obj, "tipo_organizacao", None), getattr(obj, "tipo_organizacao", None))
-
 # ============================================================
 # 📦 LOTE
 # ============================================================
