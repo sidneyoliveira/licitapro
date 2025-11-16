@@ -1,4 +1,3 @@
-from datetime import timezone
 from rest_framework import serializers
 from .models import (
     CustomUser,
@@ -15,6 +14,7 @@ from .models import (
 
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from django.utils import timezone as dj_timezone
 
 # ============================================================
 # 👤 USUÁRIO
@@ -128,8 +128,6 @@ class OrgaoMiniSerializer(serializers.ModelSerializer):
 # ============================================================
 # 📄 PROCESSO LICITATÓRIO
 # ============================================================
-
-
 
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     # Exibição amigável
@@ -256,7 +254,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     MODO_MAP = {"aberto": 1, "fechado": 2, "aberto_e_fechado": 3}
     CRITERIO_MAP = {"menor_preco": 1, "maior_desconto": 2}
 
-    # --------- helpers de mapeamento ---------
+    # --------- helpers ---------
     @staticmethod
     def _norm_code(val):
         return (str(val or "").strip().lower() or None)
@@ -273,8 +271,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         code = self._norm_code(raw)
         if code in mapping:
             attrs[field] = mapping[code]
-            return
-        # Se já veio rótulo “humano”, mantém.
 
     def _map_in_codes(self, attrs):
         self._map_choice(attrs, "modalidade", self.MODALIDADE_MAP)
@@ -332,7 +328,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         if ent_nome:
             obj, _ = Entidade.objects.get_or_create(
                 nome=ent_nome,
-                defaults={"ano": timezone.now().year},
+                defaults={"ano": dj_timezone.now().year},
             )
             return obj
 
@@ -371,7 +367,17 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         # Defaults
         attrs.setdefault("situacao", "Rascunho")
         attrs.setdefault("numero_processo", attrs.get("numero_processo") or "")
-        attrs.setdefault("ano", attrs.get("ano") or timezone.now().year)
+
+        # ano: se veio vazio/None, usa atual; se veio string, tenta converter
+        ano_val = attrs.get("ano")
+        if ano_val in (None, ""):
+            attrs["ano"] = dj_timezone.now().year
+        else:
+            try:
+                attrs["ano"] = int(ano_val)
+            except (TypeError, ValueError):
+                attrs["ano"] = dj_timezone.now().year
+
         attrs.setdefault("objeto", attrs.get("objeto") or "")
         attrs.setdefault("tipo_disputa", attrs.get("tipo_disputa") or "")
         attrs.setdefault("local_sessao", attrs.get("local_sessao") or "")
@@ -405,8 +411,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         return self.CLASSIFICACAO_INV.get(getattr(obj, "classificacao", None), getattr(obj, "classificacao", None))
 
     def get_tipo_organizacao_code(self, obj):
-        return self.ORGANIZACAO_INV.get(getattr(obj, "tipo_organizacao", None), getattr(obj, "tipo_organizacao", None))
-# ============================================================
+        return self.ORGANIZACAO_INV.get(getattr(obj, "tipo_organizacao", None), getattr(obj, "tipo_organizacao", None))# ============================================================
 # 📦 LOTE
 # ============================================================
 
