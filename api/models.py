@@ -48,7 +48,7 @@ class Orgao(models.Model):
         help_text='Código da Unidade Compradora (ex.: 1010)'
     )
 
-    entidade = models.ForeignKey(Entidade, related_name='orgaos', on_delete=models.CASCADE)
+    entidade = models.ForeignKey(Entidade, related_name='orgaos', blank=True, on_delete=models.CASCADE)
 
     class Meta:
         ordering = ['nome']
@@ -66,13 +66,14 @@ class ProcessoLicitatorio(models.Model):
     # -------------------------------
     numero_processo = models.CharField(max_length=50, blank=True, null=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
-    objeto = models.TextField()
+    objeto = models.TextField(blank=True, null=True)
 
     # -------------------------------
     # Classificadores principais
     # -------------------------------
     modalidade = models.CharField(
         max_length=50,
+        blank=True,
         choices=[
             ('Pregão Eletrônico', 'Pregão Eletrônico'),
             ('Concorrência Eletrônica', 'Concorrência Eletrônica'),
@@ -84,6 +85,7 @@ class ProcessoLicitatorio(models.Model):
     )
     classificacao = models.CharField(
         max_length=50,
+        blank=True,
         choices=[
             ('Compras', 'Compras'),
             ('Serviços Comuns', 'Serviços Comuns'),
@@ -93,11 +95,13 @@ class ProcessoLicitatorio(models.Model):
     )
     tipo_organizacao = models.CharField(
         max_length=10,
+        blank=True,
         choices=[('Lote', 'Lote'), ('Item', 'Item')],
     )
 
     situacao = models.CharField(
         max_length=50,
+        blank=True,
         choices=[
             ('Aberto', 'Aberto'),
             ('Em Pesquisa', 'Em Pesquisa'),
@@ -120,15 +124,15 @@ class ProcessoLicitatorio(models.Model):
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
 
     # SRP (Registro de Preço) – alias compatível com o front (registro_precos)
-    registro_preco = models.BooleanField(default=False, verbose_name="Registro de Preço")
+    registro_preco = models.BooleanField(default=False, blank=True, verbose_name="Registro de Preço")
 
     # -------------------------------
     # Relações
     # -------------------------------
-    entidade = models.ForeignKey('Entidade', on_delete=models.PROTECT, related_name='processos')
-    orgao = models.ForeignKey('Orgao', on_delete=models.PROTECT, related_name='processos')
+    entidade = models.ForeignKey('Entidade', on_delete=models.PROTECT, blank=True, related_name='processos')
+    orgao = models.ForeignKey('Orgao', on_delete=models.PROTECT, blank=True, related_name='processos')
 
-    data_criacao_sistema = models.DateTimeField(auto_now_add=True)
+    data_criacao_sistema = models.DateTimeField(auto_now_add=True, blank=True)
 
     # -------------------------------
     # Domínios (IDs oficiais PNCP) – continuam aqui para publicação
