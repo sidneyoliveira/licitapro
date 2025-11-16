@@ -1,25 +1,24 @@
-# backend/api/views.py
+# api/views.py
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
-from rest_framework import status, viewsets, permissions, parsers, generics, filters
+from rest_framework import viewsets, status, permissions, parsers, generics, filters
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
+from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
 
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
+
+import logging
 import json
 import re
-import logging
-
-import openpyxl
 from datetime import datetime, date
 
 from google.oauth2 import id_token
@@ -56,30 +55,27 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
+
 # ============================================================
-# 0️⃣ USUÁRIOS (ADMIN)
+# 0) USUÁRIOS (admin)
 # ============================================================
 class UsuarioViewSet(viewsets.ModelViewSet):
     """
-    CRUD de usuários do sistema (apenas staff/admin).
-    Aceita JSON, form e multipart (para foto).
+    CRUD de usuários do sistema (somente staff/admin).
+    Aceita JSON e multipart (para foto).
     """
     queryset = User.objects.all().order_by("id")
     serializer_class = UsuarioSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [SearchFilter, OrderingFilter]
+    permission_classes = [permissions.IsAdminUser]
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
-
-    search_fields = ["username", "email", "first_name", "last_name", "cpf", "phone"]
-    ordering_fields = [
-        "id", "username", "email", "first_name", "last_name",
-        "last_login", "date_joined",
-    ]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["username", "email", "first_name", "last_name"]
+    ordering_fields = ["id", "username", "email", "first_name", "last_name", "last_login", "date_joined"]
     ordering = ["username"]
 
 
 # ============================================================
-# 1️⃣ ENTIDADE / ÓRGÃO
+# 1) ENTIDADE / ÓRGÃO
 # ============================================================
 class EntidadeViewSet(viewsets.ModelViewSet):
     queryset = Entidade.objects.all().order_by('nome')
@@ -118,7 +114,6 @@ class OrgaoViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST)
 
         url = f"https://pncp.gov.br/api/pncp/v1/orgaos/{cnpj_digits}/unidades"
-
         try:
             with urlrequest.urlopen(url, timeout=20) as resp:
                 if resp.status != 200:
@@ -219,7 +214,7 @@ class OrgaoViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================
-# 2️⃣ FORNECEDOR
+# 2) FORNECEDOR
 # ============================================================
 class FornecedorViewSet(viewsets.ModelViewSet):
     queryset = Fornecedor.objects.all().order_by('razao_social')
@@ -231,16 +226,15 @@ class FornecedorViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================
-# 3️⃣ PROCESSO LICITATÓRIO (+ IMPORTAÇÕES)
+# 3) PROCESSO LICITATÓRIO
 # ============================================================
 class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     """
-    Gerencia processos licitatórios e expõe actions auxiliares:
-    - itens
+    Gerencia processos licitatórios + actions:
+    - itens do processo
     - fornecedores (adicionar/listar/remover)
     - lotes (listar/criar) e organização de lotes
-    - importar-xlsx (POST multipart)
-    - importar (POST JSON em lote)
+    - importar_xlsx (POST multipart)
     """
     queryset = (
         ProcessoLicitatorio.objects
@@ -253,7 +247,150 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['numero_processo', 'numero_certame', 'objeto']
     filterset_fields = ['modalidade', 'situacao', 'entidade', 'orgao']
-    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
+
+    # ---------------- IMPORTAÇÃO XLSX ----------------
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='importar-xlsx',
+        parser_classes=[parsers.MultiPartParser, parsers.FormParser]
+    )
+    def importar_xlsx(self, request, *args, **kwargs):
+        # Garantir dependência
+        try:
+            import openpyxl
+        except ImportError:
+            return Response(
+                {"detail": "Dependência ausente: instale 'openpyxl' (pip install openpyxl)."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # Arquivo
+        arquivo = (
+            request.FILES.get('file')
+            or request.FILES.get('xlsx')
+            or request.FILES.get('arquivo')
+            or request.FILES.get('planilha')
+        )
+        if not arquivo:
+            return Response(
+                {"detail": 'Envie o arquivo XLSX no campo "file" (ou "xlsx"/"arquivo"/"planilha").'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Abre planilha
+        try:
+            wb = openpyxl.load_workbook(arquivo, data_only=True)
+            ws = wb.active
+        except Exception as e:
+            return Response({"detail": f"Não foi possível ler o XLSX: {e}"}, status=400)
+
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows or len(rows) < 2:
+            return Response({"detail": "Planilha sem dados (precisa de cabeçalho + linhas)."}, status=400)
+
+        header = [str(c).strip().lower() if c is not None else "" for c in rows[0]]
+
+        def get_val(row, names):
+            for name in names:
+                if name in header:
+                    idx = header.index(name)
+                    return row[idx] if idx < len(row) else None
+            return None
+
+        def only_digits(s):
+            return re.sub(r"\D", "", str(s or ""))
+
+        def to_date_str(v):
+            if not v:
+                return None
+            if isinstance(v, (datetime, date)):
+                try:
+                    return v.date().isoformat()
+                except Exception:
+                    return v.isoformat()[:10]
+            s = str(v).strip()
+            m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", s)
+            if m:
+                return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+            return s[:10]
+
+        items = []
+        for r in rows[1:]:
+            if not r or all(val in (None, "", 0) for val in r):
+                continue
+
+            # Campos
+            numero = get_val(r, ['numero_processo','nº processo','processo','numero'])
+            numero_certame = get_val(r, ['numero_certame','certame','nº certame'])
+            objeto = get_val(r, ['objeto','descricao','descritivo'])
+            modalidade = get_val(r, ['modalidade'])
+            situacao = get_val(r, ['situacao','situação'])
+            data_abr = get_val(r, ['data_abertura','abertura','data do certame','data'])
+
+            ent_id = get_val(r, ['entidade_id','id_entidade'])
+            ent_nome = get_val(r, ['entidade','entidade_nome','nome_entidade'])
+            ent_cnpj = get_val(r, ['entidade_cnpj','cnpj_entidade','cnpj'])
+
+            org_id = get_val(r, ['orgao_id','id_orgao'])
+            org_nome = get_val(r, ['orgao','órgão','orgao_nome','nome_orgao'])
+            org_cod  = get_val(r, ['codigo_unidade','orgao_codigo','codigo_orgao'])
+
+            # Resolve Entidade
+            entidade_id = ent_id
+            if not entidade_id and (ent_nome or ent_cnpj):
+                ent = None
+                if ent_cnpj:
+                    digits = only_digits(ent_cnpj)
+                    if digits:
+                        for e in Entidade.objects.all():
+                            if only_digits(e.cnpj) == digits:
+                                ent = e
+                                break
+                if not ent and ent_nome:
+                    ent = Entidade.objects.filter(nome__iexact=str(ent_nome).strip()).first()
+                if ent:
+                    entidade_id = ent.id
+
+            # Resolve Órgão
+            orgao_id = org_id
+            if not orgao_id and (org_nome or org_cod) and entidade_id:
+                qs = Orgao.objects.filter(entidade_id=entidade_id)
+                if org_cod:
+                    qs = qs.filter(codigo_unidade=str(org_cod).strip())
+                if org_nome:
+                    org = qs.filter(nome__iexact=str(org_nome).strip()).first() or qs.first()
+                else:
+                    org = qs.first()
+                if org:
+                    orgao_id = org.id
+
+            item = {
+                "numero_processo": str(numero).strip() if numero else None,
+                "numero_certame": str(numero_certame).strip() if numero_certame else None,
+                "objeto": objeto or "",
+                "modalidade": modalidade or None,
+                "situacao": situacao or None,
+                "data_abertura": to_date_str(data_abr),
+                "entidade": entidade_id,
+                "orgao": orgao_id,
+            }
+            if not (item["numero_processo"] or item["objeto"]):
+                continue
+            items.append(item)
+
+        if not items:
+            return Response({"detail": "Nenhuma linha válida após o mapeamento."}, status=400)
+
+        ser = ProcessoLicitatorioSerializer(data=items, many=True, context={'request': request})
+        ser.is_valid(raise_exception=True)
+        with transaction.atomic():
+            objs = ser.save()
+
+        return Response(
+            {"importados": len(objs), "objetos": ProcessoLicitatorioSerializer(objs, many=True).data},
+            status=status.HTTP_201_CREATED
+        )
 
     # ---------------- ITENS DO PROCESSO ----------------
     @action(detail=True, methods=['get'])
@@ -333,7 +470,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         created = []
         with transaction.atomic():
-            # lista explícita
             if isinstance(payload, list):
                 for item in payload:
                     n = item.get('numero') or next_numero()
@@ -341,7 +477,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
                     created.append(obj)
 
-            # por quantidade
             elif isinstance(payload, dict) and 'quantidade' in payload:
                 try:
                     qtd = int(payload.get('quantidade') or 0)
@@ -358,7 +493,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
                     created.append(obj)
 
-            # único
             elif isinstance(payload, dict):
                 n = payload.get('numero') or next_numero()
                 d = payload.get('descricao', '')
@@ -376,7 +510,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         data = request.data
 
         with transaction.atomic():
-            # 1) pela ordem enviada
             ordem_ids = data.get('ordem_ids')
             if isinstance(ordem_ids, list) and ordem_ids:
                 qs = list(processo.lotes.filter(id__in=ordem_ids))
@@ -391,7 +524,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
                 return Response(out)
 
-            # 2) normalizar
             if data.get('normalizar'):
                 inicio = int(data.get('inicio') or 1)
                 numero = inicio
@@ -403,7 +535,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
                 return Response(out)
 
-            # 3) mapear id->numero
             mapa = data.get('mapa')
             if isinstance(mapa, list) and mapa:
                 ids = [m.get('id') for m in mapa if m.get('id') is not None]
@@ -421,97 +552,9 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         return Response({"detail": "Payload inválido."}, status=status.HTTP_400_BAD_REQUEST)
 
-    # ---------------- IMPORTAÇÃO XLSX ----------------
-    @action(detail=False, methods=['post'], url_path='importar-xlsx',
-            parser_classes=[parsers.MultiPartParser, parsers.FormParser])
-    def importar_xlsx(self, request, *args, **kwargs):
-        """
-        Envie multipart/form-data com:
-          - file: <arquivo.xlsx>
-        A primeira linha deve conter cabeçalhos. Os nomes serão normalizados
-        (lowercase) e usados como chaves diretas no serializer.
-        """
-        arquivo = request.FILES.get('file') or request.FILES.get('xlsx')
-        if not arquivo:
-            return Response({'detail': 'Envie o arquivo XLSX no campo "file".'}, status=400)
-
-        try:
-            wb = openpyxl.load_workbook(arquivo, data_only=True)
-            ws = wb.active
-        except Exception as e:
-            return Response({'detail': f'Não foi possível ler o XLSX: {e}'}, status=400)
-
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows or len(rows) < 2:
-            return Response({'detail': 'Planilha sem dados.'}, status=400)
-
-        header = [str(c).strip().lower() if c is not None else "" for c in rows[0]]
-
-        def normalize_cell(v):
-            if isinstance(v, (datetime, date)):
-                # to ISO date
-                try:
-                    return v.date().isoformat()
-                except Exception:
-                    return v.isoformat()
-            return v
-
-        dados = []
-        for i in range(1, len(rows)):
-            line = rows[i]
-            if not line:
-                continue
-            item = {}
-            for idx, col in enumerate(header):
-                if not col:
-                    continue
-                val = normalize_cell(line[idx]) if idx < len(line) else None
-                if val is None or val == "":
-                    continue
-                item[col] = val
-            # Exemplo de aliases comuns (opcional)
-            if 'numero' in item and 'numero_processo' not in item:
-                item['numero_processo'] = item.pop('numero')
-            if 'data_certame' in item and 'data_abertura' not in item:
-                # se seu serializer usa data_abertura, ajuste conforme sua modelagem
-                pass
-            dados.append(item)
-
-        if not dados:
-            return Response({'detail': 'Nenhuma linha válida encontrada.'}, status=400)
-
-        ser = ProcessoLicitatorioSerializer(data=dados, many=True)
-        ser.is_valid(raise_exception=True)
-        with transaction.atomic():
-            instances = ser.save()
-
-        return Response(
-            {
-                'importados': len(instances),
-                'objetos': ProcessoLicitatorioSerializer(instances, many=True).data
-            },
-            status=status.HTTP_201_CREATED
-        )
-
-    # ---------------- IMPORTAÇÃO JSON ----------------
-    @action(detail=False, methods=['post'], url_path='importar',
-            parser_classes=[parsers.JSONParser])
-    def importar_json(self, request, *args, **kwargs):
-        """
-        Envie uma LISTA JSON de processos para importação em lote.
-        """
-        if not isinstance(request.data, list):
-            return Response({'detail': 'Envie uma LISTA JSON.'}, status=400)
-
-        ser = ProcessoLicitatorioSerializer(data=request.data, many=True)
-        ser.is_valid(raise_exception=True)
-        with transaction.atomic():
-            instances = ser.save()
-        return Response(ProcessoLicitatorioSerializer(instances, many=True).data, status=201)
-
 
 # ============================================================
-# 4️⃣ LOTE
+# 4) LOTE
 # ============================================================
 class LoteViewSet(viewsets.ModelViewSet):
     queryset = Lote.objects.select_related('processo').all()
@@ -523,7 +566,7 @@ class LoteViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================
-# 5️⃣ ITEM
+# 5) ITEM
 # ============================================================
 class ItemViewSet(viewsets.ModelViewSet):
     queryset = Item.objects.select_related('processo', 'lote', 'fornecedor').all()
@@ -555,7 +598,7 @@ class ItemViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================
-# 6️⃣ FORNECEDOR ↔ PROCESSO (participantes)
+# 6) FORNECEDOR ↔ PROCESSO (participantes)
 # ============================================================
 class FornecedorProcessoViewSet(viewsets.ModelViewSet):
     queryset = FornecedorProcesso.objects.select_related('processo', 'fornecedor').all()
@@ -563,14 +606,11 @@ class FornecedorProcessoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['processo', 'fornecedor']
-    search_fields = [
-        'fornecedor__razao_social', 'fornecedor__cnpj',
-        'processo__numero_processo', 'processo__numero_certame'
-    ]
+    search_fields = ['fornecedor__razao_social', 'fornecedor__cnpj', 'processo__numero_processo', 'processo__numero_certame']
 
 
 # ============================================================
-# 7️⃣ ITEM ↔ FORNECEDOR (propostas)
+# 7) ITEM ↔ FORNECEDOR (propostas)
 # ============================================================
 class ItemFornecedorViewSet(viewsets.ModelViewSet):
     queryset = ItemFornecedor.objects.select_related('item', 'fornecedor').all()
@@ -582,7 +622,7 @@ class ItemFornecedorViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================
-# 8️⃣ REORDENAÇÃO DE ITENS
+# 8) REORDENAÇÃO DE ITENS
 # ============================================================
 class ReorderItensView(APIView):
     permission_classes = [IsAuthenticated]
@@ -605,7 +645,7 @@ class ReorderItensView(APIView):
 
 
 # ============================================================
-# 9️⃣ USUÁRIO AUTENTICADO (perfil /me/)
+# 9) USUÁRIOS PÚBLICO / PERFIL
 # ============================================================
 class CreateUserView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
@@ -627,7 +667,7 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
-        ctx['request'] = self.request  # para URLs absolutas da foto
+        ctx['request'] = self.request
         return ctx
 
     def put(self, request, *_, **__):
@@ -644,7 +684,7 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
 
 
 # ============================================================
-# 🔟 DASHBOARD
+# 10) DASHBOARD
 # ============================================================
 class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -667,7 +707,7 @@ class DashboardStatsView(APIView):
 
 
 # ============================================================
-# 1️⃣1️⃣ LOGIN COM GOOGLE
+# 11) LOGIN COM GOOGLE
 # ============================================================
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
@@ -733,7 +773,7 @@ class GoogleLoginView(APIView):
 
 
 # ============================================================
-# 1️⃣2️⃣ CONTRATO/EMPENHO
+# 12) CONTRATO / EMPENHO
 # ============================================================
 class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
     queryset = ContratoEmpenho.objects.select_related('processo').all().order_by('-criado_em', 'id')
