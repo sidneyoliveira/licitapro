@@ -48,13 +48,20 @@ class Orgao(models.Model):
         help_text='Código da Unidade Compradora (ex.: 1010)'
     )
 
-    entidade = models.ForeignKey(Entidade, related_name='orgaos', blank=True, on_delete=models.CASCADE)
+    # 🔹 Agora pode ficar em branco inclusive no banco (null=True)
+    entidade = models.ForeignKey(
+        Entidade,
+        related_name='orgaos',
+        blank=True,
+        null=True,
+        on_delete=models.CASCADE
+    )
 
     class Meta:
         ordering = ['nome']
 
     def __str__(self):
-        return f"{self.nome} - {self.entidade.nome}"
+        return f"{self.nome} - {self.entidade.nome if self.entidade else 'Sem Entidade'}"
 
 
 # ============================================================
@@ -129,8 +136,21 @@ class ProcessoLicitatorio(models.Model):
     # -------------------------------
     # Relações
     # -------------------------------
-    entidade = models.ForeignKey('Entidade', on_delete=models.PROTECT, blank=True, related_name='processos')
-    orgao = models.ForeignKey('Orgao', on_delete=models.PROTECT, blank=True, related_name='processos')
+    # 🔹 Agora podem ser nulos na importação
+    entidade = models.ForeignKey(
+        'Entidade',
+        on_delete=models.PROTECT,
+        blank=True,
+        null=True,
+        related_name='processos'
+    )
+    orgao = models.ForeignKey(
+        'Orgao',
+        on_delete=models.PROTECT,
+        blank=True,
+        null=True,
+        related_name='processos'
+    )
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True, blank=True)
 
@@ -281,6 +301,7 @@ class ProcessoLicitatorio(models.Model):
             return self.lotes.order_by('numero')
 
         raise ValidationError("Parâmetros inválidos para organização de lotes.")
+
 
 # ============================================================
 # 📦 LOTE
