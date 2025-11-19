@@ -247,7 +247,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     search_fields = ['numero_processo', 'numero_certame', 'objeto']
     filterset_fields = ['modalidade', 'situacao', 'entidade', 'orgao']
 
-    # ---------------- IMPORTAÇÃO VIA XLSX ----------------
+   # ---------------- IMPORTAÇÃO VIA XLSX (PLANILHA PADRÃO) ----------------
     @action(
         detail=False,
         methods=['post'],
@@ -258,8 +258,10 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         """
         POST /api/processos/importar-xlsx/
 
-        Espera um arquivo .xlsx no campo "arquivo", seguindo o modelo "CADASTRO INICIAL":
-        - Dados do processo nas células:
+        Espera um arquivo .xlsx no campo "arquivo", seguindo o modelo PADRÃO
+        baseado na aba "CADASTRO INICIAL" / "PLANILHA PADRAO IMPORTACAO":
+
+        - Cabeçalho de processo (células fixas do modelo original):
           A10 NUM PROCESSO
           B10 DATA CADASTRO PROCESSO
           C10 NUMERO CERTAME
@@ -270,12 +272,12 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
           H10 VALOR GLOBAL
           A11 OBJETO
 
-        - Itens a partir da linha 12 (cabeçalho):
-          FORNECEDOR | IDENTIFICADOR | DESCRIÇÃO | ESPECIFICAÇÃO | QUANTIDADE | UNIDADE |
-          NATUREZA / DESPESA | VALOR REFERENCIA
+        - Itens: linha de cabeçalho detectada dinamicamente procurando
+          colunas como DESCRIÇÃO, QUANTIDADE, UNIDADE etc.
 
-        - Linhas "FORNECEDOR DO LOTE / NUMERO LOTE" definem novos lotes.
+        - As linhas com "FORNECEDOR DO LOTE / NUMERO LOTE" definem novos lotes.
         """
+
         arquivo = request.FILES.get("arquivo")
         if not arquivo:
             return Response(
@@ -284,8 +286,10 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             )
 
         if not arquivo.name.lower().endswith(".xlsx"):
-            return Response({"detail": "Envie um arquivo .xlsx."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Envie um arquivo .xlsx."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             wb = load_workbook(arquivo, data_only=True)
@@ -295,48 +299,24 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # tenta achar planilha "CADASTRO INICIAL"
-        sheet_name = None
-        for name in wb.sheetnames:
-            if name and str(name).strip().upper().startswith("CADASTRO INICIAL"):
-                sheet_name = name
-                break
-        if not sheet_name:
-            # fallback para a primeira aba
-            sheet_name = wb.sheetnames[0]
-
-        ws = wb[sheet_name]
-
-        # ------------- helpers internos -------------
-        def get_cell(coord, header_keyword=None):
-            """
-            Lê uma célula e, se ainda estiver com o texto do cabeçalho (ex.: 'NUM PROCESSO'),
-            devolve string vazia. Igual à lógica do front (valueOrData).
-            """
-            v = ws[coord].value
-            if header_keyword:
-                if v is None:
-                    return ""
-                s = str(v).strip().upper()
-                if header_keyword.upper() in s:
-                    return ""
-            return v if v is not None else ""
-
+        # ---------- helpers internos de normalização/conversão ----------
         def normalize_header(s):
             if not isinstance(s, str):
                 return ""
-            import unicodedata, re
+            import unicodedata, re as _re
             s = unicodedata.normalize("NFD", s)
             s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-            s = re.sub(r"\s+", " ", s)
+            s = _re.sub(r"\s+", " ", s)
             return s.strip().upper()
 
         def to_decimal(v):
             if v is None or v == "":
                 return None
             try:
-                # aceita tanto 5,99 quanto 5.99
-                return Decimal(str(v).replace(",", "."))
+                # aceita 5,99 ou 5.99
+                return Decimal(str(v).replace(".", "").replace(",", ".")) \
+                    if isinstance(v, str) and "," in str(v) and "." in str(v) else \
+                    Decimal(str(v).replace(",", "."))
             except (InvalidOperation, AttributeError):
                 return None
 
@@ -386,26 +366,133 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                         continue
             return None
 
-        # ------------- meta do processo (células fixas) -------------
-        numero_processo = str(get_cell("A10", "NUM PROCESSO") or "").strip()
-        data_cadastro_raw = get_cell("B10", "DATA CADASTRO PROCESSO")
-        numero_certame = str(get_cell("C10", "NUMERO CERTAME") or "").strip()
-        data_certame_raw = get_cell("D10", "DATA CERTAME")
-        tipo_lote_item_raw = get_cell("E10", "LOTE OU ITEM")
-        entidade_nome = str(get_cell("F10", "ENTIDADE") or "").strip()
-        orgao_nome = str(get_cell("G10", "ORGÃO") or "").strip()
-        valor_global_raw = get_cell("H10", "VALOR GLOBAL")
-        objeto = str(get_cell("A11", "OBJETO") or "").strip()
+        def to_bool(v):
+            if v is None or v == "":
+                return None
+            s = str(v).strip().lower()
+            if s in ("sim", "s", "yes", "true", "1"):
+                return True
+            if s in ("nao", "não", "n", "no", "false", "0"):
+                return False
+            return None
 
-        # ------------- cabeçalho de itens (linha 12) -------------
-        row_header = 12
-        cols_map = {}
-        for col in range(1, ws.max_column + 1):
-            hdr = ws.cell(row=row_header, column=col).value
-            if hdr:
-                cols_map[normalize_header(hdr)] = col
+        def get_cell(ws, coord, header_keyword=None):
+            """
+            Lê uma célula e, se ainda estiver com o texto do cabeçalho
+            (ex.: 'NUM PROCESSO'), devolve string vazia.
+            Compatível com o modelo em que o usuário sobrescreve o texto.
+            """
+            v = ws[coord].value
+            if header_keyword:
+                if v is None:
+                    return ""
+                s = str(v).strip().upper()
+                if header_keyword.upper() in s:
+                    return ""
+            return v if v is not None else ""
+
+        def find_label_value(ws, label_keywords, search_rows=30, search_cols=15):
+            """
+            Procura uma célula cujo texto contenha todas as palavras
+            de label_keywords (normalizadas) e tenta pegar o valor na
+            célula à direita ou logo abaixo.
+            Útil para campos técnicos (modalidade, situação, etc).
+            """
+            keys = [normalize_header(k) for k in label_keywords]
+            max_row = min(search_rows, ws.max_row)
+            max_col = min(search_cols, ws.max_column)
+            for row in range(1, max_row + 1):
+                for col in range(1, max_col + 1):
+                    v = ws.cell(row=row, column=col).value
+                    if not isinstance(v, str):
+                        continue
+                    norm = normalize_header(v)
+                    if all(k in norm for k in keys):
+                        # tenta à direita
+                        if col + 1 <= ws.max_column:
+                            right = ws.cell(row=row, column=col + 1).value
+                            if right not in (None, ""):
+                                return right
+                        # tenta abaixo
+                        if row + 1 <= ws.max_row:
+                            below = ws.cell(row=row + 1, column=col).value
+                            if below not in (None, ""):
+                                return below
+            return None
+
+        def detect_items_header(ws):
+            """
+            Detecta dinamicamente a linha de cabeçalho dos itens.
+            Procura linha que contenha pelo menos DESCRIÇÃO + QUANTIDADE/UNIDADE.
+            Retorna (row_header, cols_map_normalizado).
+            """
+            for row in range(1, ws.max_row + 1):
+                tmp_map = {}
+                for col in range(1, ws.max_column + 1):
+                    v = ws.cell(row=row, column=col).value
+                    if not v:
+                        continue
+                    norm = normalize_header(str(v))
+                    if norm:
+                        tmp_map[norm] = col
+                keys = set(tmp_map.keys())
+                if {"DESCRICAO", "QUANTIDADE"}.issubset(keys) or {"DESCRICAO", "UNIDADE"}.issubset(keys):
+                    return row, tmp_map
+            return None, {}
+
+        # ---------- escolhe a planilha principal (CADASTRO INICIAL / CADASTRO / 1ª aba) ----------
+        sheet_name = None
+        for name in wb.sheetnames:
+            n = normalize_header(name)
+            if n.startswith("CADASTRO INICIAL"):
+                sheet_name = name
+                break
+        if not sheet_name:
+            for name in wb.sheetnames:
+                n = normalize_header(name)
+                if "CADASTRO" in n:
+                    sheet_name = name
+                    break
+        if not sheet_name:
+            # fallback para primeira aba
+            sheet_name = wb.sheetnames[0]
+
+        ws = wb[sheet_name]
+
+        # ---------- meta do processo (layout base) ----------
+        numero_processo = str(get_cell(ws, "A10", "NUM PROCESSO") or "").strip()
+        data_cadastro_raw = get_cell(ws, "B10", "DATA CADASTRO PROCESSO")
+        numero_certame = str(get_cell(ws, "C10", "NUMERO CERTAME") or "").strip()
+        data_certame_raw = get_cell(ws, "D10", "DATA CERTAME")
+        tipo_lote_item_raw = get_cell(ws, "E10", "LOTE OU ITEM")
+        entidade_nome = str(get_cell(ws, "F10", "ENTIDADE") or "").strip()
+        orgao_nome = str(get_cell(ws, "G10", "ORG") or "").strip()
+        valor_global_raw = get_cell(ws, "H10", "VALOR GLOBAL")
+        objeto = str(get_cell(ws, "A11", "OBJETO") or "").strip()
+
+        # ---------- dados técnicos extra (se existirem na planilha padrão) ----------
+        modalidade_raw = find_label_value(ws, ["MODALIDADE"])
+        classificacao_raw = find_label_value(ws, ["CLASSIFICACAO"])
+        tipo_organizacao_extra = find_label_value(ws, ["TIPO", "ORGANIZACAO"])
+        registro_preco_raw = find_label_value(ws, ["REGISTRO", "PRECO"])
+        vigencia_raw = find_label_value(ws, ["VIGENCIA"])
+        situacao_raw = find_label_value(ws, ["SITUACAO"])
+        fundamentacao_raw = find_label_value(ws, ["FUNDAMENTACAO"])
+        amparo_legal_raw = find_label_value(ws, ["AMPARO", "LEGAL"])
+        modo_disputa_raw = find_label_value(ws, ["MODO", "DISPUTA"])
+        criterio_julgamento_raw = find_label_value(ws, ["CRITERIO", "JULGAMENTO"])
+
+        # ---------- cabeçalho de itens: linha dinâmica ----------
+        row_header, cols_map = detect_items_header(ws)
+        if not row_header:
+            return Response(
+                {"detail": "Cabeçalho da tabela de itens não encontrado. "
+                           "Certifique-se de que existam colunas como DESCRIÇÃO, QUANTIDADE e UNIDADE."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         def col(key):
+            # 'key' deve ser passado já em versão "normalizada"
             return cols_map.get(key)
 
         itens_data = []
@@ -413,22 +500,32 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         current_lote_num = None
 
         for row in range(row_header + 1, ws.max_row + 1):
-            f = ws.cell(row=row, column=col("FORNECEDOR")).value if col("FORNECEDOR") else None
-            idf = ws.cell(row=row, column=col("IDENTIFICADOR")).value if col("IDENTIFICADOR") else None
-            desc = ws.cell(row=row, column=col("DESCRICAO")).value if col("DESCRICAO") else None
-            esp = ws.cell(row=row, column=col("ESPECIFICACAO")).value if col("ESPECIFICACAO") else None
-            qtd = ws.cell(row=row, column=col("QUANTIDADE")).value if col("QUANTIDADE") else None
-            unidade = ws.cell(row=row, column=col("UNIDADE")).value if col("UNIDADE") else None
-            valor_ref = ws.cell(row=row, column=col("VALOR REFERENCIA")).value if col("VALOR REFERENCIA") else None
+            c_fornec = col("FORNECEDOR")
+            c_ident = col("IDENTIFICADOR")
+            c_desc = col("DESCRICAO")
+            c_esp = col("ESPECIFICACAO")
+            c_qtd = col("QUANTIDADE")
+            c_und = col("UNIDADE")
+            c_val = col("VALOR REFERENCIA")
+            c_nat = col("NATUREZA / DESPESA")
 
-            # linha vazia total -> ignora
-            if all(v in (None, "") for v in (f, idf, desc, esp, qtd, unidade, valor_ref)):
+            f = ws.cell(row=row, column=c_fornec).value if c_fornec else None
+            idf = ws.cell(row=row, column=c_ident).value if c_ident else None
+            desc = ws.cell(row=row, column=c_desc).value if c_desc else None
+            esp = ws.cell(row=row, column=c_esp).value if c_esp else None
+            qtd = ws.cell(row=row, column=c_qtd).value if c_qtd else None
+            unidade = ws.cell(row=row, column=c_und).value if c_und else None
+            valor_ref = ws.cell(row=row, column=c_val).value if c_val else None
+            natureza_raw = ws.cell(row=row, column=c_nat).value if c_nat else None
+
+            # linha totalmente vazia -> ignora
+            if all(v in (None, "") for v in (f, idf, desc, esp, qtd, unidade, valor_ref, natureza_raw)):
                 continue
 
             fstr = str(f or "").strip().upper()
             idstr = str(idf or "").strip().upper()
 
-            # cabeçalho de LOTE
+            # linha que define cabeçalho de LOTE
             if "FORNECEDOR DO LOTE" in fstr or "NUMERO LOTE" in idstr:
                 lote_desc = str(desc or idf or f or "").strip()
                 if not lote_desc:
@@ -438,7 +535,11 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 continue
 
             # linha de ITEM
-            if desc and qtd is not None and unidade:
+            has_desc = bool(desc)
+            has_qtd = qtd not in (None, "")
+            has_unid = bool(unidade)
+
+            if has_desc and has_unid:
                 itens_data.append({
                     "lote_numero": current_lote_num,
                     "descricao": str(desc).strip(),
@@ -446,15 +547,103 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     "quantidade": qtd,
                     "unidade": str(unidade).strip(),
                     "valor_referencia": valor_ref,
+                    "natureza": natureza_raw,
+                    "fornecedor_raw": f,
                 })
 
         if not itens_data:
             return Response(
-                {"detail": "Nenhum item encontrado na planilha (verifique o modelo)."},
+                {"detail": "Nenhum item encontrado na planilha (verifique o modelo e as colunas de itens)."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ------------- criação no banco -------------
+        # ---------- leitura da aba de fornecedores (se existir) ----------
+        fornecedores_by_cnpj = {}
+        fornecedores_by_razao = {}
+        fornecedores_criados = 0
+
+        for name in wb.sheetnames:
+            n = normalize_header(name)
+            if "FORNECEDOR" not in n:
+                continue
+            ws_f = wb[name]
+
+            # detecta linha de cabeçalho (precisa pelo menos de CNPJ e RAZAO SOCIAL)
+            header_row = None
+            f_cols = {}
+            for row in range(1, ws_f.max_row + 1):
+                tmp_map = {}
+                for col_idx in range(1, ws_f.max_column + 1):
+                    v = ws_f.cell(row=row, column=col_idx).value
+                    if not v:
+                        continue
+                    norm = normalize_header(str(v))
+                    if norm:
+                        tmp_map[norm] = col_idx
+                if "CNPJ" in tmp_map and ("RAZAO SOCIAL" in tmp_map or "RAZAO_SOCIAL" in tmp_map):
+                    header_row = row
+                    f_cols = tmp_map
+                    break
+
+            if not header_row:
+                # não parece ser a aba de fornecedores padrão -> tenta próxima
+                continue
+
+            def fcol(k):
+                return f_cols.get(k)
+
+            import re as _re
+
+            for row in range(header_row + 1, ws_f.max_row + 1):
+                cnpj_raw = ws_f.cell(row=row, column=fcol("CNPJ")).value if fcol("CNPJ") else None
+                razao_raw = ws_f.cell(row=row, column=fcol("RAZAO SOCIAL")).value if fcol("RAZAO SOCIAL") else None
+                nome_fantasia_raw = ws_f.cell(row=row, column=fcol("NOME FANTASIA")).value if fcol("NOME FANTASIA") else None
+                telefone_raw = ws_f.cell(row=row, column=fcol("TELEFONE")).value if fcol("TELEFONE") else None
+                email_raw = ws_f.cell(row=row, column=fcol("EMAIL")).value if fcol("EMAIL") else None
+                cep_raw = ws_f.cell(row=row, column=fcol("CEP")).value if fcol("CEP") else None
+                logradouro_raw = ws_f.cell(row=row, column=fcol("LOGRADOURO")).value if fcol("LOGRADOURO") else None
+                numero_raw = ws_f.cell(row=row, column=fcol("NUMERO")).value if fcol("NUMERO") else None
+                bairro_raw = ws_f.cell(row=row, column=fcol("BAIRRO")).value if fcol("BAIRRO") else None
+                complemento_raw = ws_f.cell(row=row, column=fcol("COMPLEMENTO")).value if fcol("COMPLEMENTO") else None
+                municipio_raw = ws_f.cell(row=row, column=fcol("MUNICIPIO")).value if fcol("MUNICIPIO") else None
+                uf_raw = ws_f.cell(row=row, column=fcol("UF")).value if fcol("UF") else None
+
+                if not cnpj_raw and not razao_raw:
+                    continue
+
+                cnpj_digits = _re.sub(r"\D", "", str(cnpj_raw or ""))
+                if len(cnpj_digits) != 14:
+                    # não consigo criar fornecedor sem CNPJ válido; ignora
+                    continue
+
+                razao = (str(razao_raw).strip() or cnpj_digits) if razao_raw else cnpj_digits
+
+                fornecedor, created = Fornecedor.objects.get_or_create(
+                    cnpj=cnpj_digits,
+                    defaults={
+                        "razao_social": razao,
+                        "nome_fantasia": str(nome_fantasia_raw).strip() if nome_fantasia_raw else None,
+                        "telefone": str(telefone_raw).strip() if telefone_raw else None,
+                        "email": str(email_raw).strip() if email_raw else None,
+                        "cep": str(cep_raw).strip() if cep_raw else None,
+                        "logradouro": str(logradouro_raw).strip() if logradouro_raw else None,
+                        "numero": str(numero_raw).strip() if numero_raw else None,
+                        "bairro": str(bairro_raw).strip() if bairro_raw else None,
+                        "complemento": str(complemento_raw).strip() if complemento_raw else None,
+                        "municipio": str(municipio_raw).strip() if municipio_raw else None,
+                        "uf": str(uf_raw).strip() if uf_raw else None,
+                    }
+                )
+                if created:
+                    fornecedores_criados += 1
+
+                fornecedores_by_cnpj[cnpj_digits] = fornecedor
+                fornecedores_by_razao[normalize_header(razao)] = fornecedor
+
+            # achou e processou uma aba de fornecedores -> não precisa olhar outras
+            break
+
+        # ---------- criação no banco ----------
         with transaction.atomic():
             # tenta localizar entidade/orgão por nome (case-insensitive)
             entidade = None
@@ -468,25 +657,78 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     qs_or = qs_or.filter(entidade=entidade)
                 orgao = qs_or.filter(nome__iexact=orgao_nome).first()
 
-            # Lote / Item (tipo_organizacao)
+            # Tipo de organização (lote / item)
             tipo_organizacao = ""
-            tipo_norm = str(tipo_lote_item_raw or "").strip().lower()
-            if "lote" in tipo_norm:
+            tipo_norm_base = str(tipo_lote_item_raw or "").strip().lower()
+            if "lote" in tipo_norm_base:
                 tipo_organizacao = "Lote"
-            elif "item" in tipo_norm:
+            elif "item" in tipo_norm_base:
+                tipo_organizacao = "Item"
+            elif lotes_data:
+                tipo_organizacao = "Lote"
+            else:
                 tipo_organizacao = "Item"
 
-            processo = ProcessoLicitatorio.objects.create(
-                numero_processo=numero_processo or None,
-                numero_certame=numero_certame or None,
-                objeto=objeto or "",
-                tipo_organizacao=tipo_organizacao or "",
-                data_processo=to_date(data_cadastro_raw),
-                data_abertura=to_datetime(data_certame_raw),
-                valor_referencia=to_decimal(valor_global_raw),
-                entidade=entidade,
-                orgao=orgao,
-            )
+            proc_kwargs = {
+                "numero_processo": numero_processo or None,
+                "numero_certame": numero_certame or None,
+                "objeto": objeto or "",
+                "tipo_organizacao": tipo_organizacao or "",
+                "data_processo": to_date(data_cadastro_raw),
+                "data_abertura": to_datetime(data_certame_raw),
+                "valor_referencia": to_decimal(valor_global_raw),
+                "entidade": entidade,
+                "orgao": orgao,
+            }
+
+            # aplica campos técnicos se encontrados
+            if modalidade_raw:
+                proc_kwargs["modalidade"] = str(modalidade_raw).strip()
+            if classificacao_raw:
+                proc_kwargs["classificacao"] = str(classificacao_raw).strip()
+            if tipo_organizacao_extra:
+                # se vier algo diferente em outro campo, ele sobrescreve
+                proc_kwargs["tipo_organizacao"] = str(tipo_organizacao_extra).strip()
+
+            rp_bool = to_bool(registro_preco_raw)
+            if rp_bool is not None:
+                proc_kwargs["registro_preco"] = rp_bool
+
+            if vigencia_raw not in (None, ""):
+                try:
+                    proc_kwargs["vigencia_meses"] = int(str(vigencia_raw).split()[0])
+                except Exception:
+                    pass
+
+            if situacao_raw:
+                proc_kwargs["situacao"] = str(situacao_raw).strip()
+
+            # fundamentação -> mapeia texto para códigos do model (lei_8666 / lei_10520 / lei_14133)
+            import re as _re
+            if fundamentacao_raw:
+                fund_txt = str(fundamentacao_raw)
+                digits = _re.sub(r"\D", "", fund_txt)
+                code = None
+                if "14133" in digits or "14133" in fund_txt:
+                    code = "lei_14133"
+                elif "8666" in digits or "8666" in fund_txt:
+                    code = "lei_8666"
+                elif "10520" in digits or "10520" in fund_txt:
+                    code = "lei_10520"
+                # se já veio no formato de código, aceita direto
+                if fund_txt.strip() in ("lei_14133", "lei_8666", "lei_10520"):
+                    code = fund_txt.strip()
+                if code:
+                    proc_kwargs["fundamentacao"] = code
+
+            if amparo_legal_raw:
+                proc_kwargs["amparo_legal"] = str(amparo_legal_raw).strip()
+            if modo_disputa_raw:
+                proc_kwargs["modo_disputa"] = str(modo_disputa_raw).strip()
+            if criterio_julgamento_raw:
+                proc_kwargs["criterio_julgamento"] = str(criterio_julgamento_raw).strip()
+
+            processo = ProcessoLicitatorio.objects.create(**proc_kwargs)
 
             # cria lotes
             lote_objs = {}
@@ -499,13 +741,46 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             # cria itens
             itens_criados = 0
             ordem = 0
+            fornecedores_vinculados = set()
+
             for it in itens_data:
                 qtd_dec = to_decimal(it["quantidade"])
                 if qtd_dec is None:
                     continue
                 valor_dec = to_decimal(it["valor_referencia"])
+                natureza_raw_it = it.get("natureza")
+                natureza_code = None
+                if natureza_raw_it not in (None, ""):
+                    s_nat = str(natureza_raw_it).strip().upper()
+                    if s_nat.startswith("M"):
+                        natureza_code = "M"
+                    elif s_nat.startswith("S"):
+                        natureza_code = "S"
+
+                fornecedor_obj = None
+                fornec_ref = it.get("fornecedor_raw")
+                if fornec_ref:
+                    txt_f = str(fornec_ref).strip()
+                    cnpj_digits = _re.sub(r"\D", "", txt_f)
+                    # tenta por CNPJ
+                    if len(cnpj_digits) == 14:
+                        fornecedor_obj = fornecedores_by_cnpj.get(cnpj_digits)
+                        if not fornecedor_obj:
+                            fornecedor_obj, _created = Fornecedor.objects.get_or_create(
+                                cnpj=cnpj_digits,
+                                defaults={"razao_social": cnpj_digits}
+                            )
+                    else:
+                        # tenta por razão social (normalizada)
+                        rn = normalize_header(txt_f)
+                        fornecedor_obj = fornecedores_by_razao.get(rn)
+                        if not fornecedor_obj:
+                            fornecedor_obj = Fornecedor.objects.filter(
+                                razao_social__iexact=txt_f
+                            ).first()
+
                 ordem += 1
-                Item.objects.create(
+                item = Item.objects.create(
                     processo=processo,
                     descricao=it["descricao"],
                     unidade=it["unidade"],
@@ -513,8 +788,17 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     valor_estimado=valor_dec,
                     lote=lote_objs.get(it["lote_numero"]),
                     ordem=ordem,
+                    natureza=natureza_code,
+                    fornecedor=fornecedor_obj,
                 )
                 itens_criados += 1
+
+                if fornecedor_obj:
+                    FornecedorProcesso.objects.get_or_create(
+                        processo=processo,
+                        fornecedor=fornecedor_obj,
+                    )
+                    fornecedores_vinculados.add(fornecedor_obj.id)
 
         serializer = self.get_serializer(processo)
         return Response(
@@ -523,215 +807,11 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 "processo": serializer.data,
                 "lotes_criados": len(lote_objs),
                 "itens_importados": itens_criados,
+                "fornecedores_criados": fornecedores_criados,
+                "fornecedores_vinculados": len(fornecedores_vinculados),
             },
             status=status.HTTP_201_CREATED,
         )
-
-    # ---------------- ITENS DO PROCESSO ----------------
-    @action(detail=True, methods=['get'])
-    def itens(self, request, *args, **kwargs):
-        """
-        GET /api/processos/<pk>/itens/
-        Retorna todos os itens vinculados a um processo.
-        """
-        processo = self.get_object()
-        itens = (
-            Item.objects
-            .filter(processo=processo)
-            .select_related('lote', 'fornecedor')
-            .order_by('ordem', 'id')
-        )
-        serializer = ItemSerializer(itens, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    # ---------------- FORNECEDORES (VÍNCULO) ----------------
-    @action(detail=True, methods=['post'], url_path='adicionar_fornecedor')
-    def adicionar_fornecedor(self, request, *args, **kwargs):
-        """
-        POST /api/processos/<pk>/adicionar_fornecedor/
-        Body: { "fornecedor_id": <id> }
-        Vincula um fornecedor ao processo.
-        """
-        processo = self.get_object()
-        fornecedor_id = request.data.get('fornecedor_id')
-
-        if not fornecedor_id:
-            return Response({'error': 'fornecedor_id é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            fornecedor = Fornecedor.objects.get(id=fornecedor_id)
-        except Fornecedor.DoesNotExist:
-            return Response({'error': 'Fornecedor não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-        with transaction.atomic():
-            obj, created = FornecedorProcesso.objects.get_or_create(processo=processo, fornecedor=fornecedor)
-        return Response(
-            {
-                'detail': 'Fornecedor vinculado ao processo com sucesso!',
-                'fornecedor': FornecedorSerializer(fornecedor).data,
-                'created': created
-            },
-            status=status.HTTP_201_CREATED
-        )
-
-    @action(detail=True, methods=['get'], url_path='fornecedores')
-    def fornecedores(self, request, *args, **kwargs):
-        """
-        GET /api/processos/<pk>/fornecedores/
-        Lista fornecedores vinculados a um processo.
-        """
-        processo = self.get_object()
-        fornecedores = Fornecedor.objects.filter(processos__processo=processo).order_by('razao_social')
-        serializer = FornecedorSerializer(fornecedores, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=['post'], url_path='remover_fornecedor')
-    def remover_fornecedor(self, request, *args, **kwargs):
-        """
-        POST /api/processos/<pk>/remover_fornecedor/
-        Body: { "fornecedor_id": <id> }
-        Remove vínculo de fornecedor com o processo.
-        """
-        processo = self.get_object()
-        fornecedor_id = request.data.get('fornecedor_id')
-
-        if not fornecedor_id:
-            return Response({'error': 'fornecedor_id é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        deleted, _ = FornecedorProcesso.objects.filter(
-            processo=processo, fornecedor_id=fornecedor_id
-        ).delete()
-
-        if deleted:
-            return Response({'detail': 'Fornecedor removido com sucesso.'}, status=status.HTTP_200_OK)
-        return Response({'detail': 'Nenhum vínculo encontrado para remover.'}, status=status.HTTP_404_NOT_FOUND)
-
-    # ---------------- LOTES (NESTED) ----------------
-    @action(detail=True, methods=['get', 'post'], url_path='lotes')
-    def lotes(self, request, *args, **kwargs):
-        """
-        GET  /api/processos/<pk>/lotes/  -> lista lotes do processo
-        POST /api/processos/<pk>/lotes/  -> cria lote(s)
-
-        POST payloads aceitos:
-          { "numero": 3, "descricao": "Lote 3" }                      # cria único
-          { "descricao": "Auto" }                                     # cria único com próximo número disponível
-          [ { "numero": 1, "descricao": "A" }, { "numero": 2, ... } ] # cria vários
-          { "quantidade": 5, "descricao_prefixo": "Lote " }           # cria N sequenciais
-        """
-        processo = self.get_object()
-
-        if request.method.lower() == 'get':
-            qs = processo.lotes.order_by('numero')
-            return Response(LoteSerializer(qs, many=True).data)
-
-        payload = request.data
-
-        def next_numero():
-            ultimo = processo.lotes.order_by('-numero').first()
-            return (ultimo.numero + 1) if ultimo else 1
-
-        created = []
-        with transaction.atomic():
-            # lista explícita
-            if isinstance(payload, list):
-                for item in payload:
-                    n = item.get('numero') or next_numero()
-                    d = item.get('descricao', '')
-                    obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
-                    created.append(obj)
-
-            # por quantidade
-            elif isinstance(payload, dict) and 'quantidade' in payload:
-                try:
-                    qtd = int(payload.get('quantidade') or 0)
-                except (TypeError, ValueError):
-                    return Response({"detail": "quantidade inválida."}, status=400)
-                if qtd <= 0:
-                    return Response({"detail": "quantidade deve ser > 0"}, status=400)
-
-                prefixo = payload.get('descricao_prefixo', 'Lote ')
-                start = next_numero()
-                for i in range(qtd):
-                    n = start + i
-                    d = f"{prefixo}{n}"
-                    obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
-                    created.append(obj)
-
-            # único
-            elif isinstance(payload, dict):
-                n = payload.get('numero') or next_numero()
-                d = payload.get('descricao', '')
-                obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
-                created.append(obj)
-
-            else:
-                return Response({"detail": "Payload inválido."}, status=400)
-
-        return Response(LoteSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
-
-    @action(detail=True, methods=['patch'], url_path='lotes/organizar')
-    def organizar_lotes(self, request, *args, **kwargs):
-        """
-        PATCH /api/processos/<pk>/lotes/organizar/
-
-        Payloads aceitos:
-        1) Renumerar pela ordem de IDs:
-           { "ordem_ids": [5, 2, 7], "inicio": 1 }
-        2) Normalizar (sem buracos) a partir de 'inicio':
-           { "normalizar": true, "inicio": 1 }
-        3) Mapear números explicitamente:
-           { "mapa": [ {"id": 5, "numero": 10}, {"id": 2, "numero": 11} ] }
-        """
-        processo = self.get_object()
-        data = request.data
-
-        with transaction.atomic():
-            # 1) pela ordem enviada
-            ordem_ids = data.get('ordem_ids')
-            if isinstance(ordem_ids, list) and ordem_ids:
-                qs = list(processo.lotes.filter(id__in=ordem_ids))
-                id2obj = {o.id: o for o in qs}
-                numero = int(data.get('inicio') or 1)
-                for _id in ordem_ids:
-                    obj = id2obj.get(_id)
-                    if obj:
-                        obj.numero = numero
-                        obj.save(update_fields=['numero'])
-                        numero += 1
-                out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
-                return Response(out)
-
-            # 2) normalizar
-            if data.get('normalizar'):
-                inicio = int(data.get('inicio') or 1)
-                numero = inicio
-                for obj in processo.lotes.order_by('numero', 'id'):
-                    if obj.numero != numero:
-                        obj.numero = numero
-                        obj.save(update_fields=['numero'])
-                    numero += 1
-                out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
-                return Response(out)
-
-            # 3) mapear id->numero
-            mapa = data.get('mapa')
-            if isinstance(mapa, list) and mapa:
-                ids = [m.get('id') for m in mapa if m.get('id') is not None]
-                qs = processo.lotes.filter(id__in=ids)
-                id2obj = {o.id: o for o in qs}
-                for m in mapa:
-                    _id = m.get('id')
-                    num = m.get('numero')
-                    if _id in id2obj and isinstance(num, int) and num > 0:
-                        obj = id2obj[_id]
-                        obj.numero = num
-                        obj.save(update_fields=['numero'])
-                out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
-                return Response(out)
-
-        return Response({"detail": "Payload inválido."}, status=status.HTTP_400_BAD_REQUEST)
-
 
 # ============================================================
 # 4️⃣ LOTE
