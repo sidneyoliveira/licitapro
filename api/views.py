@@ -365,15 +365,15 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         row_header = 15
         col_map = {
-            "LOTE": 0,
-            "N ITEM": 1,
-            "DESCRICAO DO ITEM": 2,
-            "ESPECIFICACAO": 3,
-            "QUANTIDADE": 4,
-            "UNIDADE": 5,
-            "NATUREZA / DESPESA": 6,
-            "VALOR REFERENCIA UNITARIO": 7,
-            "CNPJ DO FORNECEDOR": 8,
+            "LOTE": 1,
+            "N ITEM": 2,
+            "DESCRICAO DO ITEM": 3,
+            "ESPECIFICACAO": 4,
+            "QUANTIDADE": 5,
+            "UNIDADE": 6,
+            "NATUREZA / DESPESA": 7,
+            "VALOR REFERENCIA UNITARIO": 8,
+            "CNPJ DO FORNECEDOR": 9,
         }
 
         def col(key):
