@@ -340,31 +340,30 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         # -------------------- Leitura FIXA (compatível com sua planilha) ------
 
-        numero_processo = str(get(ws, "A4")).strip()
-        ano_raw = get(ws, "B4")
-        data_processo_raw = get(ws, "C4")
-        numero_certame = str(get(ws, "D4")).strip()
-        data_certame_raw = get(ws, "E4")
-        entidade_nome = str(get(ws, "G4") or "").strip()
-        orgao_nome = str(get(ws, "H4") or "").strip()
-        valor_global_raw = get(ws, "I4")
+        numero_processo = str(get(ws, "B7")).strip()
+        data_processo_raw = get(ws, "C7")
+        numero_certame = str(get(ws, "D7")).strip()
+        data_certame_raw = get(ws, "E7")
+        entidade_nome = str(get(ws, "G7") or "").strip()
+        orgao_nome = str(get(ws, "H7") or "").strip()
+        valor_global_raw = get(ws, "I7")
 
-        modalidade_raw = get(ws, "A9")
-        tipo_disputa_raw = get(ws, "B9")
-        registro_preco_raw = get(ws, "C9")
-        tipo_organizacao_raw = get(ws, "D9")
-        criterio_julgamento_raw = get(ws, "E9")
-        vigencia_raw = get(ws, "F9")
-        classificacao_raw = get(ws, "G9")
+        modalidade_raw = get(ws, "A11")
+        tipo_disputa_raw = get(ws, "B11")
+        registro_preco_raw = get(ws, "C11")
+        tipo_organizacao_raw = get(ws, "D11")
+        criterio_julgamento_raw = get(ws, "E11")
+        classificacao_raw = get(ws, "G11")
+        vigencia_raw = get(ws, "F11")
 
-        objeto_raw = get(ws, "B12")
-        amparo_legal_raw = get(ws, "B14")
-        fundamentacao_raw = get(ws, "B16")
-        observacoes_raw = get(ws, "B18")
+        objeto_raw = get(ws, "B7")
+        amparo_legal_raw = get(ws, "H11")
+        fundamentacao_raw = get(ws, "B11")
+        observacoes_raw = get(ws, "I11")
 
         # -------------------- Cabeçalho da tabela de itens --------------------
 
-        row_header = 22
+        row_header = 15
         col_map = {
             "NUMERO PROCESSO": 1,
             "ANO": 2,
