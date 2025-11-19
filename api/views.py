@@ -670,7 +670,18 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             # ----------------------------------------
             amparo_legal_txt = None
             if amparo_legal_raw not in (None, ""):
-                amparo_legal_txt = str(amparo_legal_raw).strip()
+                a = str(amparo_legal_raw).strip()
+
+                # se já for um dos values internos, só usa
+                if a in AMPARO_EXCEL_TO_VALUE.values():
+                    amparo_legal_txt = a
+                else:
+                    # tenta mapear pelo texto da planilha
+                    a_norm = normalize(a)
+                    amparo_legal_txt = AMPARO_EXCEL_NORMALIZED.get(a_norm)
+                    if amparo_legal_txt is None:
+                        # se não achar, guarda o texto original mesmo (não quebra)
+                        amparo_legal_txt = a
 
             # ----------------------------------------
             # 7) Cria o processo com TODOS os campos
