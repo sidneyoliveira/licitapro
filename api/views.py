@@ -325,6 +325,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         def get(ws, coord):
             v = ws[coord].value
             return "" if v is None else v
+        
 
         # -------------------- Seleciona a aba principal -----------------------
 
@@ -338,6 +339,121 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         ws = sheet
 
+        import unicodedata
+        import re as _re
+
+        def normalize(s: str) -> str:
+            """
+            Normaliza string:
+            - strip
+            - maiúsculas
+            - remove acentos
+            - compacta espaços
+            """
+            if s is None:
+                return ""
+            s = str(s).strip()
+            s = unicodedata.normalize("NFD", s)
+            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+            s = s.upper()
+            s = _re.sub(r"\s+", " ", s)
+            return s
+
+        # label da planilha -> value interno usado no sistema (e no front)
+        AMPARO_EXCEL_TO_VALUE = {
+            "ART. 23": "art_23",
+            "ART. 24": "art_24",
+            "ART. 25": "art_25",
+            "ART. 4º": "art_4",
+            "ART. 4O": "art_4",
+            "ART. 5º": "art_5",
+            "ART. 5O": "art_5",
+
+            "ART. 28, INCISO I": "art_28_i",
+            "ART. 28, INCISO II": "art_28_ii",
+
+            "ART. 75, § 7º": "art_75_par7",
+            "ART. 75, § 7O": "art_75_par7",
+            "ART. 75, INCISO I": "art_75_i",
+            "ART. 75, INCISO II": "art_75_ii",
+            "ART. 75, INCISO III, A": "art_75_iii_a",
+            "ART. 75, INCISO III, B": "art_75_iii_b",
+
+            "ART. 75, INCISO IV, A": "art_75_iv_a",
+            "ART. 75, INCISO IV, B": "art_75_iv_b",
+            "ART. 75, INCISO IV, C": "art_75_iv_c",
+            "ART. 75, INCISO IV, D": "art_75_iv_d",
+            "ART. 75, INCISO IV, E": "art_75_iv_e",
+            "ART. 75, INCISO IV, F": "art_75_iv_f",
+            "ART. 75, INCISO IV, J": "art_75_iv_j",
+            "ART. 75, INCISO IV, K": "art_75_iv_k",
+            "ART. 75, INCISO IV, M": "art_75_iv_m",
+
+            "ART. 75, INCISO IX": "art_75_ix",
+            "ART. 75, INCISO VIII": "art_75_viii",
+            "ART. 75, INCISO XV": "art_75_xv",
+
+            "LEI 11.947/2009, ART. 14, § 1º": "lei_11947_art14_1",
+            "LEI 11.947/2009, ART. 14, § 1O": "lei_11947_art14_1",
+
+            "ART. 79, INCISO I": "art_79_i",
+            "ART. 79, INCISO II": "art_79_ii",
+            "ART. 79, INCISO III": "art_79_iii",
+
+            "ART. 74, CAPUT": "art_74_caput",
+            "ART. 74, I": "art_74_i",
+            "ART. 74, II": "art_74_ii",
+            "ART. 74, III, A": "art_74_iii_a",
+            "ART. 74, III, B": "art_74_iii_b",
+            "ART. 74, III, C": "art_74_iii_c",
+            "ART. 74, III, D": "art_74_iii_d",
+            "ART. 74, III, E": "art_74_iii_e",
+            "ART. 74, III, F": "art_74_iii_f",
+            "ART. 74, III, G": "art_74_iii_g",
+            "ART. 74, III, H": "art_74_iii_h",
+            "ART. 74, IV": "art_74_iv",
+            "ART. 74, V": "art_74_v",
+
+            "ART. 86, § 2º": "art_86_2",
+            "ART. 86, § 2O": "art_86_2",
+        }
+
+        # versão normalizada como chave (sem acentos, tudo maiúsculo)
+        AMPARO_EXCEL_NORMALIZED = {
+            normalize(k): v for k, v in AMPARO_EXCEL_TO_VALUE.items()
+        }
+         # -------- MODALIDADE (texto da planilha -> label canônico) --------
+        MODALIDADE_LABELS = [
+            "Pregão Eletrônico",
+            "Concorrência Eletrônica",
+            "Dispensa Eletrônica",
+            "Inexigibilidade Eletrônica",
+            "Adesão a Registro de Preços",
+        ]
+        MODALIDADE_EXCEL_NORMALIZED = {
+            normalize(lbl): lbl for lbl in MODALIDADE_LABELS
+        }
+
+        # -------- CLASSIFICAÇÃO (tabela CLASSIFICACAO do Excel) --------
+        CLASSIFICACAO_LABELS = [
+            "COMPRAS",
+            "SERVIÇOS COMUNS",
+            "SERVIÇOS DE ENGENHARIA COMUNS",
+            "OBRAS COMUNS",
+        ]
+        CLASSIFICACAO_EXCEL_NORMALIZED = {
+            normalize(lbl): lbl for lbl in CLASSIFICACAO_LABELS
+        }
+
+        # -------- TIPO DE ORGANIZAÇÃO (ITEM / LOTE) --------
+        # No banco queremos manter 'Item' / 'Lote' para bater com o serializer
+        TIPO_ORG_LABELS = [
+            "Item",
+            "Lote",
+        ]
+        TIPO_ORG_EXCEL_NORMALIZED = {
+            normalize(lbl): lbl for lbl in TIPO_ORG_LABELS
+        }
         # -------------------- Leitura FIXA (compatível com sua planilha) ------
 
         numero_processo = str(get(ws, "B7")).strip()
@@ -463,14 +579,36 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 orgao = qs_or.filter(nome__iexact=orgao_nome).first()
 
             # ----------------------------------------
-            # 2) Normalizar campos de texto
+            # 2) Normalizar campos de texto (modalidade, classificação, tipo_organização)
+            #     usando as tabelas do Excel
             # ----------------------------------------
-            mod_txt = (str(modalidade_raw).strip()
-                       if modalidade_raw not in (None, "") else "")
-            class_txt = (str(classificacao_raw).strip()
-                         if classificacao_raw not in (None, "") else "")
-            org_txt = (str(tipo_organizacao_raw).strip()
-                       if tipo_organizacao_raw not in (None, "") else "")
+            # MODALIDADE
+            mod_txt = None
+            if modalidade_raw not in (None, ""):
+                m_norm = normalize(modalidade_raw)
+                # tenta bater com um dos rótulos conhecidos
+                mod_txt = MODALIDADE_EXCEL_NORMALIZED.get(
+                    m_norm,
+                    str(modalidade_raw).strip(),  # fallback: valor cru da célula
+                )
+
+            # CLASSIFICAÇÃO
+            class_txt = None
+            if classificacao_raw not in (None, ""):
+                c_norm = normalize(classificacao_raw)
+                class_txt = CLASSIFICACAO_EXCEL_NORMALIZED.get(
+                    c_norm,
+                    str(classificacao_raw).strip(),  # fallback
+                )
+
+            # TIPO DE ORGANIZAÇÃO (ITEM / LOTE)
+            org_txt = None
+            if tipo_organizacao_raw not in (None, ""):
+                o_norm = normalize(tipo_organizacao_raw)
+                org_txt = TIPO_ORG_EXCEL_NORMALIZED.get(
+                    o_norm,
+                    str(tipo_organizacao_raw).strip(),  # fallback
+                )
 
             # situacao: se não vier nada da planilha, deixa padrão "Em Pesquisa"
             situacao_txt = "Em Pesquisa"
