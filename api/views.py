@@ -359,25 +359,21 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         objeto_raw = get(ws, "B7")
         amparo_legal_raw = get(ws, "H11")
         fundamentacao_raw = get(ws, "B11")
-        observacoes_raw = get(ws, "I11")
+        # observacoes_raw = get(ws, "I11")
 
         # -------------------- Cabeçalho da tabela de itens --------------------
 
         row_header = 15
         col_map = {
-            "NUMERO PROCESSO": 1,
-            "ANO": 2,
-            "LOTE": 3,
-            "N ITEM": 4,
-            "DESCRICAO DO ITEM": 5,
-            "ESPECIFICACAO": 6,
-            "QUANTIDADE": 7,
-            "UNIDADE": 8,
-            "NATUREZA / DESPESA": 9,
-            "VALOR REFERENCIA UNITARIO": 10,
-            "CNPJ DO FORNECEDOR": 11,
-            "RAZAO SOCIAL (OPCIONAL)": 12,
-            "OBSERVACOES DO ITEM": 13,
+            "LOTE": 0,
+            "N ITEM": 1,
+            "DESCRICAO DO ITEM": 2,
+            "ESPECIFICACAO": 3,
+            "QUANTIDADE": 4,
+            "UNIDADE": 5,
+            "NATUREZA / DESPESA": 6,
+            "VALOR REFERENCIA UNITARIO": 7,
+            "CNPJ DO FORNECEDOR": 8,
         }
 
         def col(key):
@@ -399,7 +395,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 "lote": ws.cell(row=row, column=col("LOTE")).value,
                 "cnpj": ws.cell(row=row, column=col("CNPJ DO FORNECEDOR")).value,
                 "razao": ws.cell(row=row, column=col("RAZAO SOCIAL (OPCIONAL)")).value,
-                "obs": ws.cell(row=row, column=col("OBSERVACOES DO ITEM")).value,
+                # "obs": ws.cell(row=row, column=col("OBSERVACOES DO ITEM")).value,
             })
 
         if not itens_data:
@@ -474,7 +470,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 classificacao=str(classificacao_raw or "").strip(),
                 objeto=str(objeto_raw or "").strip(),
                 amparo_legal=str(amparo_legal_raw or "").strip(),
-                observacoes=str(observacoes_raw or "").strip(),
+                # observacoes=str(observacoes_raw or "").strip(),
             )
 
             # Criar lotes (se existirem)
