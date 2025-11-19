@@ -448,52 +448,118 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
 
-            # Encontrar entidade e orgao
-            entidade = Entidade.objects.filter(nome__iexact=entidade_nome).first() if entidade_nome else None
-            orgao = Orgao.objects.filter(nome__iexact=orgao_nome).first() if orgao_nome else None
+            # ----------------------------------------
+            # 1) Encontrar entidade e órgão
+            # ----------------------------------------
+            entidade = (
+                Entidade.objects.filter(nome__iexact=entidade_nome).first()
+                if entidade_nome else None
+            )
+            orgao = None
+            if orgao_nome:
+                qs_or = Orgao.objects.all()
+                if entidade:
+                    qs_or = qs_or.filter(entidade=entidade)
+                orgao = qs_or.filter(nome__iexact=orgao_nome).first()
 
-            # trata booleano de registro de preço
-            registro_preco_flag = str(registro_preco_raw or "").strip().lower() in ("sim", "s", "1", "true")
+            # ----------------------------------------
+            # 2) Normalizar campos de texto
+            # ----------------------------------------
+            mod_txt = (str(modalidade_raw).strip()
+                       if modalidade_raw not in (None, "") else "")
+            class_txt = (str(classificacao_raw).strip()
+                         if classificacao_raw not in (None, "") else "")
+            org_txt = (str(tipo_organizacao_raw).strip()
+                       if tipo_organizacao_raw not in (None, "") else "")
 
-            # vigência (tenta pegar o primeiro número que aparecer)
-            vigencia_int = None
-            if vigencia_raw not in (None, ""):
-                try:
-                    vigencia_int = int(str(vigencia_raw).split()[0])
-                except (TypeError, ValueError, IndexError):
-                    vigencia_int = None
+            # situacao: se não vier nada da planilha, deixa padrão "Em Pesquisa"
+            situacao_txt = "Em Pesquisa"
 
-            # se quiser aproveitar tipo_disputa_raw / criterio_julgamento_raw,
-            # grava como texto nos campos existentes do model
-            modo_disputa_txt = str(tipo_disputa_raw or "").strip()
-            criterio_julgamento_txt = str(criterio_julgamento_raw or "").strip()
+            # ----------------------------------------
+            # 3) Modo de disputa (mapeado pros choices)
+            # ----------------------------------------
+            modo_disputa_txt = ""
+            if tipo_disputa_raw not in (None, ""):
+                s = str(tipo_disputa_raw).strip().lower()
+                if s in ("1", "aberto"):
+                    modo_disputa_txt = "aberto"
+                elif s in ("2", "fechado"):
+                    modo_disputa_txt = "fechado"
+                elif s in ("3", "aberto_e_fechado", "aberto e fechado"):
+                    modo_disputa_txt = "aberto_e_fechado"
+                else:
+                    # tenta por texto
+                    if "aberto" in s and "fechado" in s:
+                        modo_disputa_txt = "aberto_e_fechado"
+                    elif "aberto" in s:
+                        modo_disputa_txt = "aberto"
+                    elif "fechado" in s:
+                        modo_disputa_txt = "fechado"
 
+            # ----------------------------------------
+            # 4) Critério de julgamento (choices)
+            # ----------------------------------------
+            criterio_txt = ""
+            if criterio_julgamento_raw not in (None, ""):
+                cj = str(criterio_julgamento_raw).strip().lower()
+                if cj in ("1", "menor_preco", "menor preço", "menor preco"):
+                    criterio_txt = "menor_preco"
+                elif cj in ("2", "maior_desconto", "maior desconto"):
+                    criterio_txt = "maior_desconto"
+
+            # ----------------------------------------
+            # 5) Fundamentação (lei_8666 / lei_10520 / lei_14133)
+            # ----------------------------------------
+            fundamentacao_txt = None
+            if fundamentacao_raw not in (None, ""):
+                f = str(fundamentacao_raw).strip()
+                f_lower = f.lower()
+                digits = "".join(ch for ch in f if ch.isdigit())
+                if "14133" in digits or "14133" in f_lower:
+                    fundamentacao_txt = "lei_14133"
+                elif "8666" in digits or "8666" in f_lower:
+                    fundamentacao_txt = "lei_8666"
+                elif "10520" in digits or "10520" in f_lower:
+                    fundamentacao_txt = "lei_10520"
+                # se o usuário já escrever direto lei_14133, lei_8666, etc
+                elif f in ("lei_14133", "lei_8666", "lei_10520"):
+                    fundamentacao_txt = f
+
+            # ----------------------------------------
+            # 6) Amparo legal (string exata ou deixa em branco)
+            #     – se quiser mapear para os values exatos, basta
+            #       usar apenas valores da constante AMPARO_LEGAL no front.
+            # ----------------------------------------
+            amparo_legal_txt = None
+            if amparo_legal_raw not in (None, ""):
+                amparo_legal_txt = str(amparo_legal_raw).strip()
+
+            # ----------------------------------------
+            # 7) Cria o processo com TODOS os campos
+            # ----------------------------------------
             processo = ProcessoLicitatorio.objects.create(
                 numero_processo=numero_processo or None,
                 numero_certame=numero_certame or None,
+                objeto=str(objeto_raw or "").strip(),
+
+                modalidade=mod_txt or None,
+                classificacao=class_txt or None,
+                tipo_organizacao=org_txt or None,
+                situacao=situacao_txt,
+
                 data_processo=to_date(data_processo_raw),
                 data_abertura=to_datetime(data_certame_raw),
                 valor_referencia=to_decimal(valor_global_raw),
+                vigencia_meses=int(str(vigencia_raw).split()[0]) if vigencia_raw else None,
+                registro_preco=str(registro_preco_raw or "").strip().lower() in ("sim", "s"),
+
                 entidade=entidade,
                 orgao=orgao,
 
-                # campos de classificação
-                modalidade=str(modalidade_raw or "").strip() or None,
-                tipo_organizacao=str(tipo_organizacao_raw or "").strip() or "",
-                classificacao=str(classificacao_raw or "").strip() or "",
-
-                # situacao deixa o default do model ("Em Pesquisa"), então nem precisa passar
-
-                registro_preco=registro_preco_flag,
-                vigencia_meses=vigencia_int,
-
-                # textos longos
-                objeto=str(objeto_raw or "").strip(),
-                amparo_legal=str(amparo_legal_raw or "").strip(),
-
-                # técnicos extras existentes no model
+                fundamentacao=fundamentacao_txt,
+                amparo_legal=amparo_legal_txt,
                 modo_disputa=modo_disputa_txt or None,
-                criterio_julgamento=criterio_julgamento_txt or None,
+                criterio_julgamento=criterio_txt or None,
             )
 
             # Criar lotes (se existirem)

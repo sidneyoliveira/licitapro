@@ -142,11 +142,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     classificacao = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     tipo_organizacao = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
-    # ⚠️ IMPORTANTE:
-    # NÃO definimos mais fundamentacao, amparo_legal, modo_disputa, criterio_julgamento
-    # como campos write_only – usamos diretamente os campos do model.
-    # Assim eles aparecem no GET e podem ser preenchidos no POST/PUT normalmente.
-
     # Códigos de volta no response (somente leitura)
     modalidade_code = serializers.SerializerMethodField(read_only=True)
     situacao_code = serializers.SerializerMethodField(read_only=True)
