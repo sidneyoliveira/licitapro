@@ -394,7 +394,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 "valor_referencia": ws.cell(row=row, column=col("VALOR REFERENCIA UNITARIO")).value,
                 "lote": ws.cell(row=row, column=col("LOTE")).value,
                 "cnpj": ws.cell(row=row, column=col("CNPJ DO FORNECEDOR")).value,
-                "razao": ws.cell(row=row, column=col("RAZAO SOCIAL (OPCIONAL)")).value,
+                # "razao": ws.cell(row=row, column=col("RAZAO SOCIAL (OPCIONAL)")).value,
                 # "obs": ws.cell(row=row, column=col("OBSERVACOES DO ITEM")).value,
             })
 
