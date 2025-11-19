@@ -453,6 +453,22 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             entidade = Entidade.objects.filter(nome__iexact=entidade_nome).first() if entidade_nome else None
             orgao = Orgao.objects.filter(nome__iexact=orgao_nome).first() if orgao_nome else None
 
+            # trata booleano de registro de preço
+            registro_preco_flag = str(registro_preco_raw or "").strip().lower() in ("sim", "s", "1", "true")
+
+            # vigência (tenta pegar o primeiro número que aparecer)
+            vigencia_int = None
+            if vigencia_raw not in (None, ""):
+                try:
+                    vigencia_int = int(str(vigencia_raw).split()[0])
+                except (TypeError, ValueError, IndexError):
+                    vigencia_int = None
+
+            # se quiser aproveitar tipo_disputa_raw / criterio_julgamento_raw,
+            # grava como texto nos campos existentes do model
+            modo_disputa_txt = str(tipo_disputa_raw or "").strip()
+            criterio_julgamento_txt = str(criterio_julgamento_raw or "").strip()
+
             processo = ProcessoLicitatorio.objects.create(
                 numero_processo=numero_processo or None,
                 numero_certame=numero_certame or None,
@@ -461,16 +477,24 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 valor_referencia=to_decimal(valor_global_raw),
                 entidade=entidade,
                 orgao=orgao,
-                modalidade=str(modalidade_raw or "").strip(),
-                tipo_disputa=int(tipo_disputa_raw or ""),
-                registro_preco=str(registro_preco_raw or "").strip().lower() in ("sim", "s"),
-                tipo_organizacao=str(tipo_organizacao_raw or "").strip(),
-                criterio_julgamento=int(criterio_julgamento_raw or ""),
-                vigencia_meses=int(str(vigencia_raw).split()[0]) if vigencia_raw else None,
-                classificacao=str(classificacao_raw or "").strip(),
+
+                # campos de classificação
+                modalidade=str(modalidade_raw or "").strip() or None,
+                tipo_organizacao=str(tipo_organizacao_raw or "").strip() or "",
+                classificacao=str(classificacao_raw or "").strip() or "",
+
+                # situacao deixa o default do model ("Em Pesquisa"), então nem precisa passar
+
+                registro_preco=registro_preco_flag,
+                vigencia_meses=vigencia_int,
+
+                # textos longos
                 objeto=str(objeto_raw or "").strip(),
                 amparo_legal=str(amparo_legal_raw or "").strip(),
-                # observacoes=str(observacoes_raw or "").strip(),
+
+                # técnicos extras existentes no model
+                modo_disputa=modo_disputa_txt or None,
+                criterio_julgamento=criterio_julgamento_txt or None,
             )
 
             # Criar lotes (se existirem)
@@ -496,12 +520,12 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 lote_obj = lotes.get(it["lote"])
 
                 fornecedor = None
-                if it["cnpj"]:
+                if it.get("cnpj"):
                     cnpj_digits = re.sub(r"\D", "", str(it["cnpj"]))
                     if len(cnpj_digits) == 14:
                         fornecedor, _ = Fornecedor.objects.get_or_create(
                             cnpj=cnpj_digits,
-                            defaults={"razao_social": it["razao"] or cnpj_digits},
+                            defaults={"razao_social": it.get("razao") or cnpj_digits},
                         )
                         fornecedores_vinculados.add(fornecedor.id)
 
