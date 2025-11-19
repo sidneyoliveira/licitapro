@@ -142,31 +142,10 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     classificacao = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     tipo_organizacao = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
-    # Campos de entrada (front) para mapear PNCP → IDs (não existem no model)
-    fundamentacao = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        allow_null=True,
-        write_only=True
-    )
-    amparo_legal = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        allow_null=True,
-        write_only=True
-    )
-    modo_disputa = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        allow_null=True,
-        write_only=True
-    )
-    criterio_julgamento = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        allow_null=True,
-        write_only=True
-    )
+    # ⚠️ IMPORTANTE:
+    # NÃO definimos mais fundamentacao, amparo_legal, modo_disputa, criterio_julgamento
+    # como campos write_only – usamos diretamente os campos do model.
+    # Assim eles aparecem no GET e podem ser preenchidos no POST/PUT normalmente.
 
     # Códigos de volta no response (somente leitura)
     modalidade_code = serializers.SerializerMethodField(read_only=True)
@@ -182,6 +161,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "numero_certame",
             "objeto",
 
+            # campos textuais do model (vão aparecer no JSON)
             "modalidade",
             "classificacao",
             "tipo_organizacao",
@@ -254,24 +234,12 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         "dispensa_eletronica": "Dispensa Eletrônica",
         "inexigibilidade_eletronica": "Inexigibilidade Eletrônica",
         "adesao_registro_precos": "Adesão a Registro de Preços",
-        "credenciamento": "Credenciamento",
     }
     MODALIDADE_INV = {v: k for k, v in MODALIDADE_MAP.items()}
 
-    CLASSIFICACAO_MAP = {
-        "compras": "Compras",
-        "servicos_comuns": "Serviços Comuns",
-        "servicos_engenharia_comuns": "Serviços de Engenharia Comuns",
-        "obras_comuns": "Obras Comuns",
-    }
-    CLASSIFICACAO_INV = {v: k for k, v in CLASSIFICACAO_MAP.items()}
-
-    ORGANIZACAO_MAP = {"lote": "Lote", "item": "Item"}
-    ORGANIZACAO_INV = {v: k for k, v in ORGANIZACAO_MAP.items()}
-
     SITUACAO_MAP = {
-        "aberto": "Aberto",
         "em_pesquisa": "Em Pesquisa",
+        "elaboracao_edital": "Elaboração do Edital",
         "aguardando_publicacao": "Aguardando Publicação",
         "publicado": "Publicado",
         "em_contratacao": "Em Contratação",
@@ -280,8 +248,22 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     }
     SITUACAO_INV = {v: k for k, v in SITUACAO_MAP.items()}
 
+    CLASSIFICACAO_MAP = {
+        "compras": "COMPRAS",
+        "obras": "OBRAS",
+        "servicos": "SERVIÇOS",
+    }
+    CLASSIFICACAO_INV = {v: k for k, v in CLASSIFICACAO_MAP.items()}
+
+    ORGANIZACAO_MAP = {
+        "item": "Item",
+        "lote": "Lote",
+    }
+    ORGANIZACAO_INV = {v: k for k, v in ORGANIZACAO_MAP.items()}
+
     # PNCP (IDs exemplificativos — ajuste conforme seu catálogo)
     FUND_MAP = {"lei_8666": 1, "lei_10520": 2, "lei_14133": 3}
+
     AMPARO_MAP = {
         "lei_8666": {"art_23": 101, "art_24": 102, "art_25": 103},
         "lei_10520": {"art_4": 201, "art_5": 202},
@@ -295,28 +277,43 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
                 "art_75_iv_d": 319, "art_75_iv_e": 320, "art_75_iv_f": 321,
                 "art_75_iv_j": 322, "art_75_iv_k": 323, "art_75_iv_m": 324,
                 "art_75_ix": 325, "art_75_viii": 326, "art_75_xv": 327,
-                "lei_11947_art14_1": 328
+                "lei_11947_art14_1": 328,
             },
-            "Credenciamento": {"art_79_i": 331, "art_79_ii": 332, "art_79_iii": 333},
+            "Credenciamento": {
+                "art_79_i": 331, "art_79_ii": 332, "art_79_iii": 333,
+            },
             "Inexigibilidade Eletrônica": {
                 "art_74_caput": 341, "art_74_i": 342, "art_74_ii": 343,
                 "art_74_iii_a": 344, "art_74_iii_b": 345, "art_74_iii_c": 346,
                 "art_74_iii_d": 347, "art_74_iii_e": 348, "art_74_iii_f": 349,
                 "art_74_iii_g": 350, "art_74_iii_h": 351,
-                "art_74_iv": 352, "art_74_v": 353
+                "art_74_iv": 352, "art_74_v": 353,
             },
-            "Adesão a Registro de Preços": {"art_86_2": 354},
+            "Adesão a Registro de Preços": {
+                "art_86_2": 354,
+            },
         },
     }
-    MODO_MAP = {"aberto": 1, "fechado": 2, "aberto_e_fechado": 3}
-    CRITERIO_MAP = {"menor_preco": 1, "maior_desconto": 2}
+
+    MODO_MAP = {
+        "aberto": 1,
+        "fechado": 2,
+        "aberto_e_fechado": 3,
+    }
+
+    CRITERIO_MAP = {
+        "menor_preco": 1,
+        "maior_desconto": 2,
+    }
 
     def _map_in_codes(self, attrs):
         """
         Converte códigos do front em rótulos do modelo e popula IDs PNCP.
-        Remove do payload os campos write-only que não existem no model.
+        ATENÇÃO: agora NÃO damos mais pop() em fundamentacao, amparo_legal, modo_disputa,
+        criterio_julgamento – deixamos no attrs para gravar no model.
         """
-        # Choices (rótulos do model)
+
+        # ---- choices simples (texto do model) ----
         mod = attrs.get("modalidade")
         if mod:
             attrs["modalidade"] = self.MODALIDADE_MAP.get(mod, mod)
@@ -333,12 +330,14 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         if sit:
             attrs["situacao"] = self.SITUACAO_MAP.get(sit, sit)
 
-        # PNCP mappings
-        fund = attrs.pop("fundamentacao", None)
+        # ---- PNCP: fundamentação (lei) -> instrumento_convocatorio_id ----
+        fund = attrs.get("fundamentacao")
         if fund:
+            # grava texto em attrs["fundamentacao"] (campo do model)
             attrs["instrumento_convocatorio_id"] = self.FUND_MAP.get(fund)
 
-        amparo = attrs.pop("amparo_legal", None)
+        # ---- PNCP: amparo legal -> amparo_legal_id ----
+        amparo = attrs.get("amparo_legal")
         if amparo and fund:
             modalidade_rotulo = attrs.get("modalidade")
             if fund == "lei_14133":
@@ -347,11 +346,13 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             else:
                 attrs["amparo_legal_id"] = self.AMPARO_MAP.get(fund, {}).get(amparo)
 
-        modo = attrs.pop("modo_disputa", None)
+        # ---- PNCP: modo de disputa ----
+        modo = attrs.get("modo_disputa")
         if modo:
             attrs["modo_disputa_id"] = self.MODO_MAP.get(modo)
 
-        crit = attrs.pop("criterio_julgamento", None)
+        # ---- PNCP: critério de julgamento ----
+        crit = attrs.get("criterio_julgamento")
         if crit:
             attrs["criterio_julgamento_id"] = self.CRITERIO_MAP.get(crit)
 
