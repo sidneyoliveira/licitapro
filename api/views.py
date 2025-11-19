@@ -353,13 +353,12 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         registro_preco_raw = get(ws, "C11")
         tipo_organizacao_raw = get(ws, "D11")
         criterio_julgamento_raw = get(ws, "E11")
-        classificacao_raw = get(ws, "F10")
-        vigencia_raw = get(ws, "G11")
+        classificacao_raw = get(ws, "F11")
+        vigencia_raw = get(ws, "I11")
 
         objeto_raw = get(ws, "B7")
         amparo_legal_raw = get(ws, "H11")
-        fundamentacao_raw = get(ws, "B11")
-        # observacoes_raw = get(ws, "I11")
+        fundamentacao_raw = get(ws, "G11")
 
         # -------------------- Cabeçalho da tabela de itens --------------------
 
@@ -533,7 +532,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     processo=processo,
                     lote=lote_obj,
                     descricao=it["descricao"],
-                    especificacao=it.get("especificacao") or "",   # ✅ agora existe no model
+                    especificacao=it.get("especificacao") or "",   
                     quantidade=to_decimal(it["quantidade"]),
                     unidade=str(it["unidade"] or "").strip(),
                     valor_estimado=to_decimal(it["valor_referencia"]),
