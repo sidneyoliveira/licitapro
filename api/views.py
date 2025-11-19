@@ -288,7 +288,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 return None
             if isinstance(v, datetime):
                 return v.date()
-            if isinstance(v, date):
+            if isinstance(v, datetime):
                 return v
             if isinstance(v, (int, float)):
                 try:
@@ -353,8 +353,8 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         registro_preco_raw = get(ws, "C11")
         tipo_organizacao_raw = get(ws, "D11")
         criterio_julgamento_raw = get(ws, "E11")
-        classificacao_raw = get(ws, "G11")
-        vigencia_raw = get(ws, "F11")
+        classificacao_raw = get(ws, "F10")
+        vigencia_raw = get(ws, "G11")
 
         objeto_raw = get(ws, "B7")
         amparo_legal_raw = get(ws, "H11")
