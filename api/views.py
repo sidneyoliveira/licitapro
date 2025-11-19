@@ -557,6 +557,214 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             status=201,
         )
     
+    # ---------------- ITENS DO PROCESSO ----------------
+    @action(detail=True, methods=['get'])
+    def itens(self, request, *args, **kwargs):
+        """
+        GET /api/processos/<pk>/itens/
+        Retorna todos os itens vinculados a um processo.
+        """
+        processo = self.get_object()
+        itens = (
+            Item.objects
+            .filter(processo=processo)
+            .select_related('lote', 'fornecedor')
+            .order_by('ordem', 'id')
+        )
+        serializer = ItemSerializer(itens, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    # ---------------- FORNECEDORES (VÍNCULO) ----------------
+    @action(detail=True, methods=['post'], url_path='adicionar_fornecedor')
+    def adicionar_fornecedor(self, request, *args, **kwargs):
+        """
+        POST /api/processos/<pk>/adicionar_fornecedor/
+        Body: { "fornecedor_id": <id> }
+        Vincula um fornecedor ao processo.
+        """
+        processo = self.get_object()
+        fornecedor_id = request.data.get('fornecedor_id')
+
+        if not fornecedor_id:
+            return Response({'error': 'fornecedor_id é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            fornecedor = Fornecedor.objects.get(id=fornecedor_id)
+        except Fornecedor.DoesNotExist:
+            return Response({'error': 'Fornecedor não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        with transaction.atomic():
+            obj, created = FornecedorProcesso.objects.get_or_create(processo=processo, fornecedor=fornecedor)
+        return Response(
+            {
+                'detail': 'Fornecedor vinculado ao processo com sucesso!',
+                'fornecedor': FornecedorSerializer(fornecedor).data,
+                'created': created
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=['get'], url_path='fornecedores')
+    def fornecedores(self, request, *args, **kwargs):
+        """
+        GET /api/processos/<pk>/fornecedores/
+        Lista fornecedores vinculados a um processo.
+        """
+        processo = self.get_object()
+        fornecedores = Fornecedor.objects.filter(processos__processo=processo).order_by('razao_social')
+        serializer = FornecedorSerializer(fornecedores, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='remover_fornecedor')
+    def remover_fornecedor(self, request, *args, **kwargs):
+        """
+        POST /api/processos/<pk>/remover_fornecedor/
+        Body: { "fornecedor_id": <id> }
+        Remove vínculo de fornecedor com o processo.
+        """
+        processo = self.get_object()
+        fornecedor_id = request.data.get('fornecedor_id')
+
+        if not fornecedor_id:
+            return Response({'error': 'fornecedor_id é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        deleted, _ = FornecedorProcesso.objects.filter(
+            processo=processo, fornecedor_id=fornecedor_id
+        ).delete()
+
+        if deleted:
+            return Response({'detail': 'Fornecedor removido com sucesso.'}, status=status.HTTP_200_OK)
+        return Response({'detail': 'Nenhum vínculo encontrado para remover.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # ---------------- LOTES (NESTED) ----------------
+    @action(detail=True, methods=['get', 'post'], url_path='lotes')
+    def lotes(self, request, *args, **kwargs):
+        """
+        GET  /api/processos/<pk>/lotes/  -> lista lotes do processo
+        POST /api/processos/<pk>/lotes/  -> cria lote(s)
+
+        POST payloads aceitos:
+          { "numero": 3, "descricao": "Lote 3" }                      # cria único
+          { "descricao": "Auto" }                                     # cria único com próximo número disponível
+          [ { "numero": 1, "descricao": "A" }, { "numero": 2, ... } ] # cria vários
+          { "quantidade": 5, "descricao_prefixo": "Lote " }           # cria N sequenciais
+        """
+        processo = self.get_object()
+
+        if request.method.lower() == 'get':
+            qs = processo.lotes.order_by('numero')
+            return Response(LoteSerializer(qs, many=True).data)
+
+        payload = request.data
+
+        def next_numero():
+            ultimo = processo.lotes.order_by('-numero').first()
+            return (ultimo.numero + 1) if ultimo else 1
+
+        created = []
+        with transaction.atomic():
+            # lista explícita
+            if isinstance(payload, list):
+                for item in payload:
+                    n = item.get('numero') or next_numero()
+                    d = item.get('descricao', '')
+                    obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
+                    created.append(obj)
+
+            # por quantidade
+            elif isinstance(payload, dict) and 'quantidade' in payload:
+                try:
+                    qtd = int(payload.get('quantidade') or 0)
+                except (TypeError, ValueError):
+                    return Response({"detail": "quantidade inválida."}, status=400)
+                if qtd <= 0:
+                    return Response({"detail": "quantidade deve ser > 0"}, status=400)
+
+                prefixo = payload.get('descricao_prefixo', 'Lote ')
+                start = next_numero()
+                for i in range(qtd):
+                    n = start + i
+                    d = f"{prefixo}{n}"
+                    obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
+                    created.append(obj)
+
+            # único
+            elif isinstance(payload, dict):
+                n = payload.get('numero') or next_numero()
+                d = payload.get('descricao', '')
+                obj = Lote.objects.create(processo=processo, numero=n, descricao=d)
+                created.append(obj)
+
+            else:
+                return Response({"detail": "Payload inválido."}, status=400)
+
+        return Response(LoteSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['patch'], url_path='lotes/organizar')
+    def organizar_lotes(self, request, *args, **kwargs):
+        """
+        PATCH /api/processos/<pk>/lotes/organizar/
+
+        Payloads aceitos:
+        1) Renumerar pela ordem de IDs:
+           { "ordem_ids": [5, 2, 7], "inicio": 1 }
+        2) Normalizar (sem buracos) a partir de 'inicio':
+           { "normalizar": true, "inicio": 1 }
+        3) Mapear números explicitamente:
+           { "mapa": [ {"id": 5, "numero": 10}, {"id": 2, "numero": 11} ] }
+        """
+        processo = self.get_object()
+        data = request.data
+
+        with transaction.atomic():
+            # 1) pela ordem enviada
+            ordem_ids = data.get('ordem_ids')
+            if isinstance(ordem_ids, list) and ordem_ids:
+                qs = list(processo.lotes.filter(id__in=ordem_ids))
+                id2obj = {o.id: o for o in qs}
+                numero = int(data.get('inicio') or 1)
+                for _id in ordem_ids:
+                    obj = id2obj.get(_id)
+                    if obj:
+                        obj.numero = numero
+                        obj.save(update_fields=['numero'])
+                        numero += 1
+                out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
+                return Response(out)
+
+            # 2) normalizar
+            if data.get('normalizar'):
+                inicio = int(data.get('inicio') or 1)
+                numero = inicio
+                for obj in processo.lotes.order_by('numero', 'id'):
+                    if obj.numero != numero:
+                        obj.numero = numero
+                        obj.save(update_fields=['numero'])
+                    numero += 1
+                out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
+                return Response(out)
+
+            # 3) mapear id->numero
+            mapa = data.get('mapa')
+            if isinstance(mapa, list) and mapa:
+                ids = [m.get('id') for m in mapa if m.get('id') is not None]
+                qs = processo.lotes.filter(id__in=ids)
+                id2obj = {o.id: o for o in qs}
+                for m in mapa:
+                    _id = m.get('id')
+                    num = m.get('numero')
+                    if _id in id2obj and isinstance(num, int) and num > 0:
+                        obj = id2obj[_id]
+                        obj.numero = num
+                        obj.save(update_fields=['numero'])
+                out = LoteSerializer(processo.lotes.order_by('numero'), many=True).data
+                return Response(out)
+
+        return Response({"detail": "Payload inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+    
+    
 # ============================================================
 # 4️⃣ LOTE
 # ============================================================
