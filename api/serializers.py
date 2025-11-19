@@ -435,6 +435,7 @@ class ItemSerializer(serializers.ModelSerializer):
             "id",
             "processo",
             "descricao",
+            "especificacao",         
             "unidade",
             "quantidade",
             "valor_estimado",
@@ -449,7 +450,6 @@ class ItemSerializer(serializers.ModelSerializer):
             "categoria_item_catalogo_id",
             "catalogo_codigo_item",
         )
-
 
 # ============================================================
 # 🔗 FORNECEDOR ↔ PROCESSO

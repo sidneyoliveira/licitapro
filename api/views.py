@@ -533,14 +533,13 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     processo=processo,
                     lote=lote_obj,
                     descricao=it["descricao"],
-                    especificacao=it["especificacao"],
+                    especificacao=it.get("especificacao") or "",   # ✅ agora existe no model
                     quantidade=to_decimal(it["quantidade"]),
-                    unidade=it["unidade"],
+                    unidade=str(it["unidade"] or "").strip(),
                     valor_estimado=to_decimal(it["valor_referencia"]),
                     ordem=ordem,
                     fornecedor=fornecedor,
                 )
-
                 if fornecedor:
                     FornecedorProcesso.objects.get_or_create(
                         processo=processo,
@@ -581,7 +580,7 @@ class ItemViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['processo', 'lote', 'fornecedor']
-    search_fields = ['descricao', 'unidade']
+    search_fields = ['descricao', 'unidade', 'especificacao']  # <- adiciona aqui se quiser
 
     def perform_create(self, serializer):
         # Garante que 'ordem' será sempre calculado no serializer

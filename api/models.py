@@ -353,23 +353,43 @@ class Fornecedor(models.Model):
 # ============================================================
 # 📋 ITEM
 # ============================================================
-
 class Item(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, related_name='itens', on_delete=models.CASCADE)
+    processo = models.ForeignKey(
+        ProcessoLicitatorio,
+        related_name='itens',
+        on_delete=models.CASCADE
+    )
+
     descricao = models.CharField(max_length=255)
+
+    # NOVO CAMPO: texto livre da especificação do item
+    especificacao = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Especificação detalhada do item (vindo da planilha).",
+    )
+
     unidade = models.CharField(max_length=20)
     quantidade = models.DecimalField(max_digits=12, decimal_places=2)
     valor_estimado = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
 
-    lote = models.ForeignKey(Lote, related_name='itens', on_delete=models.SET_NULL, blank=True, null=True)
-    fornecedor = models.ForeignKey('Fornecedor', related_name='itens', on_delete=models.SET_NULL, blank=True, null=True)
+    lote = models.ForeignKey(
+        Lote,
+        related_name='itens',
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True
+    )
+    fornecedor = models.ForeignKey(
+        'Fornecedor',
+        related_name='itens',
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True
+    )
 
-    # Ordem sequencial no processo (pode ser usado como número do item no envio)
     ordem = models.PositiveIntegerField(default=1)
 
-    # ================================================
-    # COMPLEMENTOS GENÉRICOS PARA PUBLICAÇÃO
-    # ================================================
     natureza = models.CharField(
         max_length=1,
         choices=(('M', 'Material'), ('S', 'Serviço')),
@@ -387,24 +407,24 @@ class Item(models.Model):
     class Meta:
         ordering = ['ordem']
         constraints = [
-            models.UniqueConstraint(fields=['processo', 'ordem'], name='uniq_item_processo_ordem'),
+            models.UniqueConstraint(
+                fields=['processo', 'ordem'],
+                name='uniq_item_processo_ordem'
+            ),
         ]
 
     def __str__(self):
         return f"{self.descricao} ({self.processo.numero_processo})"
 
     def clean(self):
-        # se tem lote, ele precisa pertencer ao mesmo processo
         if self.lote and self.lote.processo_id != self.processo_id:
             raise ValidationError("O lote selecionado pertence a outro processo.")
 
     def save(self, *args, **kwargs):
-        # atribui próxima ordem automaticamente se não vier definida (apenas na criação)
         if getattr(self, "_state", None) and self._state.adding and (self.ordem is None or self.ordem <= 0):
             last = Item.objects.filter(processo=self.processo).order_by('-ordem').first()
             self.ordem = (last.ordem + 1) if last else 1
         super().save(*args, **kwargs)
-
 
 # ============================================================
 # 🔗 FORNECEDOR ↔ PROCESSO
