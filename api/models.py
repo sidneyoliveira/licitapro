@@ -3,6 +3,84 @@ from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
+
+# ============================
+# Choices alinhados com o FRONT
+# ============================
+
+MODO_DISPUTA_CHOICES = (
+    ("aberto", "Aberto"),
+    ("fechado", "Fechado"),
+    ("aberto_e_fechado", "Aberto e Fechado"),
+)
+
+CRITERIO_JULGAMENTO_CHOICES = (
+    ("menor_preco", "Menor Preço"),
+    ("maior_desconto", "Maior Desconto"),
+)
+
+AMPARO_LEGAL_CHOICES = (
+    # Lei 8.666/93
+    ("art_23", "Art. 23 (Lei 8.666/93)"),
+    ("art_24", "Art. 24 (Lei 8.666/93)"),
+    ("art_25", "Art. 25 (Lei 8.666/93)"),
+
+    # Lei 10.520/02
+    ("art_4", "Art. 4º (Lei 10.520/02)"),
+    ("art_5", "Art. 5º (Lei 10.520/02)"),
+
+    # Lei 14.133/21 – pregão/concorrência
+    ("art_28_i", "Art. 28, inciso I (Lei 14.133/21)"),
+    ("art_28_ii", "Art. 28, inciso II (Lei 14.133/21)"),
+
+    # Lei 14.133/21 – dispensa eletrônica
+    ("art_75_par7", "Art. 75, § 7º (Lei 14.133/21)"),
+    ("art_75_i", "Art. 75, inciso I"),
+    ("art_75_ii", "Art. 75, inciso II"),
+    ("art_75_iii_a", "Art. 75, inciso III, a"),
+    ("art_75_iii_b", "Art. 75, inciso III, b"),
+    ("art_75_iii_c", "Art. 75, inciso III, c"),
+    ("art_75_iii_d", "Art. 75, inciso III, d"),
+    ("art_75_iii_e", "Art. 75, inciso III, e"),
+    ("art_75_iii_f", "Art. 75, inciso III, f"),
+    ("art_75_iv_a", "Art. 75, inciso IV, a"),
+    ("art_75_iv_b", "Art. 75, inciso IV, b"),
+    ("art_75_iv_c", "Art. 75, inciso IV, c"),
+    ("art_75_iv_d", "Art. 75, inciso IV, d"),
+    ("art_75_iv_e", "Art. 75, inciso IV, e"),
+    ("art_75_iv_f", "Art. 75, inciso IV, f"),
+    ("art_75_iv_j", "Art. 75, inciso IV, j"),
+    ("art_75_iv_k", "Art. 75, inciso IV, k"),
+    ("art_75_iv_m", "Art. 75, inciso IV, m"),
+    ("art_75_ix", "Art. 75, inciso IX"),
+    ("art_75_viii", "Art. 75, inciso VIII"),
+    ("art_75_xv", "Art. 75, inciso XV"),
+    ("lei_11947_art14_1", "Lei 11.947/2009, Art. 14, § 1º"),
+
+    # Lei 14.133/21 – credenciamento
+    ("art_79_i", "Art. 79, inciso I"),
+    ("art_79_ii", "Art. 79, inciso II"),
+    ("art_79_iii", "Art. 79, inciso III"),
+
+    # Lei 14.133/21 – inexigibilidade eletrônica
+    ("art_74_caput", "Art. 74, caput"),
+    ("art_74_i", "Art. 74, I"),
+    ("art_74_ii", "Art. 74, II"),
+    ("art_74_iii_a", "Art. 74, III, a"),
+    ("art_74_iii_b", "Art. 74, III, b"),
+    ("art_74_iii_c", "Art. 74, III, c"),
+    ("art_74_iii_d", "Art. 74, III, d"),
+    ("art_74_iii_e", "Art. 74, III, e"),
+    ("art_74_iii_f", "Art. 74, III, f"),
+    ("art_74_iii_g", "Art. 74, III, g"),
+    ("art_74_iii_h", "Art. 74, III, h"),
+    ("art_74_iv", "Art. 74, IV"),
+    ("art_74_v", "Art. 74, V"),
+
+    # Lei 14.133/21 – adesão ata de registro de preços
+    ("art_86_2", "Art. 86, § 2º"),
+)
+
 # ============================================================
 # 👤 USUÁRIO PERSONALIZADO
 # ============================================================
@@ -178,9 +256,30 @@ class ProcessoLicitatorio(models.Model):
         blank=True,
         null=True,
     )
-    amparo_legal = models.CharField(max_length=64, blank=True, null=True)
-    modo_disputa = models.CharField(max_length=24, blank=True, null=True)
-    criterio_julgamento = models.CharField(max_length=32, blank=True, null=True)
+
+    # agora amparo_legal segue os "value" de AMPARO_LEGAL
+    amparo_legal = models.CharField(
+        max_length=32,
+        choices=AMPARO_LEGAL_CHOICES,
+        blank=True,
+        null=True,
+    )
+
+    # modo_disputa segue os "value" de MODO_DISPUTA
+    modo_disputa = models.CharField(
+        max_length=24,
+        choices=MODO_DISPUTA_CHOICES,
+        blank=True,
+        null=True,
+    )
+
+    # criterio_julgamento segue os "value" de CRITERIO_JULGAMENTO
+    criterio_julgamento = models.CharField(
+        max_length=32,
+        choices=CRITERIO_JULGAMENTO_CHOICES,
+        blank=True,
+        null=True,
+    )
 
     # -------------------------------
     # Identificação da compra
