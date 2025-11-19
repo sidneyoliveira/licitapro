@@ -181,10 +181,16 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "numero_processo",
             "numero_certame",
             "objeto",
-            "modalidade",               
-            "classificacao",            
-            "tipo_organizacao",         
-            "situacao",                 
+
+            "modalidade",
+            "classificacao",
+            "tipo_organizacao",
+            "situacao",
+            "fundamentacao",
+            "amparo_legal",
+            "modo_disputa",
+            "criterio_julgamento",
+
             "data_processo",
             "data_abertura",
             "valor_referencia",
@@ -193,12 +199,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "entidade",
             "orgao",
             "data_criacao_sistema",
-
-            # campos de entrada (write-only) para mapear PNCP
-            "fundamentacao",
-            "amparo_legal",
-            "modo_disputa",
-            "criterio_julgamento",
 
             # identificação / janelas / links
             "numero_compra",
