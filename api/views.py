@@ -453,7 +453,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         row_header = 15
         col_map = {
             "LOTE": 1,
-            "N ITEM": 2,
+            "Nº ITEM": 2,
             "DESCRICAO DO ITEM": 3,
             "ESPECIFICACAO": 4,
             "QUANTIDADE": 5,
