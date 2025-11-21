@@ -500,11 +500,10 @@ class Item(models.Model):
     ordem = models.PositiveIntegerField(default=1)
 
     natureza = models.CharField(
-        max_length=1,
         choices=NATUREZAS_DESPESA,
         blank=True,
         null=True,
-        help_text='M = Material, S = Serviço'
+
     )
 
     class Meta:
