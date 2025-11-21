@@ -127,26 +127,14 @@ class OrgaoMiniSerializer(serializers.ModelSerializer):
 # ============================================================
 # 📄 PROCESSO LICITATÓRIO
 # ============================================================
-
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
-    # Exibição amigável
-    entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
-    orgao_nome = serializers.CharField(source="orgao.nome", read_only=True)
-    entidade_obj = EntidadeMiniSerializer(source="entidade", read_only=True)
-    orgao_obj = OrgaoMiniSerializer(source="orgao", read_only=True)
+    entidade_nome = serializers.SerializerMethodField()
+    orgao_nome = serializers.SerializerMethodField()
 
-    # Recebe códigos (front) e converte para rótulos do modelo
-    # 🔹 Agora opcionais para permitir importações com campos em branco
-    modalidade = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    situacao = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    classificacao = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    tipo_organizacao = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-
-    # Códigos de volta no response (somente leitura)
-    modalidade_code = serializers.SerializerMethodField(read_only=True)
-    situacao_code = serializers.SerializerMethodField(read_only=True)
-    classificacao_code = serializers.SerializerMethodField(read_only=True)
-    tipo_organizacao_code = serializers.SerializerMethodField(read_only=True)
+    modalidade_code = serializers.SerializerMethodField()
+    situacao_code = serializers.SerializerMethodField()
+    classificacao_code = serializers.SerializerMethodField()
+    tipo_organizacao_code = serializers.SerializerMethodField()
 
     class Meta:
         model = ProcessoLicitatorio
@@ -155,8 +143,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "numero_processo",
             "numero_certame",
             "objeto",
-
-            # campos textuais do model (vão aparecer no JSON)
             "modalidade",
             "classificacao",
             "tipo_organizacao",
@@ -165,7 +151,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "amparo_legal",
             "modo_disputa",
             "criterio_julgamento",
-
             "data_processo",
             "data_abertura",
             "valor_referencia",
@@ -174,67 +159,35 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "entidade",
             "orgao",
             "data_criacao_sistema",
-
-            # identificação / janelas / links
-            "numero_compra",
-            "ano_compra",
             "abertura_propostas",
             "encerramento_propostas",
             "link_sistema_origem",
             "link_processo_eletronico",
-
-            # IDs PNCP
-            "instrumento_convocatorio_id",
-            "modalidade_id",
-            "modo_disputa_id",
-            "criterio_julgamento_id",
-            "amparo_legal_id",
-            "situacao_contratacao_id",
-
-            # publicação
-            "sequencial_publicacao",
-            "id_controle_publicacao",
-            "ultima_atualizacao_publicacao",
-
-            # extras somente leitura
+            # helpers
             "entidade_nome",
             "orgao_nome",
-            "entidade_obj",
-            "orgao_obj",
-
-            # códigos para o front manter selects
             "modalidade_code",
             "situacao_code",
             "classificacao_code",
             "tipo_organizacao_code",
         )
-        read_only_fields = (
-            "data_criacao_sistema",
-            "entidade_nome",
-            "orgao_nome",
-            "entidade_obj",
-            "orgao_obj",
-            "modalidade_code",
-            "situacao_code",
-            "classificacao_code",
-            "tipo_organizacao_code",
-        )
+        read_only_fields = ("data_criacao_sistema",)
 
-    # ---------------------------
-    # MAPAS código <-> rótulo
-    # ---------------------------
+    # ---------- Maps código <-> label para front ----------
+
     MODALIDADE_MAP = {
         "pregao_eletronico": "Pregão Eletrônico",
         "concorrencia_eletronica": "Concorrência Eletrônica",
         "dispensa_eletronica": "Dispensa Eletrônica",
         "inexigibilidade_eletronica": "Inexigibilidade Eletrônica",
         "adesao_registro_precos": "Adesão a Registro de Preços",
+        "credenciamento": "Credenciamento",
     }
     MODALIDADE_INV = {v: k for k, v in MODALIDADE_MAP.items()}
 
     SITUACAO_MAP = {
+        "aberto": "Aberto",
         "em_pesquisa": "Em Pesquisa",
-        "elaboracao_edital": "Elaboração do Edital",
         "aguardando_publicacao": "Aguardando Publicação",
         "publicado": "Publicado",
         "em_contratacao": "Em Contratação",
@@ -244,144 +197,69 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     SITUACAO_INV = {v: k for k, v in SITUACAO_MAP.items()}
 
     CLASSIFICACAO_MAP = {
-        "compras": "COMPRAS",
-        "obras": "OBRAS",
-        "servicos": "SERVIÇOS",
+        "compras": "Compras",
+        "servicos_comuns": "Serviços Comuns",
+        "servicos_engenharia_comuns": "Serviços de Engenharia Comuns",
+        "obras_comuns": "Obras Comuns",
     }
     CLASSIFICACAO_INV = {v: k for k, v in CLASSIFICACAO_MAP.items()}
 
-    ORGANIZACAO_MAP = {
-        "item": "Item",
+    TIPO_ORG_MAP = {
         "lote": "Lote",
+        "item": "Item",
     }
-    ORGANIZACAO_INV = {v: k for k, v in ORGANIZACAO_MAP.items()}
+    TIPO_ORG_INV = {v: k for k, v in TIPO_ORG_MAP.items()}
 
-    # PNCP (IDs exemplificativos — ajuste conforme seu catálogo)
-    FUND_MAP = {"lei_8666": 1, "lei_10520": 2, "lei_14133": 3}
+    # ---------- Normalização na entrada ----------
 
-    AMPARO_MAP = {
-        "lei_8666": {"art_23": 101, "art_24": 102, "art_25": 103},
-        "lei_10520": {"art_4": 201, "art_5": 202},
-        "lei_14133": {
-            "Pregão Eletrônico": {"art_28_i": 301},
-            "Concorrência Eletrônica": {"art_28_ii": 302},
-            "Dispensa Eletrônica": {
-                "art_75_par7": 311, "art_75_i": 312, "art_75_ii": 313,
-                "art_75_iii_a": 314, "art_75_iii_b": 315,
-                "art_75_iv_a": 316, "art_75_iv_b": 317, "art_75_iv_c": 318,
-                "art_75_iv_d": 319, "art_75_iv_e": 320, "art_75_iv_f": 321,
-                "art_75_iv_j": 322, "art_75_iv_k": 323, "art_75_iv_m": 324,
-                "art_75_ix": 325, "art_75_viii": 326, "art_75_xv": 327,
-                "lei_11947_art14_1": 328,
-            },
-            "Credenciamento": {
-                "art_79_i": 331, "art_79_ii": 332, "art_79_iii": 333,
-            },
-            "Inexigibilidade Eletrônica": {
-                "art_74_caput": 341, "art_74_i": 342, "art_74_ii": 343,
-                "art_74_iii_a": 344, "art_74_iii_b": 345, "art_74_iii_c": 346,
-                "art_74_iii_d": 347, "art_74_iii_e": 348, "art_74_iii_f": 349,
-                "art_74_iii_g": 350, "art_74_iii_h": 351,
-                "art_74_iv": 352, "art_74_v": 353,
-            },
-            "Adesão a Registro de Preços": {
-                "art_86_2": 354,
-            },
-        },
-    }
-
-    MODO_MAP = {
-        "aberto": 1,
-        "fechado": 2,
-        "aberto_e_fechado": 3,
-    }
-
-    CRITERIO_MAP = {
-        "menor_preco": 1,
-        "maior_desconto": 2,
-    }
+    def validate(self, attrs):
+        attrs = self._map_in_codes(attrs)
+        return super().validate(attrs)
 
     def _map_in_codes(self, attrs):
         """
-        Converte códigos do front em rótulos do modelo e popula IDs PNCP.
-        ATENÇÃO: agora NÃO damos mais pop() em fundamentacao, amparo_legal, modo_disputa,
-        criterio_julgamento – deixamos no attrs para gravar no model.
+        Front geralmente envia códigos (modalidade_code, classificacao_code, etc).
+        Aqui traduzimos os códigos para os labels usados no model.
         """
-
-        # ---- choices simples (texto do model) ----
-        mod = attrs.get("modalidade")
-        if mod:
-            attrs["modalidade"] = self.MODALIDADE_MAP.get(mod, mod)
-
-        cls = attrs.get("classificacao")
-        if cls:
-            attrs["classificacao"] = self.CLASSIFICACAO_MAP.get(cls, cls)
-
-        orgz = attrs.get("tipo_organizacao")
-        if orgz:
-            attrs["tipo_organizacao"] = self.ORGANIZACAO_MAP.get(orgz, orgz)
+        modal = attrs.get("modalidade")
+        if modal:
+            attrs["modalidade"] = self.MODALIDADE_MAP.get(modal, modal)
 
         sit = attrs.get("situacao")
         if sit:
             attrs["situacao"] = self.SITUACAO_MAP.get(sit, sit)
 
-        # ---- PNCP: fundamentação (lei) -> instrumento_convocatorio_id ----
-        fund = attrs.get("fundamentacao")
-        if fund:
-            # grava texto em attrs["fundamentacao"] (campo do model)
-            attrs["instrumento_convocatorio_id"] = self.FUND_MAP.get(fund)
+        cls = attrs.get("classificacao")
+        if cls:
+            attrs["classificacao"] = self.CLASSIFICACAO_MAP.get(cls, cls)
 
-        # ---- PNCP: amparo legal -> amparo_legal_id ----
-        amparo = attrs.get("amparo_legal")
-        if amparo and fund:
-            modalidade_rotulo = attrs.get("modalidade")
-            if fund == "lei_14133":
-                bloco = self.AMPARO_MAP["lei_14133"].get(modalidade_rotulo or "", {})
-                attrs["amparo_legal_id"] = bloco.get(amparo)
-            else:
-                attrs["amparo_legal_id"] = self.AMPARO_MAP.get(fund, {}).get(amparo)
+        tipo = attrs.get("tipo_organizacao")
+        if tipo:
+            attrs["tipo_organizacao"] = self.TIPO_ORG_MAP.get(tipo, tipo)
 
-        # ---- PNCP: modo de disputa ----
-        modo = attrs.get("modo_disputa")
-        if modo:
-            attrs["modo_disputa_id"] = self.MODO_MAP.get(modo)
-
-        # ---- PNCP: critério de julgamento ----
-        crit = attrs.get("criterio_julgamento")
-        if crit:
-            attrs["criterio_julgamento_id"] = self.CRITERIO_MAP.get(crit)
-
+        # fundamentacao, amparo_legal, modo_disputa, criterio_julgamento
+        # agora são recebidos em código e salvos direto (sem *_id)
         return attrs
 
-    def validate(self, attrs):
-        ap = attrs.get("abertura_propostas")
-        ep = attrs.get("encerramento_propostas")
-        if ap and ep and ep <= ap:
-            raise serializers.ValidationError(
-                {"encerramento_propostas": "Deve ser posterior à data de abertura de propostas."}
-            )
-        return attrs
+    # ---------- Helpers de saída ----------
 
-    def create(self, validated_data):
-        validated_data = self._map_in_codes(validated_data)
-        return super().create(validated_data)
+    def get_entidade_nome(self, obj):
+        return obj.entidade.nome if obj.entidade else None
 
-    def update(self, instance, validated_data):
-        validated_data = self._map_in_codes(validated_data)
-        return super().update(instance, validated_data)
+    def get_orgao_nome(self, obj):
+        return obj.orgao.nome if obj.orgao else None
 
-    # ---- getters dos *_code (somente leitura) ----
     def get_modalidade_code(self, obj):
-        return self.MODALIDADE_INV.get(obj.modalidade, obj.modalidade)
+        return self.MODALIDADE_INV.get(obj.modalidade, None)
 
     def get_situacao_code(self, obj):
-        return self.SITUACAO_INV.get(obj.situacao, obj.situacao)
+        return self.SITUACAO_INV.get(obj.situacao, None)
 
     def get_classificacao_code(self, obj):
-        return self.CLASSIFICACAO_INV.get(obj.classificacao, obj.classificacao)
+        return self.CLASSIFICACAO_INV.get(obj.classificacao, None)
 
     def get_tipo_organizacao_code(self, obj):
-        return self.ORGANIZACAO_INV.get(obj.tipo_organizacao, obj.tipo_organizacao)
+        return self.TIPO_ORG_INV.get(obj.tipo_organizacao, None)
 
 
 # ============================================================
