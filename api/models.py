@@ -21,20 +21,20 @@ CRITERIO_JULGAMENTO_CHOICES = (
 
 AMPARO_LEGAL_CHOICES = (
     # Lei 8.666/93
-    ("art_23", "Art. 23 (Lei 8.666/93)"),
-    ("art_24", "Art. 24 (Lei 8.666/93)"),
-    ("art_25", "Art. 25 (Lei 8.666/93)"),
+    ("art_23", "Art. 23"),
+    ("art_24", "Art. 24"),
+    ("art_25", "Art. 25"),
 
     # Lei 10.520/02
-    ("art_4", "Art. 4º (Lei 10.520/02)"),
-    ("art_5", "Art. 5º (Lei 10.520/02)"),
+    ("art_4", "Art. 4º "),
+    ("art_5", "Art. 5º "),
 
     # Lei 14.133/21 – pregão/concorrência
-    ("art_28_i", "Art. 28, inciso I (Lei 14.133/21)"),
-    ("art_28_ii", "Art. 28, inciso II (Lei 14.133/21)"),
+    ("art_28_i", "Art. 28, inciso I"),
+    ("art_28_ii", "Art. 28, inciso II"),
 
     # Lei 14.133/21 – dispensa eletrônica
-    ("art_75_par7", "Art. 75, § 7º (Lei 14.133/21)"),
+    ("art_75_par7", "Art. 75, § 7º"),
     ("art_75_i", "Art. 75, inciso I"),
     ("art_75_ii", "Art. 75, inciso II"),
     ("art_75_iii_a", "Art. 75, inciso III, a"),
