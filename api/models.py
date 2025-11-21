@@ -146,118 +146,141 @@ class Orgao(models.Model):
 # 📄 PROCESSO LICITATÓRIO
 # ============================================================
 class ProcessoLicitatorio(models.Model):
-    # Identificação
+    # -------------------------------
+    # Identificação / objetos
+    # -------------------------------
     numero_processo = models.CharField(max_length=50, blank=True, null=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
     objeto = models.TextField(blank=True, null=True)
 
+    # -------------------------------
     # Classificadores principais
+    # -------------------------------
     modalidade = models.CharField(
         max_length=50,
         blank=True,
         choices=[
-            ("Pregão Eletrônico", "Pregão Eletrônico"),
-            ("Concorrência Eletrônica", "Concorrência Eletrônica"),
-            ("Dispensa Eletrônica", "Dispensa Eletrônica"),
-            ("Inexigibilidade Eletrônica", "Inexigibilidade Eletrônica"),
-            ("Adesão a Registro de Preços", "Adesão a Registro de Preços"),
-            ("Credenciamento", "Credenciamento"),
+            ('Pregão Eletrônico', 'Pregão Eletrônico'),
+            ('Concorrência Eletrônica', 'Concorrência Eletrônica'),
+            ('Dispensa Eletrônica', 'Dispensa Eletrônica'),
+            ('Inexigibilidade Eletrônica', 'Inexigibilidade Eletrônica'),
+            ('Adesão a Registro de Preços', 'Adesão a Registro de Preços'),
+            ('Credenciamento', 'Credenciamento'),
         ],
     )
     classificacao = models.CharField(
         max_length=50,
         blank=True,
         choices=[
-            ("Compras", "Compras"),
-            ("Serviços Comuns", "Serviços Comuns"),
-            ("Serviços de Engenharia Comuns", "Serviços de Engenharia Comuns"),
-            ("Obras Comuns", "Obras Comuns"),
+            ('Compras', 'Compras'),
+            ('Serviços Comuns', 'Serviços Comuns'),
+            ('Serviços de Engenharia Comuns', 'Serviços de Engenharia Comuns'),
+            ('Obras Comuns', 'Obras Comuns'),
         ],
     )
     tipo_organizacao = models.CharField(
         max_length=10,
         blank=True,
-        choices=[("Lote", "Lote"), ("Item", "Item")],
+        choices=[('Lote', 'Lote'), ('Item', 'Item')],
     )
 
     situacao = models.CharField(
         max_length=50,
         blank=True,
         choices=[
-            ("Aberto", "Aberto"),
-            ("Em Pesquisa", "Em Pesquisa"),
-            ("Aguardando Publicação", "Aguardando Publicação"),
-            ("Publicado", "Publicado"),
-            ("Em Contratação", "Em Contratação"),
-            ("Adjudicado/Homologado", "Adjudicado/Homologado"),
-            ("Revogado/Cancelado", "Revogado/Cancelado"),
+            ('Aberto', 'Aberto'),
+            ('Em Pesquisa', 'Em Pesquisa'),
+            ('Aguardando Publicação', 'Aguardando Publicação'),
+            ('Publicado', 'Publicado'),
+            ('Em Contratação', 'Em Contratação'),
+            ('Adjudicado/Homologado', 'Adjudicado/Homologado'),
+            ('Revogado/Cancelado', 'Revogado/Cancelado'),
         ],
-        default="Em Pesquisa",
+        default='Em Pesquisa',
     )
 
-    # Datas / valores
+    # -------------------------------
+    # Datas e valores
+    # -------------------------------
     data_processo = models.DateField(blank=True, null=True)
     data_abertura = models.DateTimeField(blank=True, null=True)
+
     valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
 
-    # SRP
-    registro_preco = models.BooleanField(
-        default=False,
-        blank=True,
-        verbose_name="Registro de Preço",
-    )
+    # SRP (Registro de Preço) – alias compatível com o front (registro_precos)
+    registro_preco = models.BooleanField(default=False, blank=True, verbose_name="Registro de Preço")
 
+    # -------------------------------
     # Relações
+    # -------------------------------
     entidade = models.ForeignKey(
-        "Entidade",
-        related_name="processos",
+        'Entidade',
         on_delete=models.PROTECT,
         blank=True,
         null=True,
+        related_name='processos'
     )
     orgao = models.ForeignKey(
-        "Orgao",
-        related_name="processos",
+        'Orgao',
         on_delete=models.PROTECT,
         blank=True,
         null=True,
+        related_name='processos'
     )
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True, blank=True)
 
-    # Campos textuais PNCP
+    # -------------------------------
+    # Campos textuais selecionados no sistema (o front envia estes)
+    # Mantemos ambos: texto para UX/auditoria e *_id para PNCP
+    # -------------------------------
     fundamentacao = models.CharField(
         max_length=16,
         choices=[
             ("lei_14133", "Lei 14.133/21"),
-            ("lei_8666", "Lei 8.666/93"),
+            ("lei_8666",  "Lei 8.666/93"),
             ("lei_10520", "Lei 10.520/02"),
         ],
         blank=True,
         null=True,
     )
-    amparo_legal = models.CharField(max_length=64, blank=True, null=True)
-    modo_disputa = models.CharField(max_length=24, blank=True, null=True)
-    criterio_julgamento = models.CharField(max_length=32, blank=True, null=True)
 
-    # Janela de propostas
-    abertura_propostas = models.DateTimeField(blank=True, null=True)
-    encerramento_propostas = models.DateTimeField(blank=True, null=True)
+    # agora amparo_legal segue os "value" de AMPARO_LEGAL
+    amparo_legal = models.CharField(
+        max_length=32,
+        choices=AMPARO_LEGAL_CHOICES,
+        blank=True,
+        null=True,
+    )
 
-    # Links externos
-    link_sistema_origem = models.URLField(blank=True, null=True)
-    link_processo_eletronico = models.URLField(blank=True, null=True)
+    # modo_disputa segue os "value" de MODO_DISPUTA
+    modo_disputa = models.CharField(
+        max_length=24,
+        choices=MODO_DISPUTA_CHOICES,
+        blank=True,
+        null=True,
+    )
+
+    # criterio_julgamento segue os "value" de CRITERIO_JULGAMENTO
+    criterio_julgamento = models.CharField(
+        max_length=32,
+        choices=CRITERIO_JULGAMENTO_CHOICES,
+        blank=True,
+        null=True,
+    )
 
     class Meta:
-        ordering = ["-data_processo"]
+        ordering = ['-data_processo']
         verbose_name = "Processo Licitatório"
         verbose_name_plural = "Processos Licitatórios"
 
     def __str__(self):
-        return f"{self.numero_certame or self.numero_processo or 'Processo'}"
+        return f"{self.numero_certame}"
 
-    # alias registro_precos <-> registro_preco (compatível com front)
+    # -------------------------------
+    # Alias compatível com o front (registro_precos)
+    # -------------------------------
     @property
     def registro_precos(self):
         return self.registro_preco
@@ -266,28 +289,22 @@ class ProcessoLicitatorio(models.Model):
     def registro_precos(self, value):
         self.registro_preco = bool(value)
 
-    # Helpers de lotes (mantidos)
-    @transaction.atomic
+    # -------------------------------
+    # Helpers de Lotes
+    # -------------------------------
     def next_lote_numero(self) -> int:
-        ultimo = self.lotes.order_by("-numero").first()
+        ultimo = self.lotes.order_by('-numero').first()
         return (ultimo.numero + 1) if ultimo else 1
 
     @transaction.atomic
-    def criar_lotes(
-        self,
-        quantidade: int = None,
-        descricao_prefixo: str = "Lote ",
-        *,
-        lotes: list = None,
-        numero: int = None,
-        descricao: str = "",
-    ):
+    def criar_lotes(self, quantidade: int = None, descricao_prefixo: str = "Lote ",
+                    *, lotes: list = None, numero: int = None, descricao: str = ""):
         created = []
 
         if isinstance(lotes, list) and lotes:
             for item in lotes:
-                n = item.get("numero") or self.next_lote_numero()
-                d = item.get("descricao") or ""
+                n = item.get('numero') or self.next_lote_numero()
+                d = item.get('descricao') or ""
                 obj = Lote.objects.create(processo=self, numero=n, descricao=d)
                 created.append(obj)
             return created
@@ -310,13 +327,8 @@ class ProcessoLicitatorio(models.Model):
         raise ValidationError("Parâmetros inválidos para criação de lotes.")
 
     @transaction.atomic
-    def organizar_lotes(
-        self,
-        ordem_ids: list[int] = None,
-        normalizar: bool = False,
-        inicio: int = 1,
-        mapa: list[dict] = None,
-    ):
+    def organizar_lotes(self, ordem_ids: list[int] = None, normalizar: bool = False,
+                        inicio: int = 1, mapa: list[dict] = None):
         if isinstance(ordem_ids, list) and ordem_ids:
             qs = list(self.lotes.filter(id__in=ordem_ids))
             id2obj = {o.id: o for o in qs}
@@ -325,33 +337,35 @@ class ProcessoLicitatorio(models.Model):
                 obj = id2obj.get(_id)
                 if obj:
                     obj.numero = numero
-                    obj.save(update_fields=["numero"])
+                    obj.save(update_fields=['numero'])
                     numero += 1
-            return self.lotes.order_by("numero")
+            return self.lotes.order_by('numero')
 
         if normalizar:
             numero = inicio or 1
-            for obj in self.lotes.order_by("numero", "id"):
+            for obj in self.lotes.order_by('numero', 'id'):
                 if obj.numero != numero:
                     obj.numero = numero
-                    obj.save(update_fields=["numero"])
+                    obj.save(update_fields=['numero'])
                 numero += 1
-            return self.lotes.order_by("numero")
+            return self.lotes.order_by('numero')
 
         if isinstance(mapa, list) and mapa:
-            ids = [m.get("id") for m in mapa if m.get("id") is not None]
+            ids = [m.get('id') for m in mapa if m.get('id') is not None]
             qs = self.lotes.filter(id__in=ids)
             id2obj = {o.id: o for o in qs}
             for m in mapa:
-                _id = m.get("id")
-                num = m.get("numero")
+                _id = m.get('id')
+                num = m.get('numero')
                 if _id in id2obj and isinstance(num, int) and num > 0:
                     obj = id2obj[_id]
                     obj.numero = num
-                    obj.save(update_fields=["numero"])
-            return self.lotes.order_by("numero")
+                    obj.save(update_fields=['numero'])
+            return self.lotes.order_by('numero')
 
         raise ValidationError("Parâmetros inválidos para organização de lotes.")
+
+
 # ============================================================
 # 📦 LOTE
 # ============================================================
