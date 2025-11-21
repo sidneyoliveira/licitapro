@@ -460,12 +460,6 @@ class Item(models.Model):
         null=True,
         help_text='M = Material, S = Serviço'
     )
-    tipo_beneficio_id = models.PositiveIntegerField(blank=True, null=True)
-    criterio_julgamento_id = models.PositiveIntegerField(blank=True, null=True)
-
-    catalogo_id = models.PositiveIntegerField(blank=True, null=True)
-    categoria_item_catalogo_id = models.PositiveIntegerField(blank=True, null=True)
-    catalogo_codigo_item = models.CharField(max_length=64, blank=True, null=True)
 
     class Meta:
         ordering = ['ordem']

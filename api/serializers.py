@@ -422,13 +422,13 @@ class ItemSerializer(serializers.ModelSerializer):
             "lote",
             "fornecedor",
             "ordem",
-            # complementos genéricos para publicação
+
             "natureza",
-            "tipo_beneficio_id",
-            "criterio_julgamento_id",
-            "catalogo_id",
-            "categoria_item_catalogo_id",
-            "catalogo_codigo_item",
+            # "tipo_beneficio_id",
+            # "criterio_julgamento_id",
+            # "catalogo_id",
+            # "categoria_item_catalogo_id",
+            # "catalogo_codigo_item",
         )
 
 # ============================================================
