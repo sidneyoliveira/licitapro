@@ -78,12 +78,26 @@ class EntidadeViewSet(viewsets.ModelViewSet):
 
 
 def _normalize(txt: str) -> str:
-    import unicodedata
+    """
+    Normalização genérica para comparação de textos:
+    - strip
+    - troca "_" por espaço
+    - remove acentos
+    - upper
+    - compacta espaços múltiplos
+    """
+    import unicodedata, re
+
     if not txt:
         return ""
-    txt = unicodedata.normalize("NFD", txt)
-    txt = "".join(ch for ch in txt if unicodedata.category(ch) != "Mn")
-    return txt.upper().strip()
+
+    s = str(txt).strip()
+    s = s.replace("_", " ")
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    s = s.upper()
+    s = re.sub(r"\s+", " ", s)
+    return s
 
 
 class OrgaoViewSet(viewsets.ModelViewSet):
@@ -250,6 +264,13 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         parser_classes=[parsers.MultiPartParser, parsers.FormParser],
     )
     def importar_xlsx(self, request):
+        """
+        Importa a PLANILHA_PADRAO_IMPORTACAO.xlsx e cria:
+        - Processo
+        - Lotes
+        - Itens
+        - (opcional) Fornecedores vinculados por CNPJ
+        """
         arquivo = request.FILES.get("arquivo")
         if not arquivo:
             return Response(
@@ -265,40 +286,19 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         except Exception:
             return Response({"detail": "Erro ao ler o arquivo XLSX."}, status=400)
 
-        # ------------------------------------------------------------------
-        # Helpers de conversão / normalização
-        # ------------------------------------------------------------------
-        import unicodedata
-        import re as _re
-
-        def normalize(s: str) -> str:
-            """Normaliza strings para comparação:
-            - strip
-            - troca '_' por espaço
-            - remove acentos
-            - maiúsculas
-            - compacta espaços
-            """
-            if s is None:
-                return ""
-            s = str(s).strip()
-            s = s.replace("_", " ")
-            s = unicodedata.normalize("NFD", s)
-            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-            s = s.upper()
-            s = _re.sub(r"\s+", " ", s)
-            return s
+        # -------- Funções utilitárias --------
 
         def to_decimal(v):
             if v in (None, ""):
                 return None
             try:
-                s = str(v)
-                # trata "65.000,00" → "65000.00"
-                if "," in s and "." in s:
-                    s = s.replace(".", "").replace(",", ".")
-                else:
-                    s = s.replace(",", ".")
+                s = str(v).strip()
+                # trata 1.234,56 / 1234,56 / 1234.56
+                if isinstance(v, str):
+                    if "," in s and "." in s:
+                        s = s.replace(".", "").replace(",", ".")
+                    else:
+                        s = s.replace(",", ".")
                 return Decimal(s)
             except Exception:
                 return None
@@ -306,7 +306,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         def to_date(v):
             if not v:
                 return None
-            from datetime import date
             if isinstance(v, datetime):
                 return v.date()
             if isinstance(v, date):
@@ -321,7 +320,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
                     try:
                         return datetime.strptime(txt, fmt).date()
-                    except ValueError:
+                    except Exception:
                         continue
             return None
 
@@ -330,6 +329,8 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 return None
             if isinstance(v, datetime):
                 return v
+            if isinstance(v, date):
+                return datetime.combine(v, datetime.min.time())
             if isinstance(v, (int, float)):
                 try:
                     return openpyxl_datetime.from_excel(v, wb.epoch)
@@ -337,10 +338,15 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     return None
             if isinstance(v, str):
                 txt = v.strip()
-                for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+                for fmt in (
+                    "%d/%m/%Y %H:%M",
+                    "%d/%m/%Y",
+                    "%Y-%m-%d %H:%M",
+                    "%Y-%m-%d",
+                ):
                     try:
                         return datetime.strptime(txt, fmt)
-                    except ValueError:
+                    except Exception:
                         continue
             return None
 
@@ -348,50 +354,93 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             v = ws[coord].value
             return "" if v is None else v
 
-        # ------------------------------------------------------------------
-        # Mapas de normalização (texto da planilha → label interno)
-        # ------------------------------------------------------------------
+        # -------- Seleciona aba principal ("CADASTRO INICIAL...") --------
 
-        # Modalidade – guardamos o label bonitinho
-        MODALIDADE_MAP = {
-            normalize("Pregão Eletrônico"): "Pregão Eletrônico",
-            normalize("Concorrência Eletrônica"): "Concorrência Eletrônica",
-            normalize("Dispensa Eletrônica"): "Dispensa Eletrônica",
-            normalize("Inexigibilidade Eletrônica"): "Inexigibilidade Eletrônica",
-            normalize("Adesão a Registro de Preços"): "Adesão a Registro de Preços",
-        }
-
-        # Classificação – guardamos o label da tua tabela
-        CLASSIFICACAO_MAP = {
-            normalize("COMPRAS"): "COMPRAS",
-            normalize("SERVIÇOS COMUNS"): "SERVIÇOS COMUNS",
-            normalize("SERVIÇOS DE ENGENHARIA COMUNS"): "SERVIÇOS DE ENGENHARIA COMUNS",
-            normalize("OBRAS COMUNS"): "OBRAS COMUNS",
-        }
-
-        # Tipo de organização – Item / Lote
-        TIPO_ORG_MAP = {
-            normalize("ITEM"): "Item",
-            normalize("LOTE"): "Lote",
-        }
-
-        # ------------------------------------------------------------------
-        # Seleciona aba principal (CADASTRO INICIAL)
-        # ------------------------------------------------------------------
-        ws = None
+        sheet = None
         for name in wb.sheetnames:
-            if normalize(name).startswith("CADASTRO INICIAL"):
-                ws = wb[name]
+            if _normalize(name).startswith("CADASTRO INICIAL"):
+                sheet = wb[name]
                 break
-        if ws is None:
-            ws = wb[wb.sheetnames[0]]
+        if sheet is None:
+            sheet = wb[wb.sheetnames[0]]
 
-        # ------------------------------------------------------------------
-        # Leitura fixa das células (alinhado com o front)
-        # ------------------------------------------------------------------
+        ws = sheet
 
-        # Linha 7: visão geral
-        objeto_raw = get(ws, "A7")
+        # -------- Mapas de normalização (alinhados com front e serializers) --------
+
+        MODALIDADE_MAP = {
+            _normalize("Pregão Eletrônico"): "Pregão Eletrônico",
+            _normalize("Concorrência Eletrônica"): "Concorrência Eletrônica",
+            _normalize("Dispensa Eletrônica"): "Dispensa Eletrônica",
+            _normalize("Inexigibilidade Eletrônica"): "Inexigibilidade Eletrônica",
+            _normalize("Adesão a Registro de Preços"): "Adesão a Registro de Preços",
+            _normalize("Credenciamento"): "Credenciamento",
+        }
+
+        CLASSIFICACAO_MAP = {
+            _normalize("Compras"): "Compras",
+            _normalize("Serviços Comuns"): "Serviços Comuns",
+            _normalize("Serviços de Engenharia Comuns"): "Serviços de Engenharia Comuns",
+            _normalize("Obras Comuns"): "Obras Comuns",
+        }
+
+        TIPO_ORG_MAP = {
+            _normalize("Item"): "Item",
+            _normalize("Lote"): "Lote",
+        }
+
+        # label da planilha -> code usado no sistema (AMPARO_LEGAL.value)
+        AMPARO_LABEL_TO_CODE = {
+            _normalize("Art. 23"): "art_23",
+            _normalize("Art. 24"): "art_24",
+            _normalize("Art. 25"): "art_25",
+            _normalize("Art. 4º"): "art_4",
+            _normalize("Art. 5º"): "art_5",
+            _normalize("Art. 28, inciso I"): "art_28_i",
+            _normalize("Art. 28, inciso II"): "art_28_ii",
+            _normalize("Art. 75, § 7º"): "art_75_par7",
+            _normalize("Art. 75, inciso I"): "art_75_i",
+            _normalize("Art. 75, inciso II"): "art_75_ii",
+            _normalize("Art. 75, inciso III, a"): "art_75_iii_a",
+            _normalize("Art. 75, inciso III, b"): "art_75_iii_b",
+            _normalize("Art. 75, inciso III, c"): "art_75_iii_c",
+            _normalize("Art. 75, inciso III, d"): "art_75_iii_d",
+            _normalize("Art. 75, inciso III, e"): "art_75_iii_e",
+            _normalize("Art. 75, inciso III, f"): "art_75_iii_f",
+            _normalize("Art. 75, inciso IV, a"): "art_75_iv_a",
+            _normalize("Art. 75, inciso IV, b"): "art_75_iv_b",
+            _normalize("Art. 75, inciso IV, c"): "art_75_iv_c",
+            _normalize("Art. 75, inciso IV, d"): "art_75_iv_d",
+            _normalize("Art. 75, inciso IV, e"): "art_75_iv_e",
+            _normalize("Art. 75, inciso IV, f"): "art_75_iv_f",
+            _normalize("Art. 75, inciso IV, j"): "art_75_iv_j",
+            _normalize("Art. 75, inciso IV, k"): "art_75_iv_k",
+            _normalize("Art. 75, inciso IV, m"): "art_75_iv_m",
+            _normalize("Art. 75, inciso IX"): "art_75_ix",
+            _normalize("Art. 75, inciso VIII"): "art_75_viii",
+            _normalize("Art. 75, inciso XV"): "art_75_xv",
+            _normalize("Lei 11.947/2009, Art. 14, § 1º"): "lei_11947_art14_1",
+            _normalize("Art. 79, inciso I"): "art_79_i",
+            _normalize("Art. 79, inciso II"): "art_79_ii",
+            _normalize("Art. 79, inciso III"): "art_79_iii",
+            _normalize("Art. 74, caput"): "art_74_caput",
+            _normalize("Art. 74, I"): "art_74_i",
+            _normalize("Art. 74, II"): "art_74_ii",
+            _normalize("Art. 74, III, a"): "art_74_iii_a",
+            _normalize("Art. 74, III, b"): "art_74_iii_b",
+            _normalize("Art. 74, III, c"): "art_74_iii_c",
+            _normalize("Art. 74, III, d"): "art_74_iii_d",
+            _normalize("Art. 74, III, e"): "art_74_iii_e",
+            _normalize("Art. 74, III, f"): "art_74_iii_f",
+            _normalize("Art. 74, III, g"): "art_74_iii_g",
+            _normalize("Art. 74, III, h"): "art_74_iii_h",
+            _normalize("Art. 74, IV"): "art_74_iv",
+            _normalize("Art. 74, V"): "art_74_v",
+            _normalize("Art. 86, § 2º"): "art_86_2",
+        }
+
+        # -------- Leitura dos dados gerais (linhas 7 e 11) --------
+
         numero_processo = str(get(ws, "B7")).strip()
         data_processo_raw = get(ws, "C7")
         numero_certame = str(get(ws, "D7")).strip()
@@ -400,7 +449,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         orgao_nome = str(get(ws, "H7") or "").strip()
         valor_global_raw = get(ws, "I7")
 
-        # Linha 11: dados técnicos
         modalidade_raw = get(ws, "A11")
         tipo_disputa_raw = get(ws, "B11")
         registro_preco_raw = get(ws, "C11")
@@ -408,12 +456,13 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         criterio_julgamento_raw = get(ws, "E11")
         classificacao_raw = get(ws, "F11")
         vigencia_raw = get(ws, "I11")
-        fundamentacao_raw = get(ws, "G11")
-        amparo_legal_raw = get(ws, "H11")
 
-        # ------------------------------------------------------------------
-        # Tabela de itens (cabeçalho fixo na linha 15)
-        # ------------------------------------------------------------------
+        objeto_raw = get(ws, "A7")
+        amparo_legal_raw = get(ws, "H11")
+        fundamentacao_raw = get(ws, "G11")
+
+        # -------- Itens do processo --------
+
         row_header = 15
         col_map = {
             "LOTE": 1,
@@ -439,28 +488,37 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             itens_data.append(
                 {
                     "descricao": desc,
-                    "especificacao": ws.cell(row=row, column=col("ESPECIFICACAO")).value,
-                    "quantidade": ws.cell(row=row, column=col("QUANTIDADE")).value,
+                    "especificacao": ws.cell(
+                        row=row, column=col("ESPECIFICACAO")
+                    ).value,
+                    "quantidade": ws.cell(
+                        row=row, column=col("QUANTIDADE")
+                    ).value,
                     "unidade": ws.cell(row=row, column=col("UNIDADE")).value,
-                    "natureza": ws.cell(row=row, column=col("NATUREZA / DESPESA")).value,
+                    "natureza": ws.cell(
+                        row=row, column=col("NATUREZA / DESPESA")
+                    ).value,
                     "valor_referencia": ws.cell(
                         row=row, column=col("VALOR REFERENCIA UNITARIO")
                     ).value,
                     "lote": ws.cell(row=row, column=col("LOTE")).value,
-                    "cnpj": ws.cell(row=row, column=col("CNPJ DO FORNECEDOR")).value,
+                    "cnpj": ws.cell(
+                        row=row, column=col("CNPJ DO FORNECEDOR")
+                    ).value,
                 }
             )
 
         if not itens_data:
-            return Response({"detail": "Nenhum item encontrado."}, status=400)
+            return Response(
+                {"detail": "Nenhum item encontrado na seção de itens."},
+                status=400,
+            )
 
-        # ------------------------------------------------------------------
-        # Aba de fornecedores (opcional)
-        # ------------------------------------------------------------------
-        fornecedores_razao_por_cnpj = {}
+        # -------- Aba de fornecedores (opcional) --------
 
+        fornecedores = {}
         for name in wb.sheetnames:
-            if "FORNECEDOR" not in normalize(name):
+            if "FORNECEDOR" not in _normalize(name):
                 continue
 
             ws_f = wb[name]
@@ -472,7 +530,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 for c in range(1, ws_f.max_column + 1):
                     v = ws_f.cell(r, c).value
                     if v:
-                        temp[normalize(v)] = c
+                        temp[_normalize(v)] = c
 
                 if "CNPJ" in temp and "RAZAO SOCIAL" in temp:
                     header_row = r
@@ -482,68 +540,61 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             if not header_row:
                 continue
 
-            import re as _re2
-
             for r in range(header_row + 1, ws_f.max_row + 1):
                 cnpj_raw = ws_f.cell(r, cols["CNPJ"]).value
                 razao_raw = ws_f.cell(r, cols["RAZAO SOCIAL"]).value
                 if not cnpj_raw:
                     continue
 
-                cnpj_digits = _re2.sub(r"\D", "", str(cnpj_raw))
-                if len(cnpj_digits) != 14:
+                cnpj = re.sub(r"\D", "", str(cnpj_raw))
+                if len(cnpj) != 14:
                     continue
 
-                fornecedores_razao_por_cnpj[cnpj_digits] = str(razao_raw or "").strip() or cnpj_digits
+                fornecedores[cnpj] = razao_raw or cnpj
 
-            break  # processou uma aba de fornecedores, sai
+            break  # só considera a primeira aba de fornecedores válida
 
-        # ------------------------------------------------------------------
-        # Criação no banco
-        # ------------------------------------------------------------------
+        # -------- Criação no banco --------
+
         with transaction.atomic():
-            # Entidade / órgão
+            # Entidade e órgão
             entidade = (
                 Entidade.objects.filter(nome__iexact=entidade_nome).first()
                 if entidade_nome
                 else None
             )
-
             orgao = None
             if orgao_nome:
-                qs_or = Orgao.objects.all()
+                qs_org = Orgao.objects.all()
                 if entidade:
-                    qs_or = qs_or.filter(entidade=entidade)
-                orgao = qs_or.filter(nome__iexact=orgao_nome).first()
+                    qs_org = qs_org.filter(entidade=entidade)
+                orgao = qs_org.filter(nome__iexact=orgao_nome).first()
 
-            # Modalidade
-            mod_txt = None
+            # Modalidade / Classificação / Tipo organização
+            modalidade_txt = None
             if modalidade_raw not in (None, ""):
-                mod_txt = MODALIDADE_MAP.get(
-                    normalize(modalidade_raw),
+                modalidade_txt = MODALIDADE_MAP.get(
+                    _normalize(modalidade_raw),
                     str(modalidade_raw).strip(),
                 )
 
-            # Classificação
-            class_txt = None
+            classificacao_txt = None
             if classificacao_raw not in (None, ""):
-                class_txt = CLASSIFICACAO_MAP.get(
-                    normalize(classificacao_raw),
+                classificacao_txt = CLASSIFICACAO_MAP.get(
+                    _normalize(classificacao_raw),
                     str(classificacao_raw).strip(),
                 )
 
-            # Tipo de organização
-            org_txt = None
+            tipo_org_txt = None
             if tipo_organizacao_raw not in (None, ""):
-                org_txt = TIPO_ORG_MAP.get(
-                    normalize(tipo_organizacao_raw),
+                tipo_org_txt = TIPO_ORG_MAP.get(
+                    _normalize(tipo_organizacao_raw),
                     str(tipo_organizacao_raw).strip(),
                 )
 
-            # Situação padrão ao importar
             situacao_txt = "Em Pesquisa"
 
-            # Modo de disputa
+            # Modo de disputa (value: aberto/fechado/aberto_e_fechado)
             modo_disputa_txt = None
             if tipo_disputa_raw not in (None, ""):
                 s = str(tipo_disputa_raw).strip().lower()
@@ -561,7 +612,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                     elif "fechado" in s:
                         modo_disputa_txt = "fechado"
 
-            # Critério de julgamento
+            # Critério de julgamento (value: menor_preco / maior_desconto)
             criterio_txt = None
             if criterio_julgamento_raw not in (None, ""):
                 cj = str(criterio_julgamento_raw).strip().lower()
@@ -570,41 +621,45 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 elif cj in ("2", "maior_desconto", "maior desconto"):
                     criterio_txt = "maior_desconto"
 
-            # Fundamentação (lei_8666 / lei_10520 / lei_14133)
+            # Fundamentação -> code (lei_14133 / lei_8666 / lei_10520)
             fundamentacao_txt = None
             if fundamentacao_raw not in (None, ""):
-                f = str(fundamentacao_raw).strip()
-                f_lower = f.lower()
-                digits = "".join(ch for ch in f if ch.isdigit())
-                if "14133" in digits or "14133" in f_lower:
-                    fundamentacao_txt = "lei_14133"
-                elif "8666" in digits or "8666" in f_lower:
-                    fundamentacao_txt = "lei_8666"
-                elif "10520" in digits or "10520" in f_lower:
-                    fundamentacao_txt = "lei_10520"
-                elif f in ("lei_14133", "lei_8666", "lei_10520"):
-                    fundamentacao_txt = f
+                raw = str(fundamentacao_raw).strip()
+                digits = "".join(ch for ch in raw if ch.isdigit())
+                raw_lower = raw.lower()
 
-            # Amparo legal – guardamos o texto como veio da planilha
-            amparo_legal_txt = (
-                str(amparo_legal_raw).strip()
-                if amparo_legal_raw not in (None, "")
-                else None
-            )
+                if "14133" in digits or "14133" in raw_lower:
+                    fundamentacao_txt = "lei_14133"
+                elif "8666" in digits or "8666" in raw_lower:
+                    fundamentacao_txt = "lei_8666"
+                elif "10520" in digits or "10520" in raw_lower:
+                    fundamentacao_txt = "lei_10520"
+                elif raw_lower in ("lei_14133", "lei_8666", "lei_10520"):
+                    fundamentacao_txt = raw_lower
+
+            # Amparo legal -> code (art_23, art_28_ii, etc.)
+            amparo_legal_txt = None
+            if amparo_legal_raw not in (None, ""):
+                a_norm = _normalize(str(amparo_legal_raw))
+                amparo_legal_txt = AMPARO_LABEL_TO_CODE.get(a_norm)
 
             processo = ProcessoLicitatorio.objects.create(
                 numero_processo=numero_processo or None,
                 numero_certame=numero_certame or None,
                 objeto=str(objeto_raw or "").strip(),
-                modalidade=mod_txt or None,
-                classificacao=class_txt or None,
-                tipo_organizacao=org_txt or None,
+                modalidade=modalidade_txt or "",
+                classificacao=classificacao_txt or "",
+                tipo_organizacao=tipo_org_txt or "",
                 situacao=situacao_txt,
                 data_processo=to_date(data_processo_raw),
                 data_abertura=to_datetime(data_certame_raw),
                 valor_referencia=to_decimal(valor_global_raw),
-                vigencia_meses=int(str(vigencia_raw).split()[0]) if vigencia_raw else None,
-                registro_preco=str(registro_preco_raw or "").strip().lower()
+                vigencia_meses=int(str(vigencia_raw).split()[0])
+                if vigencia_raw
+                else None,
+                registro_preco=str(registro_preco_raw or "")
+                .strip()
+                .lower()
                 in ("sim", "s"),
                 entidade=entidade,
                 orgao=orgao,
@@ -614,12 +669,8 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 criterio_julgamento=criterio_txt,
             )
 
-            # Lotes e itens
+            # Lotes
             lotes = {}
-            ordem = 0
-            fornecedores_vinculados = set()
-            import re as _re3
-
             for it in itens_data:
                 lote_num = it["lote"]
                 if lote_num and lote_num not in lotes:
@@ -629,21 +680,27 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                         descricao=f"Lote {lote_num}",
                     )
 
-                lote_obj = lotes.get(lote_num)
+            # Itens + fornecedores
+            ordem = 0
+            fornecedores_vinculados = set()
+
+            for it in itens_data:
+                ordem += 1
+                lote_obj = lotes.get(it["lote"])
 
                 fornecedor = None
-                cnpj_raw = it.get("cnpj")
-                if cnpj_raw:
-                    cnpj_digits = _re3.sub(r"\D", "", str(cnpj_raw))
+                if it.get("cnpj"):
+                    cnpj_digits = re.sub(r"\D", "", str(it["cnpj"]))
                     if len(cnpj_digits) == 14:
-                        razao = fornecedores_razao_por_cnpj.get(cnpj_digits, cnpj_digits)
+                        razao_fornecedor = fornecedores.get(
+                            cnpj_digits, cnpj_digits
+                        )
                         fornecedor, _ = Fornecedor.objects.get_or_create(
                             cnpj=cnpj_digits,
-                            defaults={"razao_social": razao},
+                            defaults={"razao_social": razao_fornecedor},
                         )
                         fornecedores_vinculados.add(fornecedor.id)
 
-                ordem += 1
                 Item.objects.create(
                     processo=processo,
                     lote=lote_obj,
