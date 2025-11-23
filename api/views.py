@@ -20,7 +20,7 @@ from rest_framework import viewsets, permissions, parsers
 from openpyxl import load_workbook
 from openpyxl.utils import datetime as openpyxl_datetime
 from decimal import Decimal, InvalidOperation
-from datetime import datetime
+from datetime import datetime, time
 
 from .models import (
     CustomUser,
@@ -322,24 +322,48 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                         continue
             return None
 
-        def to_datetime(v):
-            if not v:
+        def to_datetime(date_v, time_v=None):
+            """
+            Converte valores vindos do Excel (data e hora separados) para datetime.
+            Usa o helper to_date() pra resolver a data.
+            """
+
+            # 1) Resolve a data usando o helper que você já tem
+            dt_date = to_date(date_v)
+            if not dt_date:
                 return None
-            if isinstance(v, datetime):
-                return v
-            if isinstance(v, (int, float)):
-                try:
-                    return excel_to_datetime(v, wb.epoch)
-                except Exception:
-                    return None
-            if isinstance(v, str):
-                txt = v.strip()
-                for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+
+            # 2) Resolve o horário
+            if not time_v:
+                # Se não tiver hora, assume meia-noite
+                dt_time = time(0, 0, 0)
+            else:
+                if isinstance(time_v, datetime):
+                    dt_time = time_v.time()
+                elif isinstance(time_v, time):
+                    dt_time = time_v
+                elif isinstance(time_v, (int, float)):
+                    # horário como serial/fração de dia do Excel
                     try:
-                        return datetime.strptime(txt, fmt)
+                        t_dt = excel_to_datetime(time_v, wb.epoch)
+                        dt_time = t_dt.time()
                     except Exception:
-                        continue
-            return None
+                        dt_time = time(0, 0, 0)
+                elif isinstance(time_v, str):
+                    txt = time_v.strip()
+                    dt_time = None
+                    for fmt in ("%H:%M", "%H:%M:%S"):
+                        try:
+                            dt_time = datetime.strptime(txt, fmt).time()
+                            break
+                        except Exception:
+                            continue
+                    if dt_time is None:
+                        dt_time = time(0, 0, 0)
+                else:
+                    dt_time = time(0, 0, 0)
+
+            return datetime.combine(dt_date, dt_time)
 
         def get(ws, coord):
             v = ws[coord].value
