@@ -433,6 +433,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         data_processo_raw = get(ws, "C7")
         numero_certame = str(get(ws, "D7")).strip()
         data_certame_raw = get(ws, "E7")
+        hora_certame_raw = get(ws, "F7")
         entidade_nome = str(get(ws, "G7") or "").strip()
         orgao_nome = str(get(ws, "H7") or "").strip()
         valor_global_raw = get(ws, "I7")
@@ -613,7 +614,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 tipo_organizacao=org_txt or None,
                 situacao=situacao_txt,
                 data_processo=to_date(data_processo_raw),
-                data_abertura=to_datetime(data_certame_raw),
+                data_abertura = to_datetime(data_certame_raw, hora_certame_raw),
                 valor_referencia=to_decimal(valor_global_raw),
                 vigencia_meses=int(str(vigencia_raw).split()[0]) if vigencia_raw else None,
                 registro_preco=str(registro_preco_raw or "").strip().lower() in ("sim", "s"),
