@@ -147,25 +147,21 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         required=False,
         allow_blank=True,
         allow_null=True,
-        write_only=True
     )
     amparo_legal = serializers.CharField(
         required=False,
         allow_blank=True,
         allow_null=True,
-        write_only=True
     )
     modo_disputa = serializers.CharField(
         required=False,
         allow_blank=True,
         allow_null=True,
-        write_only=True
     )
     criterio_julgamento = serializers.CharField(
         required=False,
         allow_blank=True,
         allow_null=True,
-        write_only=True
     )
 
     # Códigos de volta no response (somente leitura)
