@@ -35,6 +35,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "is_active",
             "is_staff",
             "date_joined",
+            "last_login"
         )
 
 UserSerializer = CustomUserSerializer
@@ -51,7 +52,7 @@ class GroupNameField(serializers.StringRelatedField):
 
 class UsuarioSerializer(serializers.ModelSerializer):
     groups = GroupNameField(many=True, read_only=True)
-    # senha opcional na criação/edição
+
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
