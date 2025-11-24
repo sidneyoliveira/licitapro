@@ -513,7 +513,22 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Nenhum item encontrado."}, status=400)
 
         # ---------- fornecedores (aba opcional) ----------
-
+        def fetch_cnpj_brasilapi(cnpj_digits: str) -> dict:
+            """
+            Consulta BrasilAPI para um CNPJ (14 dígitos) e retorna dict de dados ou {}.
+            Usa urllib (já importado como urlrequest) para evitar dependência externa.
+            """
+            if not cnpj_digits or len(cnpj_digits) != 14:
+                return {}
+            url = f"https://brasilapi.com.br/api/cnpj/v1/{cnpj_digits}"
+            try:
+                with urlrequest.urlopen(url, timeout=10) as resp:
+                    if resp.status != 200:
+                        return {}
+                    return json.loads(resp.read().decode("utf-8")) or {}
+            except Exception:
+                return {}
+            
         fornecedores = {}
 
         for name in wb.sheetnames:
@@ -545,7 +560,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 cnpj = re.sub(r"\D", "", str(cnpj_raw))
                 if len(cnpj) != 14:
                     continue
-                fornecedores[cnpj] = razao_raw or cnpj
+                fornecedores[cnpj] = (str(razao_raw).strip() if razao_raw else "") or cnpj
             break
 
         # ---------- criação no banco ----------
@@ -669,16 +684,44 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 ordem += 1
                 lote_obj = lotes.get(it["lote"])
                 fornecedor = None
+
+                # --- trata CNPJ do item ---
                 cnpj_raw = it.get("cnpj")
                 if cnpj_raw:
                     cnpj_digits = re.sub(r"\D", "", str(cnpj_raw))
                     if len(cnpj_digits) == 14:
-                        fornecedor, _ = Fornecedor.objects.get_or_create(
-                            cnpj=cnpj_digits,
-                            defaults={"razao_social": fornecedores.get(cnpj_digits) or cnpj_digits},
-                        )
+                        # 1) tenta achar fornecedor já cadastrado
+                        fornecedor = Fornecedor.objects.filter(cnpj=cnpj_digits).first()
+
+                        # 2) se não existir, tenta BrasilAPI
+                        if not fornecedor:
+                            dados = fetch_cnpj_brasilapi(cnpj_digits)
+
+                            fornecedor_kwargs = {
+                                "cnpj": cnpj_digits,
+                                # prioridade: razão da planilha -> BrasilAPI -> CNPJ
+                                "razao_social": (
+                                    fornecedores.get(cnpj_digits)
+                                    or dados.get("razao_social")
+                                    or cnpj_digits
+                                ),
+                                "nome_fantasia": dados.get("nome_fantasia") or "",
+                                "telefone": dados.get("ddd_telefone_1") or "",
+                                "email": dados.get("email") or "",
+                                "cep": dados.get("cep") or "",
+                                "logradouro": dados.get("logradouro") or "",
+                                "numero": dados.get("numero") or "",
+                                "bairro": dados.get("bairro") or "",
+                                "complemento": dados.get("complemento") or "",
+                                "municipio": dados.get("municipio") or "",
+                                "uf": dados.get("uf") or "",
+                            }
+
+                            fornecedor = Fornecedor.objects.create(**fornecedor_kwargs)
+
                         fornecedores_vinculados.add(fornecedor.id)
 
+                # --- cria o item, com fornecedor (se tiver sido resolvido acima) ---
                 Item.objects.create(
                     processo=processo,
                     lote=lote_obj,
