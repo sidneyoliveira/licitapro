@@ -461,7 +461,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         entidade_nome = str(get(ws, "G7") or "").strip()
         orgao_nome = str(get(ws, "H7") or "").strip()
         valor_global_raw = get(ws, "I7")
-        objeto_raw = get(ws, "B7")
+        objeto_raw = get(ws, "A7")
 
         modalidade_raw = get(ws, "A11")
         tipo_disputa_raw = get(ws, "B11")
