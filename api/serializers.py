@@ -74,7 +74,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
             "groups",
             "password",
         ]
-        read_only_fields = ["last_login", "date_joined", "groups"]
+        read_only_fields = ["date_joined", "groups"]
 
     def create(self, validated_data):
         password = validated_data.pop("password", None)

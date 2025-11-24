@@ -15,6 +15,7 @@ from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 from django.contrib.auth import get_user_model
 from rest_framework import viewsets, permissions, parsers
+from django.contrib.auth.models import update_last_login
 
 # 👉 novos imports p/ importação XLSX
 from openpyxl import load_workbook
@@ -1176,6 +1177,8 @@ class GoogleLoginView(APIView):
 
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
+            update_last_login(None, user)
+
 
             logger.info(f"Usuário autenticado: {email}")
 
