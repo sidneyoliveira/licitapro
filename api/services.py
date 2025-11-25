@@ -12,6 +12,7 @@ from django.db import transaction
 from django.conf import settings
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel as excel_to_datetime
+from settings import GOOGLE_CLIENT_ID, PNCP_ACCESS_TOKEN
 
 from .models import (
     Entidade,
@@ -462,7 +463,7 @@ class PNCPService:
     BASE_URL = "https://treina.pncp.gov.br/api/pncp"
     
     # Idealmente, use variáveis de ambiente: config('PNCP_TOKEN')
-    ACCESS_TOKEN = getattr(settings, 'eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2ODJiYTE0YS1jMTJkLTRhOWYtOWMxOS1hNjYyNDIzMGMxMzkiLCJleHAiOjE3NjQxMDM3MzMsImFkbWluaXN0cmFkb3IiOmZhbHNlLCJjcGZDbnBqIjoiMTEwMzU1NDQwMDAxMDUiLCJlbWFpbCI6ImNvbnRhdG9fbGxAaG90bWFpbC5jb20iLCJnZXN0YW9lbnRlIjp0cnVlLCJpZEJhc2VEYWRvcyI6Mjg2NCwibm9tZSI6IkwgJiBMIEFTU0VTU09SSUEgQ09OU1VMVE9SSUEgRSBTRVJWScOHT1MgTFREQSJ9.z7oU_5Alo9_Afk5k6BG3eD60Qv6itO2HmReBb1DH8ZuoEbBsB7XlU8lf5HscNCwjUaWdaxDhFEOw0HQehC42aQ', '') 
+    ACCESS_TOKEN = getattr(settings, 'PNCP_ACCESS_TOKEN', '') 
 
     @classmethod
     def publicar_compra(cls, processo: ProcessoLicitatorio, arquivo, titulo_documento: str):

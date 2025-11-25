@@ -23,7 +23,6 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .services import PNCPService 
 
-
 # Imports Locais
 from .models import (
     CustomUser, Entidade, Orgao, ProcessoLicitatorio, Lote, Item,
@@ -40,7 +39,7 @@ from .services import ImportacaoService  # Serviço criado anteriormente
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
-
+GOOGLE_CLIENT_ID = getattr(settings, 'GOOGLE_CLIENT_ID', '') 
 # ============================================================
 # 👤 USUÁRIOS
 # ============================================================
