@@ -1,130 +1,23 @@
+# api/models.py
+
 from django.db import models, transaction
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-# Choices alinhados com o FRONT
-# ============================
-NATUREZAS_DESPESA = [
-    ("33901100", "33901100 - Vencimentos e vantagens fixas - pessoal civil"),
-    ("33901200", "33901200 - Vencimentos e vantagens fixas - pessoal militar"),
-    ("33901400", "33901400 - Diárias"),
-    ("33901500", "33901500 - Auxílio alimentação"),
-    ("33901600", "33901600 - Despesas de locomoção, transporte e hospedagem"),
-    ("33901800", "33901800 - Auxílio financeiro a estudante"),
-    ("33902000", "33902000 - Auxílio transporte"),
-    ("33902300", "33902300 - Obrigações patronais"),
-    ("33903000", "33903000 - Material de consumo"),
-    ("33903200", "33903200 - Material, bem ou serviço para distribuição gratuita"),
-    ("33903300", "33903300 - Passagens e despesas com locomoção"),
-    ("33903400", "33903400 - Outros serviços de terceiro - pessoa física"),
-    ("33903500", "33903500 - Serviços de consultoria"),
-    ("33903600", "33903600 - Serviços de terceiros – pessoa física"),
-    ("33903700", "33903700 - Serviços de terceiros – pessoa jurídica"),
-    ("33903800", "33903800 - Serviços de limpeza e conservação"),
-    ("33903900", "33903900 - Serviços jurídicos"),
-    ("33904000", "33904000 - Serviços de tecnologia da informação"),
-    ("33904100", "33904100 - Contribuições"),
-    ("33904200", "33904200 - Assistência médica e odontológica"),
-    ("33904300", "33904300 - Seguro de vida"),
-    ("33904400", "33904400 - Indenizações e restituições"),
-    ("33904500", "33904500 - Serviços de energia elétrica"),
-    ("33904600", "33904600 - Outros serviços de terceiros"),
-    ("33904700", "33904700 - Serviços de comunicação"),
-    ("33904800", "33904800 - Serviços de água e esgoto"),
-    ("33904900", "33904900 - Serviços de vigilância"),
-    ("33905000", "33905000 - Serviços gráficos"),
-    ("33905100", "33905100 - Publicidade legal"),
-    ("33905200", "33905200 - Serviços de transporte"),
-    ("33905300", "33905300 - Manutenção de equipamentos"),
-    ("33905400", "33905400 - Locação de imóveis"),
-    ("33905500", "33905500 - Locação de veículos"),
-    ("33905600", "33905600 - Serviços de telefonia móvel"),
-    ("33905700", "33905700 - Serviços de internet"),
-    ("33905800", "33905800 - Serviços de capacitação"),
-    ("33905900", "33905900 - Serviços de apoio administrativo"),
-    ("44905100", "44905100 - Obras e instalações"),
-    ("44905200", "44905200 - Material permanente"),
-    ("44906100", "44906100 - Aquisição de equipamentos e material permanente"),
-    ("44907100", "44907100 - Aquisição de imóveis"),
-    ("44907200", "44907200 - Aquisição de veículos"),
-    ("44907300", "44907300 - Aquisição de mobiliário"),
-    ("44907400", "44907400 - Aquisição de equipamentos de informática"),
-    ("44907500", "44907500 - Aquisição de equipamentos hospitalares"),
-    ("44909000", "44909000 - Outras despesas de capital"),
-]
-
-MODO_DISPUTA_CHOICES = (
-    ("aberto", "Aberto"),
-    ("fechado", "Fechado"),
-    ("aberto_e_fechado", "Aberto e Fechado"),
-)
-
-CRITERIO_JULGAMENTO_CHOICES = (
-    ("menor_preco", "Menor Preço"),
-    ("maior_desconto", "Maior Desconto"),
-)
-
-AMPARO_LEGAL_CHOICES = (
-    # Lei 8.666/93
-    ("art_23", "Art. 23"),
-    ("art_24", "Art. 24"),
-    ("art_25", "Art. 25"),
-
-    # Lei 10.520/02
-    ("art_4", "Art. 4º "),
-    ("art_5", "Art. 5º "),
-
-    # Lei 14.133/21 – pregão/concorrência
-    ("art_28_i", "Art. 28, inciso I"),
-    ("art_28_ii", "Art. 28, inciso II"),
-
-    # Lei 14.133/21 – dispensa eletrônica
-    ("art_75_par7", "Art. 75, § 7º"),
-    ("art_75_i", "Art. 75, inciso I"),
-    ("art_75_ii", "Art. 75, inciso II"),
-    ("art_75_iii_a", "Art. 75, inciso III, a"),
-    ("art_75_iii_b", "Art. 75, inciso III, b"),
-    ("art_75_iii_c", "Art. 75, inciso III, c"),
-    ("art_75_iii_d", "Art. 75, inciso III, d"),
-    ("art_75_iii_e", "Art. 75, inciso III, e"),
-    ("art_75_iii_f", "Art. 75, inciso III, f"),
-    ("art_75_iv_a", "Art. 75, inciso IV, a"),
-    ("art_75_iv_b", "Art. 75, inciso IV, b"),
-    ("art_75_iv_c", "Art. 75, inciso IV, c"),
-    ("art_75_iv_d", "Art. 75, inciso IV, d"),
-    ("art_75_iv_e", "Art. 75, inciso IV, e"),
-    ("art_75_iv_f", "Art. 75, inciso IV, f"),
-    ("art_75_iv_j", "Art. 75, inciso IV, j"),
-    ("art_75_iv_k", "Art. 75, inciso IV, k"),
-    ("art_75_iv_m", "Art. 75, inciso IV, m"),
-    ("art_75_ix", "Art. 75, inciso IX"),
-    ("art_75_viii", "Art. 75, inciso VIII"),
-    ("art_75_xv", "Art. 75, inciso XV"),
-    ("lei_11947_art14_1", "Lei 11.947/2009, Art. 14, § 1º"),
-
-    # Lei 14.133/21 – credenciamento
-    ("art_79_i", "Art. 79, inciso I"),
-    ("art_79_ii", "Art. 79, inciso II"),
-    ("art_79_iii", "Art. 79, inciso III"),
-
-    # Lei 14.133/21 – inexigibilidade eletrônica
-    ("art_74_caput", "Art. 74, caput"),
-    ("art_74_i", "Art. 74, I"),
-    ("art_74_ii", "Art. 74, II"),
-    ("art_74_iii_a", "Art. 74, III, a"),
-    ("art_74_iii_b", "Art. 74, III, b"),
-    ("art_74_iii_c", "Art. 74, III, c"),
-    ("art_74_iii_d", "Art. 74, III, d"),
-    ("art_74_iii_e", "Art. 74, III, e"),
-    ("art_74_iii_f", "Art. 74, III, f"),
-    ("art_74_iii_g", "Art. 74, III, g"),
-    ("art_74_iii_h", "Art. 74, III, h"),
-    ("art_74_iv", "Art. 74, IV"),
-    ("art_74_v", "Art. 74, V"),
-
-    # Lei 14.133/21 – adesão ata de registro de preços
-    ("art_86_2", "Art. 86, § 2º"),
+# Importação das escolhas (Choices) para manter o model limpo
+# Certifique-se de ter criado o arquivo api/choices.py conforme a etapa anterior
+from .choices import (
+    NATUREZAS_DESPESA,
+    MODO_DISPUTA_CHOICES,
+    CRITERIO_JULGAMENTO_CHOICES,
+    AMPARO_LEGAL_CHOICES,
+    MODALIDADE_CHOICES,
+    CLASSIFICACAO_CHOICES,
+    TIPO_ORGANIZACAO_CHOICES,
+    SITUACAO_CHOICES,
+    FUNDAMENTACAO_CHOICES,
+    TIPO_PESSOA_CHOICES
 )
 
 # ============================================================
@@ -137,9 +30,17 @@ class CustomUser(AbstractUser):
     phone = models.CharField(max_length=20, null=True, blank=True)
     profile_image = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
 
-    # Corrige conflitos de related_name duplicados no admin
-    groups = models.ManyToManyField('auth.Group', related_name='customuser_groups', blank=True)
-    user_permissions = models.ManyToManyField('auth.Permission', related_name='customuser_permissions', blank=True)
+    # Ajustes para compatibilidade com o admin do Django
+    groups = models.ManyToManyField(
+        'auth.Group', 
+        related_name='customuser_groups', 
+        blank=True
+    )
+    user_permissions = models.ManyToManyField(
+        'auth.Permission', 
+        related_name='customuser_permissions', 
+        blank=True
+    )
 
     def __str__(self):
         return self.get_full_name() or self.username
@@ -163,8 +64,8 @@ class Entidade(models.Model):
 
 class Orgao(models.Model):
     nome = models.CharField(max_length=255)
-
-    # Código da Unidade Compradora (genérico, atende PNCP e outros)
+    
+    # Código genérico (atende PNCP e outros sistemas)
     codigo_unidade = models.CharField(
         max_length=32,
         blank=True,
@@ -172,7 +73,6 @@ class Orgao(models.Model):
         help_text='Código da Unidade Compradora (ex.: 1010)'
     )
 
-    # 🔹 Agora pode ficar em branco inclusive no banco (null=True)
     entidade = models.ForeignKey(
         Entidade,
         related_name='orgaos',
@@ -191,130 +91,57 @@ class Orgao(models.Model):
 # ============================================================
 # 📄 PROCESSO LICITATÓRIO
 # ============================================================
+
 class ProcessoLicitatorio(models.Model):
-    # -------------------------------
-    # Identificação / objetos
-    # -------------------------------
+    # --- Identificação ---
     numero_processo = models.CharField(max_length=50, blank=True, null=True)
     numero_certame = models.CharField(max_length=50, blank=True, null=True)
     objeto = models.TextField(blank=True, null=True)
 
-    # -------------------------------
-    # Classificadores principais
-    # -------------------------------
-    modalidade = models.CharField(
-        max_length=50,
-        blank=True,
-        choices=[
-            ('Pregão Eletrônico', 'Pregão Eletrônico'),
-            ('Concorrência Eletrônica', 'Concorrência Eletrônica'),
-            ('Dispensa Eletrônica', 'Dispensa Eletrônica'),
-            ('Inexigibilidade Eletrônica', 'Inexigibilidade Eletrônica'),
-            ('Adesão a Registro de Preços', 'Adesão a Registro de Preços'),
-            ('Credenciamento', 'Credenciamento'),
-        ],
-    )
-    classificacao = models.CharField(
-        max_length=50,
-        blank=True,
-        choices=[
-            ('Compras', 'Compras'),
-            ('Serviços Comuns', 'Serviços Comuns'),
-            ('Serviços de Engenharia Comuns', 'Serviços de Engenharia Comuns'),
-            ('Obras Comuns', 'Obras Comuns'),
-        ],
-    )
-    tipo_organizacao = models.CharField(
-        max_length=10,
-        blank=True,
-        choices=[('Lote', 'Lote'), ('Item', 'Item')],
-    )
-
+    # --- Classificadores ---
+    modalidade = models.CharField(max_length=50, blank=True, choices=MODALIDADE_CHOICES)
+    classificacao = models.CharField(max_length=50, blank=True, choices=CLASSIFICACAO_CHOICES)
+    tipo_organizacao = models.CharField(max_length=10, blank=True, choices=TIPO_ORGANIZACAO_CHOICES)
+    
     situacao = models.CharField(
-        max_length=50,
-        blank=True,
-        choices=[
-            ('Aberto', 'Aberto'),
-            ('Em Pesquisa', 'Em Pesquisa'),
-            ('Aguardando Publicação', 'Aguardando Publicação'),
-            ('Publicado', 'Publicado'),
-            ('Em Contratação', 'Em Contratação'),
-            ('Adjudicado/Homologado', 'Adjudicado/Homologado'),
-            ('Revogado/Cancelado', 'Revogado/Cancelado'),
-        ],
-        default='Em Pesquisa',
+        max_length=50, 
+        blank=True, 
+        choices=SITUACAO_CHOICES,
+        default='Em Pesquisa'
     )
 
-    # -------------------------------
-    # Datas e valores
-    # -------------------------------
+    # --- Datas e Valores ---
     data_processo = models.DateField(blank=True, null=True)
     data_abertura = models.DateTimeField(blank=True, null=True)
-
     valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
 
-    # SRP (Registro de Preço) – alias compatível com o front (registro_precos)
+    # SRP (Registro de Preço)
     registro_preco = models.BooleanField(default=False, blank=True, verbose_name="Registro de Preço")
 
-    # -------------------------------
-    # Relações
-    # -------------------------------
+    # --- Relações ---
     entidade = models.ForeignKey(
-        'Entidade',
-        on_delete=models.PROTECT,
-        blank=True,
-        null=True,
+        Entidade, 
+        on_delete=models.PROTECT, 
+        blank=True, 
+        null=True, 
         related_name='processos'
     )
     orgao = models.ForeignKey(
-        'Orgao',
-        on_delete=models.PROTECT,
-        blank=True,
-        null=True,
+        Orgao, 
+        on_delete=models.PROTECT, 
+        blank=True, 
+        null=True, 
         related_name='processos'
     )
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True, blank=True)
 
-    # -------------------------------
-    # Campos textuais selecionados no sistema (o front envia estes)
-    # Mantemos ambos: texto para UX/auditoria e *_id para PNCP
-    # -------------------------------
-    fundamentacao = models.CharField(
-        max_length=16,
-        choices=[
-            ("lei_14133", "Lei 14.133/21"),
-            ("lei_8666",  "Lei 8.666/93"),
-            ("lei_10520", "Lei 10.520/02"),
-        ],
-        blank=True,
-        null=True,
-    )
-
-    # agora amparo_legal segue os "value" de AMPARO_LEGAL
-    amparo_legal = models.CharField(
-        max_length=32,
-        choices=AMPARO_LEGAL_CHOICES,
-        blank=True,
-        null=True,
-    )
-
-    # modo_disputa segue os "value" de MODO_DISPUTA
-    modo_disputa = models.CharField(
-        max_length=24,
-        choices=MODO_DISPUTA_CHOICES,
-        blank=True,
-        null=True,
-    )
-
-    # criterio_julgamento segue os "value" de CRITERIO_JULGAMENTO
-    criterio_julgamento = models.CharField(
-        max_length=32,
-        choices=CRITERIO_JULGAMENTO_CHOICES,
-        blank=True,
-        null=True,
-    )
+    # --- Detalhes Jurídicos/PNCP ---
+    fundamentacao = models.CharField(max_length=16, choices=FUNDAMENTACAO_CHOICES, blank=True, null=True)
+    amparo_legal = models.CharField(max_length=32, choices=AMPARO_LEGAL_CHOICES, blank=True, null=True)
+    modo_disputa = models.CharField(max_length=24, choices=MODO_DISPUTA_CHOICES, blank=True, null=True)
+    criterio_julgamento = models.CharField(max_length=32, choices=CRITERIO_JULGAMENTO_CHOICES, blank=True, null=True)
 
     class Meta:
         ordering = ['-data_processo']
@@ -322,11 +149,9 @@ class ProcessoLicitatorio(models.Model):
         verbose_name_plural = "Processos Licitatórios"
 
     def __str__(self):
-        return f"{self.numero_certame}"
+        return f"{self.numero_certame or self.numero_processo}"
 
-    # -------------------------------
-    # Alias compatível com o front (registro_precos)
-    # -------------------------------
+    # --- Alias para Frontend (React espera 'registro_precos') ---
     @property
     def registro_precos(self):
         return self.registro_preco
@@ -335,18 +160,22 @@ class ProcessoLicitatorio(models.Model):
     def registro_precos(self, value):
         self.registro_preco = bool(value)
 
-    # -------------------------------
-    # Helpers de Lotes
-    # -------------------------------
+    # --- Lógica de Negócio (Fat Model) ---
+
     def next_lote_numero(self) -> int:
+        """Calcula o próximo número de lote disponível."""
         ultimo = self.lotes.order_by('-numero').first()
         return (ultimo.numero + 1) if ultimo else 1
 
     @transaction.atomic
     def criar_lotes(self, quantidade: int = None, descricao_prefixo: str = "Lote ",
                     *, lotes: list = None, numero: int = None, descricao: str = ""):
+        """
+        Cria lotes de forma flexível: em massa (quantidade), lista explícita ou individual.
+        """
         created = []
 
+        # 1. Criação via lista de objetos/dicts
         if isinstance(lotes, list) and lotes:
             for item in lotes:
                 n = item.get('numero') or self.next_lote_numero()
@@ -355,12 +184,14 @@ class ProcessoLicitatorio(models.Model):
                 created.append(obj)
             return created
 
+        # 2. Criação individual
         if numero is not None or descricao:
             n = numero or self.next_lote_numero()
             obj = Lote.objects.create(processo=self, numero=n, descricao=descricao or "")
             created.append(obj)
             return created
 
+        # 3. Criação em massa (ex: criar 10 lotes de uma vez)
         if quantidade and quantidade > 0:
             start = self.next_lote_numero()
             for i in range(quantidade):
@@ -370,11 +201,15 @@ class ProcessoLicitatorio(models.Model):
                 created.append(obj)
             return created
 
-        raise ValidationError("Parâmetros inválidos para criação de lotes.")
+        raise ValidationError("Parâmetros insuficientes para criação de lotes.")
 
     @transaction.atomic
-    def organizar_lotes(self, ordem_ids: list[int] = None, normalizar: bool = False,
-                        inicio: int = 1, mapa: list[dict] = None):
+    def organizar_lotes(self, ordem_ids: list = None, normalizar: bool = False,
+                        inicio: int = 1, mapa: list = None):
+        """
+        Reordena ou renomeia os números dos lotes.
+        """
+        # Caso 1: Reordenar baseado em lista de IDs
         if isinstance(ordem_ids, list) and ordem_ids:
             qs = list(self.lotes.filter(id__in=ordem_ids))
             id2obj = {o.id: o for o in qs}
@@ -387,6 +222,7 @@ class ProcessoLicitatorio(models.Model):
                     numero += 1
             return self.lotes.order_by('numero')
 
+        # Caso 2: Normalizar sequência (1, 2, 3...)
         if normalizar:
             numero = inicio or 1
             for obj in self.lotes.order_by('numero', 'id'):
@@ -396,6 +232,7 @@ class ProcessoLicitatorio(models.Model):
                 numero += 1
             return self.lotes.order_by('numero')
 
+        # Caso 3: Mapa explícito (ID -> Novo Número)
         if isinstance(mapa, list) and mapa:
             ids = [m.get('id') for m in mapa if m.get('id') is not None]
             qs = self.lotes.filter(id__in=ids)
@@ -409,7 +246,7 @@ class ProcessoLicitatorio(models.Model):
                     obj.save(update_fields=['numero'])
             return self.lotes.order_by('numero')
 
-        raise ValidationError("Parâmetros inválidos para organização de lotes.")
+        raise ValidationError("Parâmetros insuficientes para organização de lotes.")
 
 
 # ============================================================
@@ -440,8 +277,12 @@ class Fornecedor(models.Model):
     razao_social = models.CharField(max_length=255)
     nome_fantasia = models.CharField(max_length=255, blank=True, null=True)
     porte = models.CharField(max_length=100, blank=True, null=True)
+    
+    # Contato
     telefone = models.CharField(max_length=20, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
+    
+    # Endereço
     cep = models.CharField(max_length=20, blank=True, null=True)
     logradouro = models.CharField(max_length=255, blank=True, null=True)
     numero = models.CharField(max_length=50, blank=True, null=True)
@@ -449,11 +290,11 @@ class Fornecedor(models.Model):
     complemento = models.CharField(max_length=255, blank=True, null=True)
     uf = models.CharField(max_length=2, blank=True, null=True)
     municipio = models.CharField(max_length=100, blank=True, null=True)
+    
     criado_em = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['razao_social']
-        managed = True
 
     def __str__(self):
         return self.razao_social or self.cnpj
@@ -462,79 +303,79 @@ class Fornecedor(models.Model):
 # ============================================================
 # 📋 ITEM
 # ============================================================
+
 class Item(models.Model):
     processo = models.ForeignKey(
-        ProcessoLicitatorio,
-        related_name='itens',
+        ProcessoLicitatorio, 
+        related_name='itens', 
         on_delete=models.CASCADE
     )
-
-    descricao = models.CharField(max_length=255)
-
-    # NOVO CAMPO: texto livre da especificação do item
-    especificacao = models.TextField(
-        blank=True,
-        null=True,
-        help_text="Especificação detalhada do item (vindo da planilha).",
-    )
-
-    unidade = models.CharField(max_length=20)
-    quantidade = models.DecimalField(max_digits=12, decimal_places=2)
-    valor_estimado = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
-
     lote = models.ForeignKey(
-        Lote,
-        related_name='itens',
-        on_delete=models.SET_NULL,
-        blank=True,
+        Lote, 
+        related_name='itens', 
+        on_delete=models.SET_NULL, 
+        blank=True, 
         null=True
     )
     fornecedor = models.ForeignKey(
-        'Fornecedor',
-        related_name='itens',
-        on_delete=models.SET_NULL,
-        blank=True,
+        Fornecedor, 
+        related_name='itens', 
+        on_delete=models.SET_NULL, 
+        blank=True, 
         null=True
     )
 
-    ordem = models.PositiveIntegerField(default=1)
-
-    natureza = models.CharField(
-        choices=NATUREZAS_DESPESA,
-        blank=True,
-        null=True,
-
+    descricao = models.CharField(max_length=255)
+    especificacao = models.TextField(
+        blank=True, 
+        null=True, 
+        help_text="Especificação detalhada do item (vindo da planilha)."
     )
+    
+    unidade = models.CharField(max_length=20)
+    quantidade = models.DecimalField(max_digits=12, decimal_places=2)
+    valor_estimado = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+    
+    ordem = models.PositiveIntegerField(default=1)
+    natureza = models.CharField(choices=NATUREZAS_DESPESA, blank=True, null=True)
 
     class Meta:
         ordering = ['ordem']
         constraints = [
-            models.UniqueConstraint(
-                fields=['processo', 'ordem'],
-                name='uniq_item_processo_ordem'
-            ),
+            models.UniqueConstraint(fields=['processo', 'ordem'], name='uniq_item_processo_ordem'),
         ]
 
     def __str__(self):
         return f"{self.descricao} ({self.processo.numero_processo})"
 
     def clean(self):
+        """Validação de integridade: Item não pode estar em Lote de outro Processo."""
         if self.lote and self.lote.processo_id != self.processo_id:
             raise ValidationError("O lote selecionado pertence a outro processo.")
 
     def save(self, *args, **kwargs):
-        if getattr(self, "_state", None) and self._state.adding and (self.ordem is None or self.ordem <= 0):
+        """Auto-numeração do campo 'ordem' se não fornecido."""
+        if self._state.adding and (self.ordem is None or self.ordem <= 0):
             last = Item.objects.filter(processo=self.processo).order_by('-ordem').first()
             self.ordem = (last.ordem + 1) if last else 1
         super().save(*args, **kwargs)
 
+
 # ============================================================
-# 🔗 FORNECEDOR ↔ PROCESSO
+# 🔗 FORNECEDOR ↔ PROCESSO (Participantes)
 # ============================================================
 
 class FornecedorProcesso(models.Model):
-    processo = models.ForeignKey('ProcessoLicitatorio', on_delete=models.CASCADE, related_name='fornecedores_processo')
-    fornecedor = models.ForeignKey('Fornecedor', on_delete=models.CASCADE, related_name='processos')
+    processo = models.ForeignKey(
+        ProcessoLicitatorio, 
+        on_delete=models.CASCADE, 
+        related_name='fornecedores_processo'
+    )
+    fornecedor = models.ForeignKey(
+        Fornecedor, 
+        on_delete=models.CASCADE, 
+        related_name='processos'
+    )
     data_participacao = models.DateField(auto_now_add=True)
     habilitado = models.BooleanField(default=True)
 
@@ -544,11 +385,11 @@ class FornecedorProcesso(models.Model):
         verbose_name_plural = "Fornecedores do Processo"
 
     def __str__(self):
-        return f"{self.fornecedor.razao_social or self.fornecedor.cnpj} - {self.processo.numero_processo}"
+        return f"{self.fornecedor} - {self.processo.numero_processo}"
 
 
 # ============================================================
-# 💰 ITEM ↔ FORNECEDOR (propostas)
+# 💰 ITEM ↔ FORNECEDOR (Propostas)
 # ============================================================
 
 class ItemFornecedor(models.Model):
@@ -563,38 +404,39 @@ class ItemFornecedor(models.Model):
         verbose_name_plural = "Propostas de Fornecedores"
 
     def __str__(self):
-        return f"{self.item.descricao} - {self.fornecedor.razao_social or self.fornecedor.cnpj}"
+        return f"{self.item.descricao} - {self.fornecedor}"
 
 
 # ============================================================
-# 📑 CONTRATO / EMPENHO (GENÉRICO PARA PUBLICAÇÃO)
+# 📑 CONTRATO / EMPENHO
 # ============================================================
 
 class ContratoEmpenho(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, related_name='contratos', on_delete=models.PROTECT)
+    processo = models.ForeignKey(
+        ProcessoLicitatorio, 
+        related_name='contratos', 
+        on_delete=models.PROTECT
+    )
 
     tipo_contrato_id = models.PositiveIntegerField()
     numero_contrato_empenho = models.CharField(max_length=64)
     ano_contrato = models.PositiveIntegerField()
-    processo_ref = models.CharField(max_length=64, blank=True, null=True)  # Nº do processo administrativo
+    processo_ref = models.CharField(max_length=64, blank=True, null=True)
     categoria_processo_id = models.PositiveIntegerField(blank=True, null=True)
     receita = models.BooleanField(default=False)
 
-    # Unidade compradora
     unidade_codigo = models.CharField(max_length=32, blank=True, null=True)
-
-    # Fornecedor
-    ni_fornecedor = models.CharField(max_length=14, blank=True, null=True)  # CNPJ/CPF sem formatação
+    ni_fornecedor = models.CharField(max_length=14, blank=True, null=True)
+    
     tipo_pessoa_fornecedor = models.CharField(
         max_length=2,
-        choices=(('PJ', 'Pessoa Jurídica'), ('PF', 'Pessoa Física')),
+        choices=TIPO_PESSOA_CHOICES,
         blank=True,
         null=True
     )
 
-    # Controle de publicação (genérico)
     sequencial_publicacao = models.PositiveIntegerField(blank=True, null=True)
-
+    
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
