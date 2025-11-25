@@ -1,11 +1,15 @@
+# api/services.py
+
 import json
 import re
 import unicodedata
+import requests
 from datetime import datetime, time
 from decimal import Decimal
 from urllib import request as urlrequest
 
 from django.db import transaction
+from django.conf import settings
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel as excel_to_datetime
 
@@ -20,7 +24,7 @@ from .models import (
 )
 
 # ==============================================================================
-# CONSTANTES DE MAPEAMENTO (Extraídas da View)
+# CONSTANTES DE MAPEAMENTO (IMPORTAÇÃO EXCEL)
 # ==============================================================================
 
 AMPARO_EXCEL_TO_VALUE = {
@@ -73,6 +77,10 @@ AMPARO_EXCEL_TO_VALUE = {
     "ART. 86, § 2O": "art_86_2",
 }
 
+# ==============================================================================
+# SERVIÇO 1: IMPORTAÇÃO DE EXCEL (XLSX)
+# ==============================================================================
+
 class ImportacaoService:
     """
     Serviço responsável por processar a importação de planilhas XLSX
@@ -81,9 +89,6 @@ class ImportacaoService:
 
     @staticmethod
     def _normalize(s):
-        """
-        Normaliza strings para comparação (remove acentos, uppercase, strip).
-        """
         if s is None:
             return ""
         s = str(s).strip()
@@ -95,7 +100,6 @@ class ImportacaoService:
 
     @staticmethod
     def _to_decimal(v):
-        """Converte valor para Decimal, tratando pontuação brasileira."""
         if v in (None, ""):
             return None
         try:
@@ -110,7 +114,6 @@ class ImportacaoService:
 
     @staticmethod
     def _to_date(v, wb_epoch=None):
-        """Converte valor para date (suporta datetime, serial excel, string)."""
         if not v:
             return None
         if isinstance(v, datetime):
@@ -131,7 +134,6 @@ class ImportacaoService:
 
     @classmethod
     def _to_datetime(cls, date_v, time_v=None, wb_epoch=None):
-        """Combina data e hora vindos do Excel."""
         dt_date = cls._to_date(date_v, wb_epoch)
         if not dt_date:
             return None
@@ -167,7 +169,6 @@ class ImportacaoService:
 
     @staticmethod
     def _fetch_cnpj_brasilapi(cnpj_digits: str) -> dict:
-        """Consulta BrasilAPI para um CNPJ."""
         if not cnpj_digits or len(cnpj_digits) != 14:
             return {}
         url = f"https://brasilapi.com.br/api/cnpj/v1/{cnpj_digits}"
@@ -181,18 +182,14 @@ class ImportacaoService:
 
     @classmethod
     def processar_planilha_padrao(cls, arquivo):
-        """
-        Lê o arquivo XLSX, processa abas e cria registros no banco de dados.
-        Retorna um dicionário com estatísticas e o objeto processo criado.
-        """
         try:
             wb = load_workbook(arquivo, data_only=True)
         except Exception as e:
             raise ValueError(f"Erro ao ler arquivo Excel: {e}")
 
-        # ------------------------ Preparar Mapeamentos ------------------------
+        # --- Mapeamentos ---
         AMPARO_EXCEL_NORMALIZED = {cls._normalize(k): v for k, v in AMPARO_EXCEL_TO_VALUE.items()}
-
+        
         MODALIDADE_EXCEL_NORMALIZED = {
             cls._normalize("Pregão Eletrônico"): "Pregão Eletrônico",
             cls._normalize("Concorrência Eletrônica"): "Concorrência Eletrônica",
@@ -212,7 +209,7 @@ class ImportacaoService:
             cls._normalize("Item"): "Item",
         }
 
-        # ------------------------ Localizar Aba Principal ------------------------
+        # --- Localizar Aba ---
         ws = None
         for name in wb.sheetnames:
             if cls._normalize(name).startswith("CADASTRO INICIAL"):
@@ -225,7 +222,7 @@ class ImportacaoService:
             v = ws[coord].value
             return "" if v is None else v
 
-        # ------------------------ Ler Metadados do Processo ------------------------
+        # --- Ler Metadados ---
         numero_processo = str(get("B7")).strip()
         data_processo_raw = get("C7")
         numero_certame = str(get("D7")).strip()
@@ -246,28 +243,19 @@ class ImportacaoService:
         amparo_legal_raw = get("H11")
         vigencia_raw = get("I11")
 
-        # ------------------------ Ler Itens ------------------------
+        # --- Ler Itens ---
         row_header = 15
         col_map = {
-            "LOTE": 1,
-            "Nº ITEM": 2,
-            "DESCRICAO DO ITEM": 3,
-            "ESPECIFICACAO": 4,
-            "QUANTIDADE": 5,
-            "UNIDADE": 6,
-            "NATUREZA / DESPESA": 7,
-            "VALOR REFERENCIA UNITARIO": 8,
-            "CNPJ DO FORNECEDOR": 9,
+            "LOTE": 1, "Nº ITEM": 2, "DESCRICAO DO ITEM": 3, "ESPECIFICACAO": 4,
+            "QUANTIDADE": 5, "UNIDADE": 6, "NATUREZA / DESPESA": 7,
+            "VALOR REFERENCIA UNITARIO": 8, "CNPJ DO FORNECEDOR": 9,
         }
-
-        def col(key):
-            return col_map[key]
+        def col(key): return col_map[key]
 
         itens_data = []
         for row in range(row_header + 1, ws.max_row + 1):
             desc = ws.cell(row=row, column=col("DESCRICAO DO ITEM")).value
-            if not desc:
-                continue
+            if not desc: continue
             itens_data.append({
                 "descricao": desc,
                 "especificacao": ws.cell(row=row, column=col("ESPECIFICACAO")).value,
@@ -282,11 +270,10 @@ class ImportacaoService:
         if not itens_data:
             raise ValueError("Nenhum item encontrado na planilha.")
 
-        # ------------------------ Ler Fornecedores (Aba Opcional) ------------------------
+        # --- Ler Fornecedores (Aba Opcional) ---
         fornecedores_cache = {}
         for name in wb.sheetnames:
-            if "FORNECEDOR" not in cls._normalize(name):
-                continue
+            if "FORNECEDOR" not in cls._normalize(name): continue
             ws_f = wb[name]
             header = None
             cols = {}
@@ -294,29 +281,25 @@ class ImportacaoService:
                 temp = {}
                 for c in range(1, ws_f.max_column + 1):
                     v = ws_f.cell(r, c).value
-                    if v:
-                        temp[cls._normalize(v)] = c
+                    if v: temp[cls._normalize(v)] = c
                 if "CNPJ" in temp and "RAZAO SOCIAL" in temp:
                     header = r
                     cols = temp
                     break
-            if not header:
-                continue
+            if not header: continue
 
             for r in range(header + 1, ws_f.max_row + 1):
                 cnpj_raw = ws_f.cell(r, cols["CNPJ"]).value
                 razao_raw = ws_f.cell(r, cols["RAZAO SOCIAL"]).value
-                if not cnpj_raw:
-                    continue
+                if not cnpj_raw: continue
                 cnpj = re.sub(r"\D", "", str(cnpj_raw))
-                if len(cnpj) != 14:
-                    continue
+                if len(cnpj) != 14: continue
                 fornecedores_cache[cnpj] = (str(razao_raw).strip() if razao_raw else "") or cnpj
             break
 
-        # ------------------------ Persistência (Transação Atômica) ------------------------
+        # --- Persistência ---
         with transaction.atomic():
-            # 1. Entidade e Órgão
+            # 1. Entidade/Orgao
             entidade = None
             if entidade_nome:
                 entidade = Entidade.objects.filter(nome__iexact=entidade_nome).first()
@@ -324,11 +307,10 @@ class ImportacaoService:
             orgao = None
             if orgao_nome:
                 qs_or = Orgao.objects.all()
-                if entidade:
-                    qs_or = qs_or.filter(entidade=entidade)
+                if entidade: qs_or = qs_or.filter(entidade=entidade)
                 orgao = qs_or.filter(nome__iexact=orgao_nome).first()
 
-            # 2. Normalização de Campos do Processo
+            # 2. Normalização
             mod_txt = None
             if modalidade_raw not in (None, ""):
                 mod_txt = MODALIDADE_EXCEL_NORMALIZED.get(cls._normalize(modalidade_raw), str(modalidade_raw).strip())
@@ -341,25 +323,19 @@ class ImportacaoService:
             if tipo_organizacao_raw not in (None, ""):
                 org_txt = TIPO_ORG_EXCEL_NORMALIZED.get(cls._normalize(tipo_organizacao_raw), str(tipo_organizacao_raw).strip())
 
-            # Modo de disputa
+            # Modos e Critérios
             modo_disputa_txt = ""
             if tipo_disputa_raw not in (None, ""):
                 s = str(tipo_disputa_raw).strip().lower()
-                if "aberto" in s and "fechado" in s:
-                    modo_disputa_txt = "aberto_e_fechado"
-                elif "aberto" in s:
-                    modo_disputa_txt = "aberto"
-                elif "fechado" in s:
-                    modo_disputa_txt = "fechado"
+                if "aberto" in s and "fechado" in s: modo_disputa_txt = "aberto_e_fechado"
+                elif "aberto" in s: modo_disputa_txt = "aberto"
+                elif "fechado" in s: modo_disputa_txt = "fechado"
 
-            # Critério de julgamento
             criterio_txt = ""
             if criterio_julgamento_raw not in (None, ""):
                 cj = str(criterio_julgamento_raw).strip().lower()
-                if "menor" in cj:
-                    criterio_txt = "menor_preco"
-                elif "maior" in cj:
-                    criterio_txt = "maior_desconto"
+                if "menor" in cj: criterio_txt = "menor_preco"
+                elif "maior" in cj: criterio_txt = "maior_desconto"
 
             # Fundamentação
             fundamentacao_txt = None
@@ -367,16 +343,12 @@ class ImportacaoService:
                 f = str(fundamentacao_raw).strip()
                 f_lower = f.lower()
                 digits = "".join(ch for ch in f if ch.isdigit())
-                if "14133" in digits or "14133" in f_lower:
-                    fundamentacao_txt = "lei_14133"
-                elif "8666" in digits or "8666" in f_lower:
-                    fundamentacao_txt = "lei_8666"
-                elif "10520" in digits or "10520" in f_lower:
-                    fundamentacao_txt = "lei_10520"
-                elif f in ("lei_14133", "lei_8666", "lei_10520"):
-                    fundamentacao_txt = f
+                if "14133" in digits or "14133" in f_lower: fundamentacao_txt = "lei_14133"
+                elif "8666" in digits or "8666" in f_lower: fundamentacao_txt = "lei_8666"
+                elif "10520" in digits or "10520" in f_lower: fundamentacao_txt = "lei_10520"
+                elif f in ("lei_14133", "lei_8666", "lei_10520"): fundamentacao_txt = f
 
-            # Amparo Legal
+            # Amparo
             amparo_legal_txt = None
             if amparo_legal_raw not in (None, ""):
                 a = str(amparo_legal_raw).strip()
@@ -408,18 +380,16 @@ class ImportacaoService:
                 criterio_julgamento=criterio_txt or None,
             )
 
-            # 4. Criar Lotes
+            # 4. Lotes
             lotes_map = {}
             for it in itens_data:
                 lote_num = it["lote"]
                 if lote_num and lote_num not in lotes_map:
                     lotes_map[lote_num] = Lote.objects.create(
-                        processo=processo,
-                        numero=lote_num,
-                        descricao=f"Lote {lote_num}",
+                        processo=processo, numero=lote_num, descricao=f"Lote {lote_num}",
                     )
 
-            # 5. Criar Itens e Vincular Fornecedores
+            # 5. Itens e Fornecedores
             ordem = 0
             fornecedores_vinculados = set()
 
@@ -432,10 +402,7 @@ class ImportacaoService:
                 if cnpj_raw_item:
                     cnpj_digits = re.sub(r"\D", "", str(cnpj_raw_item))
                     if len(cnpj_digits) == 14:
-                        # Tenta buscar local
                         fornecedor = Fornecedor.objects.filter(cnpj=cnpj_digits).first()
-                        
-                        # Se não achar, busca na API Externa
                         if not fornecedor:
                             dados_api = cls._fetch_cnpj_brasilapi(cnpj_digits)
                             razao_social = (
@@ -443,7 +410,6 @@ class ImportacaoService:
                                 or dados_api.get("razao_social") 
                                 or cnpj_digits
                             )
-
                             fornecedor = Fornecedor.objects.create(
                                 cnpj=cnpj_digits,
                                 razao_social=razao_social,
@@ -458,10 +424,8 @@ class ImportacaoService:
                                 municipio=dados_api.get("municipio") or "",
                                 uf=dados_api.get("uf") or "",
                             )
-
                         fornecedores_vinculados.add(fornecedor.id)
 
-                # Criar Item
                 Item.objects.create(
                     processo=processo,
                     lote=lote_obj,
@@ -475,12 +439,8 @@ class ImportacaoService:
                     fornecedor=fornecedor,
                 )
 
-                # Vincular Fornecedor ao Processo
                 if fornecedor:
-                    FornecedorProcesso.objects.get_or_create(
-                        processo=processo,
-                        fornecedor=fornecedor,
-                    )
+                    FornecedorProcesso.objects.get_or_create(processo=processo, fornecedor=fornecedor)
 
             return {
                 "processo": processo,
@@ -488,3 +448,106 @@ class ImportacaoService:
                 "itens_importados": len(itens_data),
                 "fornecedores_vinculados": len(fornecedores_vinculados),
             }
+
+
+# ==============================================================================
+# SERVIÇO 2: INTEGRAÇÃO PNCP (PORTAL NACIONAL DE CONTRATAÇÕES PÚBLICAS)
+# ==============================================================================
+
+class PNCPService:
+    """
+    Serviço para integração com a API do PNCP.
+    Endpoint de Homologação: https://treina.pncp.gov.br/api/pncp
+    """
+    BASE_URL = "https://treina.pncp.gov.br/api/pncp"
+    
+    # Idealmente, use variáveis de ambiente: config('PNCP_TOKEN')
+    ACCESS_TOKEN = getattr(settings, 'PNCP_ACCESS_TOKEN', '') 
+
+    @classmethod
+    def publicar_compra(cls, processo: ProcessoLicitatorio, arquivo, titulo_documento: str):
+        """
+        Envia os dados da compra e o arquivo (Edital/Aviso) para o PNCP.
+        """
+        if not cls.ACCESS_TOKEN:
+            raise ValueError("Token de acesso do PNCP não configurado no settings.")
+
+        # 1. Validar dados mínimos
+        if not processo.numero_certame:
+            raise ValueError("Número do certame é obrigatório para publicação.")
+        if not processo.entidade or not processo.entidade.cnpj:
+            raise ValueError("CNPJ da Entidade é obrigatório.")
+        
+        # 2. Mapeamento (Simplificado - deve ser ajustado conforme Tabela de Domínio do PNCP)
+        modalidade_id = cls._map_modalidade(processo.modalidade)
+        
+        # Estrutura JSON exigida pelo PNCP (conforme manual)
+        compra_data = {
+            "anoCompra": processo.data_processo.year if processo.data_processo else datetime.now().year,
+            "numeroCompra": processo.numero_certame,
+            "numeroProcesso": processo.numero_processo or processo.numero_certame,
+            "objetoCompra": processo.objeto or "Objeto não informado",
+            "modalidadeId": modalidade_id,
+            "srp": processo.registro_preco,
+            "unidadeOrgao": {
+                "codigoUnidade": processo.orgao.codigo_unidade if (processo.orgao and processo.orgao.codigo_unidade) else "000000"
+            },
+            "orgao": {
+                "cnpj": re.sub(r'\D', '', processo.entidade.cnpj)
+            },
+            "amparoLegalId": cls._map_amparo_legal(processo.amparo_legal),
+            "dataAberturaProposta": processo.data_abertura.isoformat() if processo.data_abertura else None,
+            "tipoInstrumentoConvocatorioId": "1", # 1=Edital
+            "modoDisputaId": cls._map_modo_disputa(processo.modo_disputa),
+            "itensCompra": [] # Lista de itens se necessário enviar detalhado
+        }
+
+        # 3. Preparação do Multipart
+        files = {
+            'documento': (arquivo.name, arquivo, 'application/pdf'),
+            'compra': (None, json.dumps(compra_data), 'application/json')
+        }
+
+        # URL com CNPJ do órgão (apenas dígitos)
+        cnpj_orgao = re.sub(r'\D', '', processo.entidade.cnpj)
+        url = f"{cls.BASE_URL}/v1/orgaos/{cnpj_orgao}/compras"
+
+        headers = {
+            "Authorization": f"Bearer {cls.ACCESS_TOKEN}",
+            "Titulo-Documento": titulo_documento,
+            "Tipo-Documento-Id": "1" # 1 = Aviso de Contratação
+        }
+
+        try:
+            # verify=False para homologação (evita erro de SSL auto-assinado)
+            response = requests.post(url, headers=headers, files=files, verify=False)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            error_msg = e.response.text if e.response else str(e)
+            raise ValueError(f"Erro na API do PNCP: {error_msg}")
+
+    @staticmethod
+    def _map_modalidade(nome):
+        # Mapa conforme manual (IDs fictícios, ajustar com tabela real)
+        mapa = {
+            "Pregão Eletrônico": "6",
+            "Concorrência Eletrônica": "13",
+            "Dispensa Eletrônica": "8",
+            "Inexigibilidade Eletrônica": "9",
+            "Credenciamento": "10"
+        }
+        return mapa.get(nome, "6") # Default para Pregão se não achar
+
+    @staticmethod
+    def _map_amparo_legal(amparo_key):
+        # Mapeia as chaves do seu sistema (art_23, etc) para IDs do PNCP
+        # Exemplo: 'art_75_ii' -> ID 45 do PNCP
+        # Retornando um ID padrão de teste
+        return 1 
+
+    @staticmethod
+    def _map_modo_disputa(modo_key):
+        # aberto -> 1, fechado -> 2
+        mapa = {"aberto": "1", "fechado": "2", "aberto_e_fechado": "3"}
+        return mapa.get(modo_key, "1")

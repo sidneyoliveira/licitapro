@@ -21,6 +21,9 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .services import PNCPService 
+
+
 # Imports Locais
 from .models import (
     CustomUser, Entidade, Orgao, ProcessoLicitatorio, Lote, Item,
@@ -282,7 +285,43 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.exception("Erro na importação XLSX")
             return Response({"detail": "Erro interno ao processar arquivo."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+   
+    @action(
+            detail=True,
+            methods=['post'],
+            url_path='publicar-pncp',
+            parser_classes=[parsers.MultiPartParser, parsers.FormParser]
+    )
+    def publicar_pncp(self, request, pk=None):
+        """
+        Recebe um arquivo (Edital/Aviso) e envia o processo para o PNCP.
+        """
+        processo = self.get_object()
+        arquivo = request.FILES.get('arquivo')
+        titulo = request.data.get('titulo_documento', 'Edital de Licitação')
 
+        if not arquivo:
+            return Response({"detail": "O arquivo do documento é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Chama o serviço de integração
+            resultado = PNCPService.publicar_compra(processo, arquivo, titulo)
+            
+            # Atualiza status local se der certo
+            processo.situacao = "Publicado"
+            processo.save()
+
+            return Response({
+                "detail": "Publicado no PNCP com sucesso!",
+                "pncp_data": resultado
+            }, status=status.HTTP_200_OK)
+
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+        except Exception as e:
+            logger.error(f"Erro interno PNCP: {e}")
+            return Response({"detail": "Erro interno ao comunicar com PNCP."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+   
     # ----------------------------------------------------------------------
     # ITENS DO PROCESSO
     # ----------------------------------------------------------------------
