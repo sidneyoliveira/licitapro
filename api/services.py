@@ -12,7 +12,6 @@ from django.db import transaction
 from django.conf import settings
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel as excel_to_datetime
-from settings import GOOGLE_CLIENT_ID, PNCP_ACCESS_TOKEN
 
 from .models import (
     Entidade,
