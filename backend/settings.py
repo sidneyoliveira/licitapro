@@ -1,6 +1,6 @@
 from pathlib import Path
 import os
-from dotenv import load_dotenv  # Importar biblioteca
+from dotenv import load_dotenv  
 
 # Carrega as variáveis do arquivo .env
 load_dotenv()
