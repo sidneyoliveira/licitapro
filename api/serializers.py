@@ -13,7 +13,6 @@ from .models import (
     ContratoEmpenho,
 )
 from .choices import (
-    # Importamos os mapas para conversão automática (Slug -> ID)
     MAP_MODALIDADE_PNCP,
     MAP_MODO_DISPUTA_PNCP,
     MAP_INSTRUMENTO_CONVOCATORIO_PNCP,
@@ -38,9 +37,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "is_active", "is_staff", "date_joined", "last_login"
         )
 
-# --- CORREÇÃO: Alias necessário para as Views ---
 UserSerializer = CustomUserSerializer
-
 
 class GroupNameField(serializers.StringRelatedField):
     def to_representation(self, value):
@@ -109,19 +106,16 @@ class OrgaoMiniSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
-    # Objetos aninhados para exibição
     entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
     orgao_nome = serializers.CharField(source="orgao.nome", read_only=True)
     entidade_obj = EntidadeMiniSerializer(source="entidade", read_only=True)
     orgao_obj = OrgaoMiniSerializer(source="orgao", read_only=True)
 
-    # Campos de entrada (Texto/Slug) que serão convertidos para ID
     modalidade = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     modo_disputa = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     instrumento_convocatorio = serializers.CharField(required=False, allow_blank=True, allow_null=True) # Antiga fundamentacao
     amparo_legal = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     
-    # Manter compatibilidade com front antigo se enviar 'fundamentacao'
     fundamentacao = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
 
     class Meta:
@@ -131,15 +125,15 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "numero_processo",
             "numero_certame",
             "objeto",
-            "modalidade",       # Recebe slug ("pregao_eletronico"), salva ID (6)
-            "modo_disputa",     # Recebe slug ("aberto"), salva ID (1)
-            "instrumento_convocatorio", # Recebe slug ("edital"), salva ID (1)
-            "amparo_legal",     # Recebe slug ("lei14133_art28_i"), salva ID (1)
-            "fundamentacao",    # Campo legado (write_only)
+            "modalidade",       
+            "modo_disputa",     
+            "instrumento_convocatorio", 
+            "amparo_legal",     
+            "fundamentacao",    
             
             "classificacao",
             "tipo_organizacao",
-            "situacao",         # Mantém como texto/slug pois Situação é string no model
+            "situacao",         
             "criterio_julgamento",
             
             "data_processo",
@@ -240,14 +234,13 @@ class ItemSerializer(serializers.ModelSerializer):
             "unidade",
             "quantidade",
             "valor_estimado",
-            "natureza",       # Deve coincidir com NATUREZAS_DESPESA_CHOICES no model
+            "natureza",       
             
-            # Novos campos mapeados para IDs do PNCP
-            "situacao_item",  # Recebe slug -> Salva ID
-            "tipo_beneficio", # Recebe slug -> Salva ID
-            "categoria_item", # Recebe slug -> Salva ID
+            "situacao_item",  
+            "tipo_beneficio", 
+            "categoria_item", 
             
-            "fornecedor",     # Vencedor do item (se houver)
+            "fornecedor",     
         )
 
     def to_internal_value(self, data):

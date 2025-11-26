@@ -20,13 +20,20 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from rest_framework_simplejwt.tokens import RefreshToken
 
-# Imports Locais - Services
 from .services import PNCPService, ImportacaoService
 
 # Imports Locais - Models
 from .models import (
-    CustomUser, Entidade, Orgao, ProcessoLicitatorio, Lote, Item,
-    Fornecedor, FornecedorProcesso, ItemFornecedor, ContratoEmpenho
+    CustomUser, 
+    Entidade,
+    Orgao,
+    ProcessoLicitatorio,
+    Lote,
+    Item,
+    Fornecedor,
+    FornecedorProcesso,
+    ItemFornecedor,
+    ContratoEmpenho
 )
 
 # Imports Locais - Serializers
@@ -69,19 +76,28 @@ class ConstantesSistemaView(APIView):
     permission_classes = [AllowAny] # Pode ser fechado se preferir
 
     def get(self, request):
+        # Helper robusto: aceita tuplas de 2 ou 3 itens sem quebrar
         def format_choices_pncp(choices_tuple):
-            """Formata tuplas (ID, SLUG, LABEL) em objetos JSON"""
-            return [
-                {"id": c[0], "slug": c[1], "label": c[2]} 
-                for c in choices_tuple if c[0] is not None # Filtra legados (None)
-            ]
+            results = []
+            for c in choices_tuple:
+                # Pula valores vazios se necessário
+                if c[0] is None: 
+                    continue
+                
+                # Se a tupla tiver 3 itens: (ID, SLUG, LABEL)
+                if len(c) >= 3:
+                    results.append({"id": c[0], "slug": c[1], "label": c[2]})
+                # Se a tupla for padrão Django (ID, LABEL)
+                else:
+                    results.append({"id": c[0], "slug": str(c[0]), "label": c[1]})
+            return results
 
+        # Helper simples para (VALOR, LABEL)
         def format_choices_simple(choices_tuple):
-            """Formata tuplas simples (VALOR, LABEL)"""
             return [{"id": c[0], "label": c[1]} for c in choices_tuple]
 
         data = {
-            # Tabelas de Domínio PNCP (IDs Inteiros)
+            # Tabelas de Domínio PNCP
             "modalidades": format_choices_pncp(MODALIDADE_CHOICES),
             "modos_disputa": format_choices_pncp(MODO_DISPUTA_CHOICES),
             "instrumentos_convocatorios": format_choices_pncp(INSTRUMENTO_CONVOCATORIO_CHOICES),
@@ -91,7 +107,7 @@ class ConstantesSistemaView(APIView):
             "tipos_beneficio": format_choices_pncp(TIPO_BENEFICIO_CHOICES),
             "categorias_item": format_choices_pncp(CATEGORIA_ITEM_CHOICES),
             
-            # Tabelas Internas (Strings ou Códigos)
+            # Tabelas Internas
             "situacoes_processo": format_choices_simple(SITUACAO_CHOICES),
             "tipos_organizacao": format_choices_simple(TIPO_ORGANIZACAO_CHOICES),
             "naturezas_despesa": format_choices_simple(NATUREZAS_DESPESA_CHOICES),
@@ -194,7 +210,7 @@ class OrgaoViewSet(viewsets.ModelViewSet):
 
         # Lógica de Filtragem e Criação
         ALLOW_KEYWORDS = ["SECRETARIA", "FUNDO", "CONTROLADORIA", "GABINETE", "PREFEITURA", "CAMARA"] # Ajustado
-        EXCLUDE_KEYWORDS = [] # Removido exclusão rígida para evitar falso-negativo
+        EXCLUDE_KEYWORDS = []
         EXCLUDE_CODES = {"000000001", "000000000", "1"}
 
         def _normalize(txt):
