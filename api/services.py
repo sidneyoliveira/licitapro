@@ -7,18 +7,18 @@ import base64
 import unicodedata
 import logging
 from typing import Optional, Dict, List, Any, Union
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.core.files.base import File
-# Tenta importar from_excel, se falhar define função dummy (caso openpyxl não esteja instalado)
+# Tenta importar from_excel, se falhar define função dummy
 try:
     from openpyxl.utils.datetime import from_excel as excel_to_datetime
 except ImportError:
     excel_to_datetime = None
 
-import pytz  # Essencial para o PNCP
+import pytz  # Essencial para conversão de fuso
 
 # Models e Choices
 from .models import (
@@ -44,7 +44,6 @@ class ImportacaoService:
     """
     Serviço responsável pela normalização e tratamento de dados vindos de planilhas Excel.
     """
-
     @staticmethod
     def _normalize_key(s: Any) -> str:
         if not s: return ""
@@ -102,9 +101,7 @@ class ImportacaoService:
     
     @staticmethod
     def processar_planilha_padrao(arquivo):
-        # Placeholder mantido para compatibilidade com views.py
-        # A implementação real da leitura do Excel deve vir aqui
-        raise NotImplementedError("Lógica de importação via Excel deve ser implementada ou restaurada.")
+        raise NotImplementedError("Lógica de importação via Excel deve ser implementada.")
 
 
 # ==============================================================================
@@ -144,7 +141,6 @@ class PNCPService:
         try:
             err_json = response.json()
             detail = err_json.get("message") or err_json.get("detail") or err_json.get("errors") or str(err_json)
-            # Se for lista de erros, junta
             if isinstance(detail, list):
                 detail = " | ".join([str(e) for e in detail])
         except:
@@ -160,12 +156,11 @@ class PNCPService:
         Executa o fluxo completo de publicação.
         """
         
-        # 0. Verificação Inicial
         if not cls.ACCESS_TOKEN:
             raise ValueError("Configuração Crítica Ausente: 'PNCP_ACCESS_TOKEN' não encontrado no settings/env.")
 
         # ------------------------------------------------------------------
-        # 1. VALIDAÇÃO
+        # 1. VALIDAÇÃO PRELIMINAR
         # ------------------------------------------------------------------
         erros = []
         if not processo.numero_certame:
@@ -194,14 +189,11 @@ class PNCPService:
         else:
             ano_compra = datetime.now().year
 
-        # Código da Unidade (Obrigatório ter 6 dígitos no PNCP geralmente, ou vazio se for órgão principal)
-        codigo_unidade = "000000" # Valor padrão caso não tenha
+        codigo_unidade = "000000"
         if processo.orgao and processo.orgao.codigo_unidade:
             codigo_unidade = processo.orgao.codigo_unidade
 
-        # ------------------------------------------------------------------
-        # 3. VINCULAÇÃO PREVENTIVA
-        # ------------------------------------------------------------------
+        # Vinculação preventiva
         try:
             user_id = cls._extrair_user_id_token(cls.ACCESS_TOKEN)
             if user_id:
@@ -210,31 +202,39 @@ class PNCPService:
             pass
 
         # ------------------------------------------------------------------
-        # 4. CONSTRUÇÃO DO PAYLOAD
+        # 4. CONSTRUÇÃO DO PAYLOAD - CORREÇÃO DE DATAS
         # ------------------------------------------------------------------
         
-        # === TRATAMENTO DA DATA (CRÍTICO PARA ERRO 400) ===
         dt_abertura = processo.data_abertura
         if not dt_abertura:
              dt_abertura = datetime.now()
 
-        # 1. Garante Timezone (America/Sao_Paulo)
-        if not dt_abertura.tzinfo:
-            sp_tz = pytz.timezone('America/Sao_Paulo')
-            dt_abertura = sp_tz.localize(dt_abertura)
+        # 1. Garante que a data esteja em Timezone Brasília (America/Sao_Paulo)
+        # O PNCP exige "Horário de Brasília"
+        sp_tz = pytz.timezone('America/Sao_Paulo')
         
-        # 2. Remove microssegundos e converte para ISO
-        # PNCP rejeita: 2025-10-08T09:00:00.123456-03:00
-        # PNCP aceita: 2025-10-08T09:00:00-03:00
-        data_abertura_str = dt_abertura.replace(microsecond=0).isoformat()
-        # ===================================================
+        if not dt_abertura.tzinfo:
+            # Se for naive, assume que já é SP e localiza
+            dt_abertura = sp_tz.localize(dt_abertura)
+        else:
+            # Se já tem tz, converte para SP
+            dt_abertura = dt_abertura.astimezone(sp_tz)
+        
+        # 2. Formata para string SEM o offset (-03:00), conforme exemplos do Manual
+        # O formato esperado é "YYYY-MM-DDTHH:MM:SS"
+        data_abertura_str = dt_abertura.strftime('%Y-%m-%dT%H:%M:%S')
+        
+        # Para data de encerramento (se não tiver, usamos abertura + 1 minuto para não dar erro de igualdade se houver validação)
+        dt_encerramento = dt_abertura + timedelta(minutes=30) 
+        data_encerramento_str = dt_encerramento.strftime('%Y-%m-%dT%H:%M:%S')
 
-        # Sanitização do Número da Compra (Apenas dígitos)
-        # Ex: "015/2025" -> "015" | "PE 015/25" -> "015"
+        # ------------------------------------------------------------------
+
+        # Sanitização do Número da Compra
         raw_numero = str(processo.numero_certame).split('/')[0]
         numero_compra_clean = re.sub(r'\D', '', raw_numero)
         if not numero_compra_clean:
-            numero_compra_clean = "1" # Fallback para não quebrar
+            numero_compra_clean = "1"
 
         payload = {
             "codigoUnidadeCompradora": codigo_unidade,
@@ -249,11 +249,12 @@ class PNCPService:
             "amparoLegalId": int(processo.amparo_legal),
             
             "srp": bool(processo.registro_preco),
-            "objetoCompra": (processo.objeto or f"Licitação {processo.numero_processo}")[:5000], # Limite PNCP
+            "objetoCompra": (processo.objeto or f"Licitação {processo.numero_processo}")[:5000],
             "informacaoComplementar": "Processo integrado via API Licitapro.",
             
+            # Datas formatadas SEM OFFSET
             "dataAberturaProposta": data_abertura_str,
-            "dataEncerramentoProposta": data_abertura_str, 
+            "dataEncerramentoProposta": data_encerramento_str,
             
             "linkSistemaOrigem": "http://l3solution.net.br",
             "itensCompra": []
@@ -263,14 +264,13 @@ class PNCPService:
         for idx, item in enumerate(itens, 1):
             vl_unitario = float(item.valor_estimado or 0)
             qtd = float(item.quantidade or 0)
-            vl_total = round(vl_unitario * qtd, 4) # Arredondar para evitar dízimas
+            vl_total = round(vl_unitario * qtd, 4)
             
-            # Define Material (M) ou Serviço (S) baseado na categoria
-            # IDs de Serviços/Obras comuns: 2, 3, 4, 6, 8, 9 (Exemplo genérico base)
-            # Se não tiver certeza, o padrão é M, mas pode dar erro se a unidade for 'H' ou similar.
             cat_id = int(item.categoria_item or 1)
-            tipo_ms = "M"
-            if cat_id in [2, 3, 4, 6, 8, 9]: # IDs que representam serviços/obras no PNCP
+            # Lógica simples: Categoria 2=Serviço, 4=Serviço Eng, 8=Serviço, 9=Serviço Eng
+            # Isso é uma estimativa baseada em IDs comuns, ajuste conforme seu choices.py real
+            tipo_ms = "M" 
+            if cat_id in [2, 4, 8, 9]: 
                 tipo_ms = "S"
 
             item_payload = {
@@ -278,7 +278,7 @@ class PNCPService:
                 "materialOuServico": tipo_ms,
                 "tipoBeneficioId": int(item.tipo_beneficio or 1),
                 "incentivoProdutivoBasico": False,
-                "descricao": (item.descricao or "Item sem descrição")[:255], # Limite
+                "descricao": (item.descricao or "Item sem descrição")[:255],
                 "quantidade": qtd,
                 "unidadeMedida": (item.unidade or "UN")[:20],
                 "valorUnitarioEstimado": vl_unitario,
@@ -288,9 +288,8 @@ class PNCPService:
                 "itemCategoriaId": cat_id,
                 
                 # Dados de Catálogo Obrigatórios
-                # Usando código genérico 'Outros' (15055) se não houver integração com catálogo
                 "catalogoId": 1, 
-                "catalogoCodigoItem": "15055", 
+                "catalogoCodigoItem": "15055", # Genérico
                 "categoriaItemCatalogoId": 1
             }
             payload["itensCompra"].append(item_payload)
@@ -301,7 +300,6 @@ class PNCPService:
         if hasattr(arquivo, 'seek'):
             arquivo.seek(0)
 
-        # Nome do arquivo seguro
         filename = getattr(arquivo, 'name', 'edital.pdf')
         
         files = {
@@ -313,12 +311,12 @@ class PNCPService:
         headers = {
             "Authorization": f"Bearer {cls.ACCESS_TOKEN}",
             "Titulo-Documento": titulo_documento,
-            "Tipo-Documento-Id": "1" # 1 = Edital/Aviso
+            "Tipo-Documento-Id": "1" 
         }
 
         try:
-            # Timeout aumentado para uploads
-            response = requests.post(url, headers=headers, files=files, verify=False, timeout=60)
+            # Timeout aumentado para upload de arquivos
+            response = requests.post(url, headers=headers, files=files, verify=False, timeout=90)
             
             if response.status_code in [200, 201]:
                 return response.json()
