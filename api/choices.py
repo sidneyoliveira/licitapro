@@ -74,7 +74,18 @@ CATEGORIA_ITEM_DATA = (
     (8, "obras_servicos_engenharia", "Obras e Serviços de Engenharia"),
 )
 
+# --- FUNDAMENTAÇÃO LEGAL (LEIS) ---
+# Usamos string como ID para facilitar mapeamento no frontend
+FUNDAMENTACAO_DATA = (
+    ("lei_14133", "lei_14133", "Lei 14.133/2021 (Nova Lei de Licitações)"),
+    ("lei_8666",  "lei_8666",  "Lei 8.666/1993 (Revogada)"),
+    ("lei_10520", "lei_10520", "Lei 10.520/2002 (Lei do Pregão)"),
+)
+
 AMPARO_LEGAL_DATA = (
+    # ==========================
+    # LEI 14.133/2021
+    # ==========================
     # Art. 28
     (1, "lei14133_art28_i", "Lei 14.133/2021, Art. 28, I (Pregão)"),
     (2, "lei14133_art28_ii", "Lei 14.133/2021, Art. 28, II (Concorrência)"),
@@ -134,14 +145,36 @@ AMPARO_LEGAL_DATA = (
     (140, "lei14133_art79_i", "Lei 14.133/2021, Art. 79, I (Cred. Paralela/Não Excludente)"),
     (141, "lei14133_art79_ii", "Lei 14.133/2021, Art. 79, II (Cred. Seleção Terceiros)"),
     (142, "lei14133_art79_iii", "Lei 14.133/2021, Art. 79, III (Cred. Mercados Fluidos)"),
-    # Lei 11.947
+    
+    # ==========================
+    # LEI 8.666/1993 (REVOGADA)
+    # ==========================
+    (201, "lei8666_art22_i", "Lei 8.666/1993, Art. 22, I (Convite)"),
+    (202, "lei8666_art22_ii", "Lei 8.666/1993, Art. 22, II (Tomada de Preços)"),
+    (203, "lei8666_art22_iii", "Lei 8.666/1993, Art. 22, III (Concorrência)"),
+    (204, "lei8666_art22_iv", "Lei 8.666/1993, Art. 22, IV (Leilão)"),
+    (205, "lei8666_art22_v", "Lei 8.666/1993, Art. 22, V (Concurso)"),
+    (206, "lei8666_art24_i", "Lei 8.666/1993, Art. 24, I (Dispensa - Obras/Eng.)"),
+    (207, "lei8666_art24_ii", "Lei 8.666/1993, Art. 24, II (Dispensa - Outros Serviços)"),
+    (208, "lei8666_art24_outros", "Lei 8.666/1993, Art. 24 (Outros Incisos - Dispensa)"),
+    (209, "lei8666_art25_i", "Lei 8.666/1993, Art. 25, I (Inexigibilidade - Fornecedor Exclusivo)"),
+    (210, "lei8666_art25_ii", "Lei 8.666/1993, Art. 25, II (Inexigibilidade - Técnico Notório)"),
+    (211, "lei8666_art25_iii", "Lei 8.666/1993, Art. 25, III (Inexigibilidade - Artista)"),
+
+    # ==========================
+    # LEI 10.520/2002 (LEI DO PREGÃO)
+    # ==========================
+    (301, "lei10520_art1", "Lei 10.520/2002, Art. 1º (Pregão - Bens/Serviços Comuns)"),
+
+    # ==========================
+    # OUTRAS LEIS (PNAE, ETC)
+    # ==========================
     (138, "lei11947_art14", "Lei 11.947/2009, Art. 14 (Agricultura Familiar)"),
     (139, "lei11947_art21", "Lei 11.947/2009, Art. 21 (Emergencial PNAE)"),
 )
 
 # ==============================================================================
 # CHOICES PARA O DJANGO MODEL (Formato: ID, LABEL)
-# Extraído dinamicamente dos dados mestres acima
 # ==============================================================================
 
 MODALIDADE_CHOICES = [(x[0], x[2]) for x in MODALIDADE_DATA]
@@ -152,9 +185,49 @@ SITUACAO_ITEM_CHOICES = [(x[0], x[2]) for x in SITUACAO_ITEM_DATA]
 TIPO_BENEFICIO_CHOICES = [(x[0], x[2]) for x in TIPO_BENEFICIO_DATA]
 CATEGORIA_ITEM_CHOICES = [(x[0], x[2]) for x in CATEGORIA_ITEM_DATA]
 AMPARO_LEGAL_CHOICES = [(x[0], x[2]) for x in AMPARO_LEGAL_DATA]
+# Usamos o primeiro item (chave string) como ID para fundamentação
+FUNDAMENTACAO_CHOICES = [(x[0], x[2]) for x in FUNDAMENTACAO_DATA]
 
 # ==============================================================================
-# OUTROS CHOICES (JÁ EM FORMATO CORRETO)
+# MAPAS DE DEPENDÊNCIA (LÓGICA DO CASCATA)
+# ==============================================================================
+
+# 1. Mapa: Modalidade -> Lista de Leis permitidas
+MAP_MODALIDADE_FUNDAMENTACAO = {
+    # Pregão (Eletrônico ou Presencial) aceita Lei 14.133 e Lei 10.520
+    6: ['lei_14133', 'lei_10520'],
+    7: ['lei_14133', 'lei_10520'],
+    
+    # Concorrência aceita Lei 14.133 e Lei 8.666
+    4: ['lei_14133', 'lei_8666'],
+    5: ['lei_14133', 'lei_8666'],
+    
+    # Dispensa aceita Lei 14.133 e Lei 8.666
+    8: ['lei_14133', 'lei_8666'],
+    
+    # Inexigibilidade aceita Lei 14.133 e Lei 8.666
+    9: ['lei_14133', 'lei_8666'],
+    
+    # Leilão aceita Lei 14.133 e Lei 8.666
+    13: ['lei_14133', 'lei_8666'],
+    14: ['lei_14133', 'lei_8666'],
+    
+    # Outros (Default) - Assume Lei 14.133
+    11: ['lei_14133'],
+    12: ['lei_14133'],
+    15: ['lei_14133'],
+}
+
+# 2. Mapa: Lei -> Lista de Amparos (Artigos) permitidos
+# Filtra AMPARO_LEGAL_DATA baseado na chave da Lei
+MAP_FUNDAMENTACAO_AMPARO = {
+    'lei_14133': [x[0] for x in AMPARO_LEGAL_DATA if 'lei14133' in x[1] or 'lei11947' in x[1]],
+    'lei_8666':  [x[0] for x in AMPARO_LEGAL_DATA if 'lei8666' in x[1]],
+    'lei_10520': [x[0] for x in AMPARO_LEGAL_DATA if 'lei10520' in x[1]],
+}
+
+# ==============================================================================
+# OUTROS CHOICES (ESTÁTICOS)
 # ==============================================================================
 
 SITUACAO_CHOICES = (
@@ -225,15 +298,9 @@ NATUREZAS_DESPESA_CHOICES = (
     ("44909000", "44909000 - Outras despesas de capital"),
 )
 
-# Choice para Tipos de Pessoa (usado em ContratoEmpenho)
 TIPO_PESSOA_CHOICES = (
     ('PF', 'Pessoa Física'),
     ('PJ', 'Pessoa Jurídica'),
-)
-
-FUNDAMENTACAO_CHOICES = (
-    # Mantido apenas para compatibilidade com código legado, se necessário.
-    ("lei_14133", "Lei 14.133/21"),
 )
 
 # ==============================================================================

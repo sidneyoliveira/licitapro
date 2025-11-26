@@ -47,16 +47,13 @@ from .serializers import (
 # Imports Locais - Choices (Para a API de Constantes)
 from .choices import (
     MODALIDADE_CHOICES,
-    MODO_DISPUTA_CHOICES,
-    INSTRUMENTO_CONVOCATORIO_CHOICES,
-    CRITERIO_JULGAMENTO_CHOICES,
-    AMPARO_LEGAL_CHOICES,
-    SITUACAO_ITEM_CHOICES,
-    TIPO_BENEFICIO_CHOICES,
-    CATEGORIA_ITEM_CHOICES,
-    SITUACAO_CHOICES,
-    TIPO_ORGANIZACAO_CHOICES,
-    NATUREZAS_DESPESA_CHOICES
+    FUNDAMENTACAO_CHOICES,      
+    AMPARO_LEGAL_CHOICES,       
+    MAP_MODALIDADE_FUNDAMENTACAO,
+    MAP_FUNDAMENTACAO_AMPARO,    
+    MODO_DISPUTA_CHOICES, INSTRUMENTO_CONVOCATORIO_CHOICES, CRITERIO_JULGAMENTO_CHOICES,
+    SITUACAO_ITEM_CHOICES, TIPO_BENEFICIO_CHOICES, CATEGORIA_ITEM_CHOICES,
+    SITUACAO_CHOICES, TIPO_ORGANIZACAO_CHOICES, NATUREZAS_DESPESA_CHOICES
 )
 
 User = get_user_model()
@@ -69,52 +66,46 @@ GOOGLE_CLIENT_ID = getattr(settings, 'GOOGLE_CLIENT_ID', '')
 # ============================================================
 
 class ConstantesSistemaView(APIView):
-    """
-    Endpoint centralizado que fornece todos os dicionários do sistema (PNCP e Internos)
-    para o Frontend. Evita hardcoding de IDs no React.
-    """
-    permission_classes = [AllowAny] # Pode ser fechado se preferir
+    permission_classes = [AllowAny]
 
     def get(self, request):
-        # Helper robusto: aceita tuplas de 2 ou 3 itens sem quebrar
+        # Helper robusto (mesmo da resposta anterior)
         def format_choices_pncp(choices_tuple):
             results = []
             for c in choices_tuple:
-                # Pula valores vazios se necessário
-                if c[0] is None: 
-                    continue
-                
-                # Se a tupla tiver 3 itens: (ID, SLUG, LABEL)
+                if c[0] is None: continue
                 if len(c) >= 3:
                     results.append({"id": c[0], "slug": c[1], "label": c[2]})
-                # Se a tupla for padrão Django (ID, LABEL)
                 else:
                     results.append({"id": c[0], "slug": str(c[0]), "label": c[1]})
             return results
 
-        # Helper simples para (VALOR, LABEL)
         def format_choices_simple(choices_tuple):
             return [{"id": c[0], "label": c[1]} for c in choices_tuple]
 
         data = {
-            # Tabelas de Domínio PNCP
+            # Listas de Opções
             "modalidades": format_choices_pncp(MODALIDADE_CHOICES),
+            "fundamentacoes": format_choices_simple(FUNDAMENTACAO_CHOICES), # Usando o novo choice
+            "amparos_legais": format_choices_simple(AMPARO_LEGAL_CHOICES),  # Usando o novo choice
+            
+            # --- MAPAS DE DEPENDÊNCIA (ENVIA O CERÉBRO PARA O FRONT) ---
+            "mapa_modalidade_lei": MAP_MODALIDADE_FUNDAMENTACAO,
+            "mapa_lei_amparo": MAP_FUNDAMENTACAO_AMPARO,
+
+            # Outros dados existentes
             "modos_disputa": format_choices_pncp(MODO_DISPUTA_CHOICES),
             "instrumentos_convocatorios": format_choices_pncp(INSTRUMENTO_CONVOCATORIO_CHOICES),
             "criterios_julgamento": format_choices_pncp(CRITERIO_JULGAMENTO_CHOICES),
-            "amparos_legais": format_choices_pncp(AMPARO_LEGAL_CHOICES),
             "situacoes_item": format_choices_pncp(SITUACAO_ITEM_CHOICES),
             "tipos_beneficio": format_choices_pncp(TIPO_BENEFICIO_CHOICES),
             "categorias_item": format_choices_pncp(CATEGORIA_ITEM_CHOICES),
-            
-            # Tabelas Internas
             "situacoes_processo": format_choices_simple(SITUACAO_CHOICES),
             "tipos_organizacao": format_choices_simple(TIPO_ORGANIZACAO_CHOICES),
             "naturezas_despesa": format_choices_simple(NATUREZAS_DESPESA_CHOICES),
         }
         
         return Response(data)
-
 
 # ============================================================
 # 👤 USUÁRIOS
