@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from openpyxl.utils.datetime import from_excel as excel_to_datetime
+import pytz 
 
 # Models e Choices
 from .models import (
@@ -121,20 +122,52 @@ class ImportacaoService:
 # ==============================================================================
 
 class PNCPService:
-    """
-    Integração profissional com a API do Portal Nacional de Contratações Públicas (PNCP).
-    Utiliza os dados já validados e persistidos no Banco de Dados (IDs inteiros).
-    """
-    
-    BASE_URL = getattr(settings, 'PNCP_BASE_URL', "https://treina.pncp.gov.br/api/pncp/v1")
+    BASE_URL = getattr(settings, 'PNCP_BASE_URL', 'https://pncp.gov.br/api/pncp/v1')
     ACCESS_TOKEN = getattr(settings, 'PNCP_ACCESS_TOKEN', '')
 
+    @staticmethod
+    def _extrair_user_id_token(token):
+        """Extrai o ID do usuário do JWT (payload) de forma simples."""
+        try:
+            # O JWT é dividido em 3 partes. O payload é a segunda (índice 1).
+            payload_b64 = token.split('.')[1]
+            # Ajusta padding base64 se necessário
+            payload_b64 += '=' * (-len(payload_b64) % 4)
+            payload_json = base64.b64decode(payload_b64).decode('utf-8')
+            payload = json.loads(payload_json)
+            return payload.get('sub') or payload.get('user_id')
+        except Exception as e:
+            logger.error(f"Erro ao decodificar JWT do PNCP: {e}")
+            return None
+
     @classmethod
-    def publicar_compra(cls, processo: ProcessoLicitatorio, arquivo: Any, titulo_documento: str) -> Dict[str, Any]:
+    def _vincular_usuario_ao_orgao(cls, user_id, cnpj):
+        """Tenta vincular o usuário ao órgão no ambiente de teste/treinamento."""
+        # Nota: Em produção isso geralmente não é necessário ou é feito manualmente.
+        url = f"{cls.BASE_URL}/orgaos/{cnpj}/usuarios/{user_id}"
+        headers = {"Authorization": f"Bearer {cls.ACCESS_TOKEN}"}
+        try:
+            requests.post(url, headers=headers, verify=False, timeout=10)
+        except Exception:
+            pass # Falha silenciosa pois pode já estar vinculado
+
+    @staticmethod
+    def _handle_error_response(response):
+        """Trata erros da API padronizando a exceção."""
+        try:
+            err_json = response.json()
+            detail = err_json.get("message") or err_json.get("detail") or str(err_json)
+        except:
+            detail = response.text[:200]
+        
+        msg = f"PNCP Recusou ({response.status_code}): {detail}"
+        logger.error(msg)
+        raise ValueError(msg)
+
+    @classmethod
+    def publicar_compra(cls, processo, arquivo: Any, titulo_documento: str) -> Dict[str, Any]:
         """
         Executa o fluxo completo de publicação.
-        Assumes que o objeto 'processo' já tem os campos modalidade, amparo_legal, etc.
-        preenchidos com os IDs CORRETOS (Inteiros) do choices.py.
         """
         
         # 0. Verificação Inicial de Token
@@ -145,13 +178,11 @@ class PNCPService:
         # 1. VALIDAÇÃO
         # ------------------------------------------------------------------
         erros = []
-        
         if not processo.numero_certame:
             erros.append("Número do Certame é obrigatório.")
         if not processo.entidade or not processo.entidade.cnpj:
             erros.append("Entidade/CNPJ inválido.")
         
-        # Como o model agora é IntegerField, verificamos se é > 0
         if not processo.modalidade:
             erros.append("Modalidade não definida (ID inválido).")
         if not processo.modo_disputa:
@@ -170,7 +201,13 @@ class PNCPService:
         # 2. PREPARAÇÃO
         # ------------------------------------------------------------------
         cnpj_orgao = re.sub(r'\D', '', processo.entidade.cnpj)
-        ano_compra = int(processo.data_processo.year) if processo.data_processo else datetime.now().year
+        
+        # Extrai ano do processo ou usa ano atual
+        if processo.data_processo:
+            ano_compra = int(processo.data_processo.year)
+        else:
+            ano_compra = datetime.now().year
+
         codigo_unidade = processo.orgao.codigo_unidade if (processo.orgao and processo.orgao.codigo_unidade) else "000000"
 
         # ------------------------------------------------------------------
@@ -184,29 +221,42 @@ class PNCPService:
             logger.warning(f"Falha na vinculação automática (pode ser ignorado se já vinculado): {e}")
 
         # ------------------------------------------------------------------
-        # 4. CONSTRUÇÃO DO PAYLOAD (Usando IDs do Model diretamente)
+        # 4. CONSTRUÇÃO DO PAYLOAD
         # ------------------------------------------------------------------
-        data_abertura = processo.data_abertura.isoformat() if processo.data_abertura else datetime.now().isoformat()
         
+        # === CORREÇÃO CRÍTICA DA DATA (ISO 8601 com Fuso Horário) ===
+        dt_abertura = processo.data_abertura
+        if not dt_abertura:
+             # Se não tiver data, usa agora (apenas para evitar crash, mas o PNCP pode rejeitar datas passadas)
+             dt_abertura = datetime.now()
+
+        # Garante que a data tenha fuso horário (PNCP exige o offset, ex: -03:00)
+        if not dt_abertura.tzinfo:
+            sp_tz = pytz.timezone('America/Sao_Paulo')
+            dt_abertura = sp_tz.localize(dt_abertura)
+        
+        # Formata para string ISO completa
+        data_abertura_str = dt_abertura.isoformat()
+        # ============================================================
+
         payload = {
             "codigoUnidadeCompradora": codigo_unidade,
             "cnpjOrgao": cnpj_orgao,
             "anoCompra": ano_compra,
-            "numeroCompra": str(processo.numero_certame),
+            "numeroCompra": str(processo.numero_certame.split('/')[0] if '/' in str(processo.numero_certame) else processo.numero_certame),
             "numeroProcesso": str(processo.numero_processo or processo.numero_certame),
             
-            # AQUI: Mapeamento direto pois o Model já guarda o ID Integer do PNCP
             "tipoInstrumentoConvocatorioId": processo.instrumento_convocatorio or 1, # Default Edital
-            "modalidadeId": processo.modalidade,
-            "modoDisputaId": processo.modo_disputa,
-            "amparoLegalId": processo.amparo_legal,
+            "modalidadeId": int(processo.modalidade),
+            "modoDisputaId": int(processo.modo_disputa),
+            "amparoLegalId": int(processo.amparo_legal),
             
             "srp": bool(processo.registro_preco),
             "objetoCompra": processo.objeto or f"Licitação {processo.numero_processo}",
             "informacaoComplementar": "Processo integrado via API Licitapro.",
             
-            "dataAberturaProposta": data_abertura,
-            "dataEncerramentoProposta": data_abertura, # TODO: Adicionar campo data_encerramento no model
+            "dataAberturaProposta": data_abertura_str,
+            "dataEncerramentoProposta": data_abertura_str, # Geralmente igual ou posterior à abertura
             
             "linkSistemaOrigem": "http://l3solution.net.br",
             "itensCompra": []
@@ -219,22 +269,21 @@ class PNCPService:
             
             item_payload = {
                 "numeroItem": item.ordem or idx,
-                "materialOuServico": "M", # TODO: Melhorar lógica M/S baseada em categoria_item
-                "tipoBeneficioId": item.tipo_beneficio or 1, # 1 = Sem benefício
+                "materialOuServico": "M", # Poderia ser dinâmico se tivesse esse dado
+                "tipoBeneficioId": int(item.tipo_beneficio or 1),
                 "incentivoProdutivoBasico": False,
                 "descricao": item.descricao[:255],
                 "quantidade": qtd,
-                "unidadeMedida": item.unidade,
+                "unidadeMedida": item.unidade[:20], # Limita tamanho
                 "valorUnitarioEstimado": vl_unitario,
                 "valorTotal": vl_unitario * qtd,
                 
-                # IDs do Item (Model já atualizado para integer)
-                "criterioJulgamentoId": processo.criterio_julgamento or 1, # Herda do processo ou item
-                "itemCategoriaId": item.categoria_item or 1, # 1 = Bens
+                "criterioJulgamentoId": int(processo.criterio_julgamento or 1),
+                "itemCategoriaId": int(item.categoria_item or 1),
                 
-                # Catálogo (Valores padrão por enquanto, implementar busca se necessário)
+                # Dados de Catálogo (Obrigatórios, usando genérico 'Outros' se não houver)
                 "catalogoId": 1, 
-                "catalogoCodigoItem": "15055", 
+                "catalogoCodigoItem": "15055", # Código genérico de exemplo
                 "categoriaItemCatalogoId": 1
             }
             payload["itensCompra"].append(item_payload)
@@ -246,7 +295,7 @@ class PNCPService:
             arquivo.seek(0)
 
         files = {
-            'documento': (arquivo.name, arquivo, 'application/pdf'),
+            'documento': (getattr(arquivo, 'name', 'edital.pdf'), arquivo, 'application/pdf'),
             'compra': (None, json.dumps(payload), 'application/json')
         }
 
@@ -254,11 +303,13 @@ class PNCPService:
         headers = {
             "Authorization": f"Bearer {cls.ACCESS_TOKEN}",
             "Titulo-Documento": titulo_documento,
-            "Tipo-Documento-Id": "1"
+            "Tipo-Documento-Id": "1" # 1 = Edital
         }
 
         try:
+            # Verify=False apenas se certificado do PNCP for auto-assinado ou ambiente de teste
             response = requests.post(url, headers=headers, files=files, verify=False, timeout=60)
+            
             if response.status_code in [200, 201]:
                 return response.json()
             else:
@@ -267,45 +318,3 @@ class PNCPService:
         except requests.exceptions.RequestException as e:
             logger.error(f"Erro de Conexão PNCP: {e}")
             raise ValueError(f"Falha de comunicação com o PNCP: {str(e)}")
-
-    # --------------------------------------------------------------------------
-    # MÉTODOS AUXILIARES
-    # --------------------------------------------------------------------------
-
-    @staticmethod
-    def _handle_error_response(response: requests.Response):
-        try:
-            err_json = response.json()
-            msgs = []
-            if 'erros' in err_json and isinstance(err_json['erros'], list):
-                for e in err_json['erros']:
-                    campo = e.get('nomeCampo') or ''
-                    msg = e.get('mensagem') or e.get('message') or ''
-                    msgs.append(f"{campo}: {msg}")
-            
-            if not msgs:
-                msgs.append(err_json.get('message') or err_json.get('detail') or response.text)
-                
-            raise ValueError(f"PNCP Recusou ({response.status_code}): {' | '.join(msgs)}")
-        except json.JSONDecodeError:
-            raise ValueError(f"Erro PNCP ({response.status_code}): {response.text[:200]}")
-
-    @staticmethod
-    def _extrair_user_id_token(token: str) -> Optional[str]:
-        if not token: return None
-        try:
-            parts = token.split(".")
-            payload = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
-            decoded = json.loads(base64.urlsafe_b64decode(payload).decode('utf-8'))
-            return decoded.get("idBaseDados") or decoded.get("sub")
-        except:
-            return None
-
-    @classmethod
-    def _vincular_usuario_ao_orgao(cls, user_id: str, cnpj: str) -> None:
-        url = f"{cls.BASE_URL}/usuarios/{user_id}/orgaos"
-        headers = {"Authorization": f"Bearer {cls.ACCESS_TOKEN}", "Content-Type": "application/json"}
-        try:
-            requests.post(url, headers=headers, json={"entesAutorizados": [cnpj]}, verify=False, timeout=5)
-        except:
-            pass
