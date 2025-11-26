@@ -1,157 +1,160 @@
-# api/models.py
-
 from django.db import models, transaction
-from django.contrib.auth.models import AbstractUser
-from django.utils import timezone
+from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.contrib.auth import get_user_model
 
-# Importação das escolhas (Choices) para manter o model limpo
-# Certifique-se de ter criado o arquivo api/choices.py conforme a etapa anterior
+# Importação das escolhas (Choices) padronizadas para o PNCP
+# Certifique-se de que o arquivo api/choices.py esteja criado conforme o passo anterior
 from .choices import (
-    NATUREZAS_DESPESA,
-    MODO_DISPUTA_CHOICES,
-    CRITERIO_JULGAMENTO_CHOICES,
-    AMPARO_LEGAL_CHOICES,
     MODALIDADE_CHOICES,
-    CLASSIFICACAO_CHOICES,
-    TIPO_ORGANIZACAO_CHOICES,
+    MODO_DISPUTA_CHOICES,
+    AMPARO_LEGAL_CHOICES,
     SITUACAO_CHOICES,
-    FUNDAMENTACAO_CHOICES,
-    TIPO_PESSOA_CHOICES
+    CRITERIO_JULGAMENTO_CHOICES,
+    TIPO_INSTRUMENTO_CONVOCATORIO_CHOICES,
+    NATUREZAS_DESPESA,
+    TIPO_ORGANIZACAO_CHOICES,
+    TIPO_PESSOA_CHOICES,
+    CLASSIFICACAO_CHOICES,
+    FUNDAMENTACAO_CHOICES
 )
-
-# ============================================================
-# 👤 USUÁRIO PERSONALIZADO
-# ============================================================
-
-class CustomUser(AbstractUser):
-    cpf = models.CharField(max_length=14, unique=True, null=True, blank=True)
-    data_nascimento = models.DateField(null=True, blank=True)
-    phone = models.CharField(max_length=20, null=True, blank=True)
-    profile_image = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
-
-    # Ajustes para compatibilidade com o admin do Django
-    groups = models.ManyToManyField(
-        'auth.Group', 
-        related_name='customuser_groups', 
-        blank=True
-    )
-    user_permissions = models.ManyToManyField(
-        'auth.Permission', 
-        related_name='customuser_permissions', 
-        blank=True
-    )
-
-    def __str__(self):
-        return self.get_full_name() or self.username
-
 
 # ============================================================
 # 🏛️ ENTIDADE / ÓRGÃO
 # ============================================================
 
 class Entidade(models.Model):
-    nome = models.CharField(max_length=200, unique=True)
-    cnpj = models.CharField(max_length=18, unique=True, null=True, blank=True)
-    ano = models.IntegerField(default=timezone.now().year, verbose_name="Ano de Exercício")
+    """
+    Representa a entidade pública (Prefeitura, Câmara, Autarquia).
+    Dados essenciais para o cabeçalho do PNCP.
+    """
+    nome = models.CharField(max_length=255)
+    cnpj = models.CharField(max_length=18, unique=True)
+    endereco = models.TextField(blank=True, null=True)
+    logo = models.ImageField(upload_to='entidades/', blank=True, null=True)
+    ano = models.IntegerField(default=2025, verbose_name="Ano de Exercício")
+    
+    # Configurações de integração
+    pncp_token = models.CharField(max_length=500, blank=True, null=True, help_text="Token de acesso ao PNCP")
 
     class Meta:
         ordering = ['nome']
 
     def __str__(self):
-        return f"{self.nome} ({self.ano})"
-
+        return f"{self.nome} ({self.cnpj})"
 
 class Orgao(models.Model):
+    """
+    Unidade Orçamentária ou Administrativa vinculada à Entidade.
+    O PNCP exige o 'codigoUnidadeCompradora'.
+    """
+    entidade = models.ForeignKey(Entidade, on_delete=models.CASCADE, related_name='orgaos')
     nome = models.CharField(max_length=255)
-    
-    # Código genérico (atende PNCP e outros sistemas)
     codigo_unidade = models.CharField(
-        max_length=32,
-        blank=True,
-        null=True,
-        help_text='Código da Unidade Compradora (ex.: 1010)'
+        max_length=20, 
+        default="000000",
+        help_text="Código da Unidade Compradora no sistema do Governo (ex: UASG ou código próprio cadastrado no PNCP)"
     )
-
-    entidade = models.ForeignKey(
-        Entidade,
-        related_name='orgaos',
-        blank=True,
-        null=True,
-        on_delete=models.CASCADE
-    )
-
+    
     class Meta:
         ordering = ['nome']
 
     def __str__(self):
-        return f"{self.nome} - {self.entidade.nome if self.entidade else 'Sem Entidade'}"
-
+        return f"{self.nome} - {self.codigo_unidade}"
 
 # ============================================================
 # 📄 PROCESSO LICITATÓRIO
 # ============================================================
 
 class ProcessoLicitatorio(models.Model):
+    """
+    Entidade principal. Armazena os dados do processo/licitação.
+    Combina a lógica de negócio (Fat Model) com os campos do PNCP.
+    """
     # --- Identificação ---
-    numero_processo = models.CharField(max_length=50, blank=True, null=True)
-    numero_certame = models.CharField(max_length=50, blank=True, null=True)
-    objeto = models.TextField(blank=True, null=True)
-
-    # --- Classificadores ---
-    modalidade = models.CharField(max_length=50, blank=True, choices=MODALIDADE_CHOICES)
-    classificacao = models.CharField(max_length=50, blank=True, choices=CLASSIFICACAO_CHOICES)
-    tipo_organizacao = models.CharField(max_length=10, blank=True, choices=TIPO_ORGANIZACAO_CHOICES)
+    entidade = models.ForeignKey(Entidade, on_delete=models.CASCADE)
+    orgao = models.ForeignKey(Orgao, on_delete=models.SET_NULL, null=True, blank=True)
     
-    situacao = models.CharField(
+    numero_processo = models.CharField(max_length=50, help_text="Número administrativo interno")
+    numero_certame = models.CharField(max_length=50, help_text="Número do edital/licitação para o público")
+    ano = models.IntegerField(default=2025)
+    objeto = models.TextField(help_text="Descrição sucinta do objeto da licitação")
+
+    # --- Classificadores e Domínios Controlados ---
+    modalidade = models.CharField(
+        max_length=100, 
+        choices=MODALIDADE_CHOICES
+    )
+    
+    modo_disputa = models.CharField(
         max_length=50, 
-        blank=True, 
-        choices=SITUACAO_CHOICES,
-        default='Em Pesquisa'
+        choices=MODO_DISPUTA_CHOICES,
+        blank=True, null=True
+    )
+    
+    amparo_legal = models.CharField(
+        max_length=255, 
+        choices=AMPARO_LEGAL_CHOICES
+    )
+    
+    criterio_julgamento = models.CharField(
+        max_length=50,
+        choices=CRITERIO_JULGAMENTO_CHOICES,
+        default="MENOR PRECO",
+        help_text="Critério principal de julgamento do certame"
     )
 
+    tipo_instrumento = models.IntegerField(
+        choices=TIPO_INSTRUMENTO_CONVOCATORIO_CHOICES,
+        default=1, # Edital
+        help_text="Tipo de documento convocatório (Edital, Aviso, etc)"
+    )
+
+    classificacao = models.CharField(max_length=50, blank=True, choices=CLASSIFICACAO_CHOICES)
+    tipo_organizacao = models.CharField(max_length=10, blank=True, choices=TIPO_ORGANIZACAO_CHOICES, default='ITEM')
+    
+    situacao = models.CharField(max_length=50, choices=SITUACAO_CHOICES, default='EM PESQUISA')
+    fundamentacao = models.CharField(max_length=50, choices=FUNDAMENTACAO_CHOICES, blank=True, null=True)
+
     # --- Datas e Valores ---
-    data_processo = models.DateField(blank=True, null=True)
-    data_abertura = models.DateTimeField(blank=True, null=True)
-    valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+    data_processo = models.DateField(help_text="Data de autuação do processo")
+    data_abertura = models.DateTimeField(help_text="Data/Hora de abertura da sessão pública")
+    data_publicacao = models.DateTimeField(null=True, blank=True, auto_now_add=True)
+    
+    valor_estimado_total = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    valor_referencia = models.DecimalField(max_digits=15, decimal_places=2, blank=True, null=True) # Mantido para compatibilidade
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
 
     # SRP (Registro de Preço)
-    registro_preco = models.BooleanField(default=False, blank=True, verbose_name="Registro de Preço")
-
-    # --- Relações ---
-    entidade = models.ForeignKey(
-        Entidade, 
-        on_delete=models.PROTECT, 
-        blank=True, 
-        null=True, 
-        related_name='processos'
-    )
-    orgao = models.ForeignKey(
-        Orgao, 
-        on_delete=models.PROTECT, 
-        blank=True, 
-        null=True, 
-        related_name='processos'
-    )
-
-    data_criacao_sistema = models.DateTimeField(auto_now_add=True, blank=True)
-
-    # --- Detalhes Jurídicos/PNCP ---
-    fundamentacao = models.CharField(max_length=16, choices=FUNDAMENTACAO_CHOICES, blank=True, null=True)
-    amparo_legal = models.CharField(max_length=32, choices=AMPARO_LEGAL_CHOICES, blank=True, null=True)
-    modo_disputa = models.CharField(max_length=24, choices=MODO_DISPUTA_CHOICES, blank=True, null=True)
-    criterio_julgamento = models.CharField(max_length=32, choices=CRITERIO_JULGAMENTO_CHOICES, blank=True, null=True)
+    registro_preco = models.BooleanField(default=False, verbose_name="Registro de Preço (SRP)")
+    lei_14133 = models.BooleanField(default=True, verbose_name="Regido pela Lei 14.133/21")
+    
+    # --- Controle de Integração ---
+    pncp_sequencial = models.CharField(max_length=50, blank=True, null=True, help_text="Sequencial gerado pelo PNCP após publicação")
+    pncp_url = models.URLField(blank=True, null=True, help_text="Link para a compra no PNCP")
+    
+    usuario_criacao = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-data_processo']
+        unique_together = ('entidade', 'numero_certame', 'ano', 'modalidade')
+        ordering = ['-ano', '-data_abertura']
         verbose_name = "Processo Licitatório"
         verbose_name_plural = "Processos Licitatórios"
 
     def __str__(self):
-        return f"{self.numero_certame or self.numero_processo}"
+        return f"{self.numero_certame}/{self.ano} - {self.get_modalidade_display()}"
 
-    # --- Alias para Frontend (React espera 'registro_precos') ---
+    def save(self, *args, **kwargs):
+        # Normalização básica automática
+        if self.modalidade: 
+            self.modalidade = self.modalidade.upper().strip()
+        if self.modo_disputa:
+            self.modo_disputa = self.modo_disputa.upper().strip()
+        super().save(*args, **kwargs)
+
+    # --- Alias para Frontend (React espera 'registro_precos' em alguns componentes legados) ---
     @property
     def registro_precos(self):
         return self.registro_preco
@@ -160,7 +163,9 @@ class ProcessoLicitatorio(models.Model):
     def registro_precos(self, value):
         self.registro_preco = bool(value)
 
-    # --- Lógica de Negócio (Fat Model) ---
+    # ============================================================
+    # LÓGICA DE NEGÓCIO (MÉTODOS DE LOTE)
+    # ============================================================
 
     def next_lote_numero(self) -> int:
         """Calcula o próximo número de lote disponível."""
@@ -257,6 +262,7 @@ class Lote(models.Model):
     processo = models.ForeignKey(ProcessoLicitatorio, related_name='lotes', on_delete=models.CASCADE)
     numero = models.PositiveIntegerField()
     descricao = models.TextField(blank=True, null=True)
+    valor_total = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
 
     class Meta:
         ordering = ['numero']
@@ -273,9 +279,11 @@ class Lote(models.Model):
 # ============================================================
 
 class Fornecedor(models.Model):
-    cnpj = models.CharField(max_length=18, unique=True)
+    cnpj_cpf = models.CharField(max_length=18, unique=True, verbose_name="CNPJ/CPF")
+    nome = models.CharField(max_length=255) # Alias para razao_social para compatibilidade
     razao_social = models.CharField(max_length=255)
     nome_fantasia = models.CharField(max_length=255, blank=True, null=True)
+    tipo_pessoa = models.CharField(max_length=2, choices=TIPO_PESSOA_CHOICES, default='PJ')
     porte = models.CharField(max_length=100, blank=True, null=True)
     
     # Contato
@@ -297,7 +305,14 @@ class Fornecedor(models.Model):
         ordering = ['razao_social']
 
     def __str__(self):
-        return self.razao_social or self.cnpj
+        return self.nome or self.razao_social or self.cnpj_cpf
+    
+    def save(self, *args, **kwargs):
+        if not self.nome and self.razao_social:
+            self.nome = self.razao_social
+        elif not self.razao_social and self.nome:
+            self.razao_social = self.nome
+        super().save(*args, **kwargs)
 
 
 # ============================================================
@@ -317,47 +332,56 @@ class Item(models.Model):
         blank=True, 
         null=True
     )
+    # Vencedor do item (atalho)
     fornecedor = models.ForeignKey(
         Fornecedor, 
-        related_name='itens', 
+        related_name='itens_vencidos', 
         on_delete=models.SET_NULL, 
         blank=True, 
         null=True
     )
 
+    numero = models.IntegerField(default=1) # Campo 'ordem' renomeado para 'numero' para padronização
     descricao = models.CharField(max_length=255)
     especificacao = models.TextField(
         blank=True, 
         null=True, 
-        help_text="Especificação detalhada do item (vindo da planilha)."
+        help_text="Especificação detalhada do item."
     )
+    codigo_catmat = models.CharField(max_length=20, blank=True, null=True, verbose_name="Código CATMAT/CATSER")
     
-    unidade = models.CharField(max_length=20)
-    quantidade = models.DecimalField(max_digits=12, decimal_places=2)
-    valor_estimado = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+    unidade = models.CharField(max_length=50)
+    quantidade = models.DecimalField(max_digits=12, decimal_places=4)
+    valor_estimado = models.DecimalField(max_digits=15, decimal_places=4)
+    valor_total = models.DecimalField(max_digits=15, decimal_places=2, editable=False)
     
-    ordem = models.PositiveIntegerField(default=1)
-    natureza = models.CharField(choices=NATUREZAS_DESPESA, blank=True, null=True)
+    natureza_despesa = models.CharField(max_length=10, choices=NATUREZAS_DESPESA, blank=True, null=True)
+    tipo_organizacao = models.CharField(max_length=10, choices=TIPO_ORGANIZACAO_CHOICES, default='ITEM')
 
     class Meta:
-        ordering = ['ordem']
+        ordering = ['numero']
         constraints = [
-            models.UniqueConstraint(fields=['processo', 'ordem'], name='uniq_item_processo_ordem'),
+            models.UniqueConstraint(fields=['processo', 'numero'], name='uniq_item_processo_numero'),
         ]
 
     def __str__(self):
-        return f"{self.descricao} ({self.processo.numero_processo})"
+        return f"Item {self.numero} - {self.descricao[:30]} ({self.processo.numero_processo})"
 
     def clean(self):
-        """Validação de integridade: Item não pode estar em Lote de outro Processo."""
+        """Validação de integridade."""
         if self.lote and self.lote.processo_id != self.processo_id:
             raise ValidationError("O lote selecionado pertence a outro processo.")
 
     def save(self, *args, **kwargs):
-        """Auto-numeração do campo 'ordem' se não fornecido."""
-        if self._state.adding and (self.ordem is None or self.ordem <= 0):
-            last = Item.objects.filter(processo=self.processo).order_by('-ordem').first()
-            self.ordem = (last.ordem + 1) if last else 1
+        """Cálculo de total e auto-numeração."""
+        if self.quantidade and self.valor_estimado:
+            self.valor_total = self.quantidade * self.valor_estimado
+        else:
+            self.valor_total = 0
+            
+        if self._state.adding and (self.numero is None or self.numero <= 0):
+            last = Item.objects.filter(processo=self.processo).order_by('-numero').first()
+            self.numero = (last.numero + 1) if last else 1
         super().save(*args, **kwargs)
 
 
@@ -369,15 +393,17 @@ class FornecedorProcesso(models.Model):
     processo = models.ForeignKey(
         ProcessoLicitatorio, 
         on_delete=models.CASCADE, 
-        related_name='fornecedores_processo'
+        related_name='participantes'
     )
     fornecedor = models.ForeignKey(
         Fornecedor, 
         on_delete=models.CASCADE, 
-        related_name='processos'
+        related_name='processos_participados'
     )
     data_participacao = models.DateField(auto_now_add=True)
     habilitado = models.BooleanField(default=True)
+    vencedor = models.BooleanField(default=False)
+    valor_adjudicado = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
 
     class Meta:
         unique_together = (('processo', 'fornecedor'),)
