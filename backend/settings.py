@@ -15,7 +15,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-fallback-key')
 
 # Lê o DEBUG do .env (Padrão False para segurança)
-DEBUG = os.getenv('DEBUG', 'False') == 'True'
+DEBUG = 'True'
 
 ALLOWED_HOSTS = [
     'l3solution.net.br',
