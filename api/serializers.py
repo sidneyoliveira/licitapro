@@ -38,6 +38,10 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "is_active", "is_staff", "date_joined", "last_login"
         )
 
+# --- CORREÇÃO: Alias necessário para as Views ---
+UserSerializer = CustomUserSerializer
+
+
 class GroupNameField(serializers.StringRelatedField):
     def to_representation(self, value):
         return value.name
@@ -186,11 +190,7 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         return super().to_internal_value(data)
 
     def validate(self, attrs):
-        ap = attrs.get("data_abertura") # Ajustei nome conforme padrão comum, verifique se é 'data_abertura' ou 'abertura_propostas' no model
-        # Exemplo de validação de datas
-        # ep = attrs.get("data_encerramento")
-        # if ap and ep and ep <= ap:
-        #     raise serializers.ValidationError({"data_encerramento": "Deve ser posterior à abertura."})
+        # Exemplo de validação extra se necessário
         return attrs
 
 
