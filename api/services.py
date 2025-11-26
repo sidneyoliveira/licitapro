@@ -15,8 +15,10 @@ from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 class PNCPService:
-    BASE_URL = getattr(settings, 'PNCP_BASE_URL', 'https://pncp.gov.br/api/pncp/v1')
-    ACCESS_TOKEN = getattr(settings, 'PNCP_ACCESS_TOKEN', '')
+    BASE_URL = getattr(settings, 'PNCP_BASE_URL', 'https://treina.pncp.gov.br/api/pncp/v1')
+    
+    # --- TOKEN HARDCODED PARA TESTE (TEMPORÁRIO) ---
+    ACCESS_TOKEN = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2ODJiYTE0YS1jMTJkLTRhOWYtOWMxOS1hNjYyNDIzMGMxMzkiLCJleHAiOjE3NjQxMDgzNzgsImFkbWluaXN0cmFkb3IiOmZhbHNlLCJjcGZDbnBqIjoiMTEwMzU1NDQwMDAxMDUiLCJlbWFpbCI6ImNvbnRhdG9fbGxAaG90bWFpbC5jb20iLCJnZXN0YW9lbnRlIjp0cnVlLCJpZEJhc2VEYWRvcyI6Mjg2NCwibm9tZSI6IkwgJiBMIEFTU0VTU09SSUEgQ09OU1VMVE9SSUEgRSBTRVJWScOHT1MgTFREQSJ9.z_WK_EbWuJrK9HFPQUMFa4IZLG-8IUfYjZzSHBey8WXHyHSnHAOIcrWCxXlBG39JICac2QV5B8qnCiF-tP_9NA"
 
     @staticmethod
     def _extrair_user_id_token(token):
@@ -25,17 +27,15 @@ class PNCPService:
         """
         try:
             if not token: return None
-            # O JWT é dividido em 3 partes. O payload é a segunda.
             parts = token.split('.')
             if len(parts) < 2: return None
             
             payload_b64 = parts[1]
-            # Ajusta padding base64 se necessário
             payload_b64 += '=' * (-len(payload_b64) % 4)
             payload_json = base64.b64decode(payload_b64).decode('utf-8')
             payload = json.loads(payload_json)
             
-            # Tenta pegar o idBaseDados (comum no PNCP) ou sub/user_id
+            # Pega ID base de dados (prioritário) ou outros
             return payload.get('idBaseDados') or payload.get('sub') or payload.get('user_id')
         except Exception as e:
             logger.error(f"Erro ao decodificar JWT do PNCP: {e}")
@@ -44,9 +44,7 @@ class PNCPService:
     @classmethod
     def _vincular_usuario_ao_orgao(cls, user_id, cnpj):
         """
-        CORREÇÃO: Vincula o usuário ao órgão usando o endpoint correto (Manual 6.1.5).
-        URL: /v1/usuarios/{id}/orgaos
-        Payload: { "entesAutorizados": [ "CNPJ" ] }
+        Vincula o usuário ao órgão usando o endpoint correto (Manual 6.1.5).
         """
         if not user_id or not cnpj:
             return
@@ -62,15 +60,14 @@ class PNCPService:
         }
 
         try:
-            # verify=False para evitar erros de SSL em ambientes de teste/homologação
             logger.info(f"Tentando vincular Usuario {user_id} ao Orgao {cnpj}...")
+            # verify=False para evitar erros de SSL em ambiente de teste
             response = requests.post(url, headers=headers, json=payload, verify=False, timeout=10)
             
             if response.status_code in [200, 201]:
                 logger.info("Vinculação realizada/confirmada com sucesso.")
             else:
-                # Não levantamos erro aqui para não bloquear o fluxo caso já esteja vinculado
-                logger.warning(f"Aviso na vinculação (pode já existir): {response.status_code} - {response.text}")
+                logger.warning(f"Aviso na vinculação: {response.status_code} - {response.text}")
                 
         except Exception as e:
             logger.error(f"Erro ao tentar vincular usuário ao órgão: {e}")
@@ -95,31 +92,32 @@ class PNCPService:
         Executa o fluxo completo de publicação.
         """
         
-        # 0. Verificação Inicial
         if not cls.ACCESS_TOKEN:
-            raise ValueError("Configuração Crítica Ausente: 'PNCP_ACCESS_TOKEN' não encontrado.")
+            raise ValueError("Token ausente no Serviço.")
 
         # ------------------------------------------------------------------
-        # 1. PREPARAÇÃO E VINCULAÇÃO (CRÍTICO PARA O ERRO 401)
+        # 1. PREPARAÇÃO E VINCULAÇÃO
         # ------------------------------------------------------------------
         cnpj_orgao = re.sub(r'\D', '', processo.entidade.cnpj)
         
-        # Tenta vincular o usuário ao órgão antes de enviar a compra
         try:
+            # Extrai ID do token hardcoded e tenta vincular
             user_id = cls._extrair_user_id_token(cls.ACCESS_TOKEN)
             if user_id:
                 cls._vincular_usuario_ao_orgao(user_id, cnpj_orgao)
             else:
-                logger.warning("Não foi possível extrair ID do usuário do token para vinculação automática.")
+                logger.warning("Não foi possível extrair ID do usuário do token.")
         except Exception as e:
-            logger.error(f"Falha no processo de vinculação: {e}")
+            logger.error(f"Falha na vinculação: {e}")
 
         # ------------------------------------------------------------------
-        # 2. VALIDAÇÃO BÁSICA
+        # 2. VALIDAÇÃO
         # ------------------------------------------------------------------
         erros = []
         if not processo.numero_certame: erros.append("Número do Certame é obrigatório.")
-        if not processo.entidade or not processo.entidade.cnpj: erros.append("Entidade/CNPJ inválido.")
+        if not processo.entidade or not processo.entidade.cnpj: erros.append("CNPJ inválido.")
+        
+        # Validação simples de IDs > 0
         if not processo.modalidade: erros.append("Modalidade não definida.")
         if not processo.modo_disputa: erros.append("Modo de Disputa não definido.")
         if not processo.amparo_legal: erros.append("Amparo Legal não definido.")
@@ -128,7 +126,7 @@ class PNCPService:
         if not itens.exists(): erros.append("É necessário cadastrar ao menos um Item.")
         
         if erros:
-            raise ValueError("Validação Falhou:\n" + "\n".join(f"- {msg}" for msg in erros))
+            raise ValueError("Validação Falhou: " + " | ".join(erros))
 
         # ------------------------------------------------------------------
         # 3. DADOS GERAIS
@@ -143,13 +141,12 @@ class PNCPService:
             codigo_unidade = processo.orgao.codigo_unidade
 
         # ------------------------------------------------------------------
-        # 4. DATAS (CORREÇÃO DO ERRO 400 DE DATA)
+        # 4. DATAS (CORREÇÃO ISO SEM OFFSET E MICROSEGUNDOS)
         # ------------------------------------------------------------------
         dt_abertura = processo.data_abertura
         if not dt_abertura:
              dt_abertura = datetime.now()
 
-        # 1. Garante Timezone Brasília
         if not dt_abertura.tzinfo:
             sp_tz = pytz.timezone('America/Sao_Paulo')
             dt_abertura = sp_tz.localize(dt_abertura)
@@ -157,10 +154,9 @@ class PNCPService:
             sp_tz = pytz.timezone('America/Sao_Paulo')
             dt_abertura = dt_abertura.astimezone(sp_tz)
         
-        # 2. Remove microssegundos e formata sem offset (Requisito PNCP)
+        # Formato YYYY-MM-DDTHH:MM:SS
         data_abertura_str = dt_abertura.strftime('%Y-%m-%dT%H:%M:%S')
         
-        # Data Encerramento (Abertura + 30min para garantir validade)
         dt_encerramento = dt_abertura + timedelta(minutes=30)
         data_encerramento_str = dt_encerramento.strftime('%Y-%m-%dT%H:%M:%S')
 
@@ -200,10 +196,8 @@ class PNCPService:
             qtd = float(item.quantidade or 0)
             vl_total = round(vl_unitario * qtd, 4)
             
-            # Define Material ou Serviço
             cat_id = int(item.categoria_item or 1)
             tipo_ms = "M"
-            # Lista de IDs que representam serviços/obras (Ajuste conforme necessário)
             if cat_id in [2, 4, 6, 8, 9]: 
                 tipo_ms = "S"
 
@@ -221,7 +215,6 @@ class PNCPService:
                 "criterioJulgamentoId": int(processo.criterio_julgamento or 1),
                 "itemCategoriaId": cat_id,
                 
-                # Catálogo Genérico (15055 = Outros Materiais de Consumo)
                 "catalogoId": 1, 
                 "catalogoCodigoItem": "15055", 
                 "categoriaItemCatalogoId": 1
@@ -229,7 +222,7 @@ class PNCPService:
             payload["itensCompra"].append(item_payload)
 
         # ------------------------------------------------------------------
-        # 6. ENVIO (MULTIPART)
+        # 6. ENVIO
         # ------------------------------------------------------------------
         if hasattr(arquivo, 'seek'):
             arquivo.seek(0)
@@ -245,7 +238,7 @@ class PNCPService:
         headers = {
             "Authorization": f"Bearer {cls.ACCESS_TOKEN}",
             "Titulo-Documento": titulo_documento,
-            "Tipo-Documento-Id": "1" # 1 = Edital
+            "Tipo-Documento-Id": "1" 
         }
 
         try:
@@ -261,8 +254,7 @@ class PNCPService:
             logger.error(f"Erro de Conexão PNCP: {e}")
             raise ValueError(f"Falha de comunicação com o PNCP: {str(e)}")
 
-# Mantido para compatibilidade
 class ImportacaoService:
     @staticmethod
     def processar_planilha_padrao(arquivo):
-        raise NotImplementedError("Importação via planilha ainda não implementada.")
+        raise NotImplementedError("Importação via planilha não implementada.")
