@@ -174,9 +174,9 @@ class PNCPService:
             raise ValueError("IDs de Modalidade/Disputa/Amparo devem ser numéricos.")
 
         payload = {
-            "codigoUnidadeCompradora": codigo_unidade,
-            "cnpjOrgao": cnpj_orgao,
-            "anoCompra": ano_compra,
+            "codigoUnidadeCompradora": 202511,
+            "cnpjOrgao": "07663941000154",
+            "anoCompra": 2025,
             "numeroCompra": numero_compra_clean,
             "numeroProcesso": str(processo.numero_processo or processo.numero_certame),
             
