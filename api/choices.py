@@ -1,10 +1,11 @@
 # api/choices.py
 
 # ==============================================================================
-# MODALIDADES (Lei 14.133/2021)
-# Formato: (ID_PNCP, SLUG, LABEL)
+# DADOS MESTRES (Formato: ID_PNCP, SLUG, LABEL)
+# Usado para gerar choices, mapas e API para o frontend
 # ==============================================================================
-MODALIDADE_CHOICES = (
+
+MODALIDADE_DATA = (
     (6, "pregao_eletronico", "Pregão - Eletrônico"),
     (7, "pregao_presencial", "Pregão - Presencial"),
     (4, "concorrencia_eletronica", "Concorrência - Eletrônica"),
@@ -18,11 +19,7 @@ MODALIDADE_CHOICES = (
     (15, "dialogo_competitivo", "Diálogo Competitivo"),
 )
 
-# ==============================================================================
-# MODO DE DISPUTA
-# Formato: (ID_PNCP, SLUG, LABEL)
-# ==============================================================================
-MODO_DISPUTA_CHOICES = (
+MODO_DISPUTA_DATA = (
     (1, "aberto", "Aberto"),
     (2, "fechado", "Fechado"),
     (3, "aberto_fechado", "Aberto-Fechado"),
@@ -31,11 +28,7 @@ MODO_DISPUTA_CHOICES = (
     (6, "fechado_aberto", "Fechado-Aberto"),
 )
 
-# ==============================================================================
-# CRITÉRIO DE JULGAMENTO
-# Formato: (ID_PNCP, SLUG, LABEL)
-# ==============================================================================
-CRITERIO_JULGAMENTO_CHOICES = (
+CRITERIO_JULGAMENTO_DATA = (
     (1, "menor_preco", "Menor preço"),
     (2, "maior_desconto", "Maior desconto"),
     (3, "melhor_tecnica_conteudo", "Melhor técnica ou conteúdo artístico"),
@@ -47,49 +40,14 @@ CRITERIO_JULGAMENTO_CHOICES = (
     (9, "conteudo_artistico", "Conteúdo artístico"),
 )
 
-# ==============================================================================
-# INSTRUMENTO CONVOCATÓRIO
-# Formato: (ID_PNCP, SLUG, LABEL)
-# ==============================================================================
-INSTRUMENTO_CONVOCATORIO_CHOICES = (
+INSTRUMENTO_CONVOCATORIO_DATA = (
     (1, "edital", "Edital"),
     (2, "aviso_contratacao_direta", "Aviso de Contratação Direta"),
     (3, "ato_autorizacao_contratacao_direta", "Ato que autoriza a Contratação Direta"),
     (4, "edital_chamamento_publico", "Edital de Chamamento Público"),
 )
 
-# ==============================================================================
-# SITUAÇÃO DA COMPRA (Controle Interno e PNCP)
-# Formato: (SLUG, LABEL)
-# ==============================================================================
-SITUACAO_CHOICES = (
-    ('aberto', 'Aberto'),
-    ('em_pesquisa', 'Em Pesquisa'),
-    ('aguardando_publicacao', 'Aguardando Publicação'),
-    ('publicado', 'Publicado'),
-    ('em_contratacao', 'Em Contratação'),
-    ('adjudicado', 'Adjudicado'),
-    ('homologado', 'Homologado'),
-    ('revogado', 'Revogado'),
-    ('cancelado', 'Cancelado'),
-    ('deserto', 'Deserto'),
-    ('fracassado', 'Fracassado'),
-)
-
-# ==============================================================================
-# TIPO DE ORGANIZAÇÃO (Controle Interno)
-# Formato: (SLUG, LABEL)
-# ==============================================================================
-TIPO_ORGANIZACAO_CHOICES = (
-    ('lote', 'Lote'),
-    ('item', 'Item'),
-)
-
-# ==============================================================================
-# SITUAÇÃO DO ITEM DA CONTRATAÇÃO (PNCP 5.7)
-# Formato: (ID_PNCP, SLUG, LABEL)
-# ==============================================================================
-SITUACAO_ITEM_CHOICES = (
+SITUACAO_ITEM_DATA = (
     (1, "em_andamento", "Em Andamento"),
     (2, "homologado", "Homologado"),
     (3, "anulado_revogado_cancelado", "Anulado/Revogado/Cancelado"),
@@ -97,11 +55,7 @@ SITUACAO_ITEM_CHOICES = (
     (5, "fracassado", "Fracassado"),
 )
 
-# ==============================================================================
-# TIPO DE BENEFÍCIO (ME/EPP)
-# Formato: (ID_PNCP, SLUG, LABEL)
-# ==============================================================================
-TIPO_BENEFICIO_CHOICES = (
+TIPO_BENEFICIO_DATA = (
     (1, "participacao_exclusiva", "Participação exclusiva para ME/EPP"),
     (2, "subcontratacao", "Subcontratação para ME/EPP"),
     (3, "cota_reservada", "Cota reservada para ME/EPP"),
@@ -109,11 +63,7 @@ TIPO_BENEFICIO_CHOICES = (
     (5, "nao_se_aplica", "Não se aplica"),
 )
 
-# ==============================================================================
-# CATEGORIA DO ITEM (Material, Serviço, Obra...)
-# Formato: (ID_PNCP, SLUG, LABEL)
-# ==============================================================================
-CATEGORIA_ITEM_CHOICES = (
+CATEGORIA_ITEM_DATA = (
     (1, "material", "Material"),
     (2, "servico", "Serviço"),
     (3, "obra", "Obra"),
@@ -124,19 +74,14 @@ CATEGORIA_ITEM_CHOICES = (
     (8, "obras_servicos_engenharia", "Obras e Serviços de Engenharia"),
 )
 
-# ==============================================================================
-# AMPARO LEGAL (IDs baseados na documentação oficial PNCP)
-# Formato: (ID_PNCP, SLUG, LABEL)
-# ==============================================================================
-AMPARO_LEGAL_CHOICES = (
-    # --- Lei 14.133/2021: Art. 28 (Modalidades) ---
+AMPARO_LEGAL_DATA = (
+    # Art. 28
     (1, "lei14133_art28_i", "Lei 14.133/2021, Art. 28, I (Pregão)"),
     (2, "lei14133_art28_ii", "Lei 14.133/2021, Art. 28, II (Concorrência)"),
     (3, "lei14133_art28_iii", "Lei 14.133/2021, Art. 28, III (Concurso)"),
     (4, "lei14133_art28_iv", "Lei 14.133/2021, Art. 28, IV (Leilão)"),
     (5, "lei14133_art28_v", "Lei 14.133/2021, Art. 28, V (Diálogo Competitivo)"),
-
-    # --- Lei 14.133/2021: Art. 74 (Inexigibilidade) ---
+    # Art. 74
     (6, "lei14133_art74_i", "Lei 14.133/2021, Art. 74, I (Fornecedor Exclusivo)"),
     (7, "lei14133_art74_ii", "Lei 14.133/2021, Art. 74, II (Artista Consagrado)"),
     (8, "lei14133_art74_iii_a", "Lei 14.133/2021, Art. 74, III, a (Estudos Técnicos)"),
@@ -150,8 +95,7 @@ AMPARO_LEGAL_CHOICES = (
     (16, "lei14133_art74_iv", "Lei 14.133/2021, Art. 74, IV (Credenciamento - Inex.)"),
     (17, "lei14133_art74_v", "Lei 14.133/2021, Art. 74, V (Aquisição Imóvel)"),
     (50, "lei14133_art74_caput", "Lei 14.133/2021, Art. 74, caput (Outras Inexigibilidades)"),
-
-    # --- Lei 14.133/2021: Art. 75 (Dispensa) ---
+    # Art. 75
     (18, "lei14133_art75_i", "Lei 14.133/2021, Art. 75, I (Valor < 100k - Engenharia)"),
     (19, "lei14133_art75_ii", "Lei 14.133/2021, Art. 75, II (Valor < 50k - Outros)"),
     (20, "lei14133_art75_iii_a", "Lei 14.133/2021, Art. 75, III, a (Licitação Deserta/Fracassada)"),
@@ -183,24 +127,55 @@ AMPARO_LEGAL_CHOICES = (
     (46, "lei14133_art75_xvi", "Lei 14.133/2021, Art. 75, XVI (Insumos Saúde Fundação)"),
     (60, "lei14133_art75_xvii", "Lei 14.133/2021, Art. 75, XVII (Cisternas/Água)"),
     (77, "lei14133_art75_xviii", "Lei 14.133/2021, Art. 75, XVIII (Cozinha Solidária)"),
-
-    # --- Lei 14.133/2021: Art. 78/79 (Credenciamento/Auxiliares) ---
+    # Art. 78/79
     (47, "lei14133_art78_i", "Lei 14.133/2021, Art. 78, I (Credenciamento - Geral)"),
     (48, "lei14133_art78_ii", "Lei 14.133/2021, Art. 78, II (Pré-qualificação)"),
     (49, "lei14133_art78_iii", "Lei 14.133/2021, Art. 78, III (Manifestação Interesse)"),
     (140, "lei14133_art79_i", "Lei 14.133/2021, Art. 79, I (Cred. Paralela/Não Excludente)"),
     (141, "lei14133_art79_ii", "Lei 14.133/2021, Art. 79, II (Cred. Seleção Terceiros)"),
     (142, "lei14133_art79_iii", "Lei 14.133/2021, Art. 79, III (Cred. Mercados Fluidos)"),
-
-    # --- Lei 11.947/2009 (Merenda Escolar) ---
+    # Lei 11.947
     (138, "lei11947_art14", "Lei 11.947/2009, Art. 14 (Agricultura Familiar)"),
     (139, "lei11947_art21", "Lei 11.947/2009, Art. 21 (Emergencial PNAE)"),
 )
 
 # ==============================================================================
-# NATUREZAS DE DESPESA
-# Formato: (CODIGO, DESCRICAO) - Padrão simples Django pois código é string
+# CHOICES PARA O DJANGO MODEL (Formato: ID, LABEL)
+# Extraído dinamicamente dos dados mestres acima
 # ==============================================================================
+
+MODALIDADE_CHOICES = [(x[0], x[2]) for x in MODALIDADE_DATA]
+MODO_DISPUTA_CHOICES = [(x[0], x[2]) for x in MODO_DISPUTA_DATA]
+CRITERIO_JULGAMENTO_CHOICES = [(x[0], x[2]) for x in CRITERIO_JULGAMENTO_DATA]
+INSTRUMENTO_CONVOCATORIO_CHOICES = [(x[0], x[2]) for x in INSTRUMENTO_CONVOCATORIO_DATA]
+SITUACAO_ITEM_CHOICES = [(x[0], x[2]) for x in SITUACAO_ITEM_DATA]
+TIPO_BENEFICIO_CHOICES = [(x[0], x[2]) for x in TIPO_BENEFICIO_DATA]
+CATEGORIA_ITEM_CHOICES = [(x[0], x[2]) for x in CATEGORIA_ITEM_DATA]
+AMPARO_LEGAL_CHOICES = [(x[0], x[2]) for x in AMPARO_LEGAL_DATA]
+
+# ==============================================================================
+# OUTROS CHOICES (JÁ EM FORMATO CORRETO)
+# ==============================================================================
+
+SITUACAO_CHOICES = (
+    ('aberto', 'Aberto'),
+    ('em_pesquisa', 'Em Pesquisa'),
+    ('aguardando_publicacao', 'Aguardando Publicação'),
+    ('publicado', 'Publicado'),
+    ('em_contratacao', 'Em Contratação'),
+    ('adjudicado', 'Adjudicado'),
+    ('homologado', 'Homologado'),
+    ('revogado', 'Revogado'),
+    ('cancelado', 'Cancelado'),
+    ('deserto', 'Deserto'),
+    ('fracassado', 'Fracassado'),
+)
+
+TIPO_ORGANIZACAO_CHOICES = (
+    ('lote', 'Lote'),
+    ('item', 'Item'),
+)
+
 NATUREZAS_DESPESA_CHOICES = (
     ("33901100", "33901100 - Vencimentos e vantagens fixas - pessoal civil"),
     ("33901200", "33901200 - Vencimentos e vantagens fixas - pessoal militar"),
@@ -250,15 +225,26 @@ NATUREZAS_DESPESA_CHOICES = (
     ("44909000", "44909000 - Outras despesas de capital"),
 )
 
+# Choice para Tipos de Pessoa (usado em ContratoEmpenho)
+TIPO_PESSOA_CHOICES = (
+    ('PF', 'Pessoa Física'),
+    ('PJ', 'Pessoa Jurídica'),
+)
+
+FUNDAMENTACAO_CHOICES = (
+    # Mantido apenas para compatibilidade com código legado, se necessário.
+    ("lei_14133", "Lei 14.133/21"),
+)
+
 # ==============================================================================
-# MAPAS AUXILIARES PARA SERVIÇOS (Busca rápida por Slug)
+# MAPAS AUXILIARES (Busca rápida por Slug -> ID)
 # ==============================================================================
 
-# Dicionários { "slug": ID_PNCP }
-MAP_AMPARO_LEGAL_PNCP = {item[1]: item[0] for item in AMPARO_LEGAL_CHOICES if item[0] is not None}
-MAP_MODALIDADE_PNCP = {item[1]: item[0] for item in MODALIDADE_CHOICES}
-MAP_MODO_DISPUTA_PNCP = {item[1]: item[0] for item in MODO_DISPUTA_CHOICES}
-MAP_INSTRUMENTO_CONVOCATORIO_PNCP = {item[1]: item[0] for item in INSTRUMENTO_CONVOCATORIO_CHOICES}
-MAP_SITUACAO_ITEM_PNCP = {item[1]: item[0] for item in SITUACAO_ITEM_CHOICES}
-MAP_TIPO_BENEFICIO_PNCP = {item[1]: item[0] for item in TIPO_BENEFICIO_CHOICES}
-MAP_CATEGORIA_ITEM_PNCP = {item[1]: item[0] for item in CATEGORIA_ITEM_CHOICES}
+MAP_MODALIDADE_PNCP = {x[1]: x[0] for x in MODALIDADE_DATA}
+MAP_MODO_DISPUTA_PNCP = {x[1]: x[0] for x in MODO_DISPUTA_DATA}
+MAP_INSTRUMENTO_CONVOCATORIO_PNCP = {x[1]: x[0] for x in INSTRUMENTO_CONVOCATORIO_DATA}
+MAP_CRITERIO_JULGAMENTO_PNCP = {x[1]: x[0] for x in CRITERIO_JULGAMENTO_DATA}
+MAP_AMPARO_LEGAL_PNCP = {x[1]: x[0] for x in AMPARO_LEGAL_DATA}
+MAP_SITUACAO_ITEM_PNCP = {x[1]: x[0] for x in SITUACAO_ITEM_DATA}
+MAP_TIPO_BENEFICIO_PNCP = {x[1]: x[0] for x in TIPO_BENEFICIO_DATA}
+MAP_CATEGORIA_ITEM_PNCP = {x[1]: x[0] for x in CATEGORIA_ITEM_DATA}
