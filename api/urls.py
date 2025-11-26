@@ -20,6 +20,7 @@ from .views import (
     DashboardStatsView,
     GoogleLoginView,
     UsuarioViewSet,
+    ConstantesSistemaView
 )
 
 # ============================================================
@@ -70,6 +71,8 @@ urlpatterns = [
 
     # Login Google
     path('google/', GoogleLoginView.as_view(), name='google-login'),
+
+    path('constantes/sistema/', ConstantesSistemaView.as_view(), name='constantes-sistema'),
 ]
 
 if settings.DEBUG:
