@@ -3,7 +3,7 @@
 import logging
 import json
 import re
-import requests # Usando requests para manter padrão do PNCPService
+import requests
 from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -44,16 +44,20 @@ from .serializers import (
     ItemFornecedorSerializer, ContratoEmpenhoSerializer, UsuarioSerializer
 )
 
-# Imports Locais - Choices (Para a API de Constantes)
+# Imports Locais - Choices (Atualizado para nova lógica sem Fundamentação)
 from .choices import (
     MODALIDADE_CHOICES,
-    FUNDAMENTACAO_CHOICES,      
     AMPARO_LEGAL_CHOICES,       
-    MAP_MODALIDADE_FUNDAMENTACAO,
-    MAP_FUNDAMENTACAO_AMPARO,    
-    MODO_DISPUTA_CHOICES, INSTRUMENTO_CONVOCATORIO_CHOICES, CRITERIO_JULGAMENTO_CHOICES,
-    SITUACAO_ITEM_CHOICES, TIPO_BENEFICIO_CHOICES, CATEGORIA_ITEM_CHOICES,
-    SITUACAO_CHOICES, TIPO_ORGANIZACAO_CHOICES, NATUREZAS_DESPESA_CHOICES
+    MAP_MODALIDADE_AMPARO, # Novo Mapa Direto
+    MODO_DISPUTA_CHOICES, 
+    INSTRUMENTO_CONVOCATORIO_CHOICES, 
+    CRITERIO_JULGAMENTO_CHOICES,
+    SITUACAO_ITEM_CHOICES, 
+    TIPO_BENEFICIO_CHOICES, 
+    CATEGORIA_ITEM_CHOICES,
+    SITUACAO_CHOICES, 
+    TIPO_ORGANIZACAO_CHOICES, 
+    NATUREZAS_DESPESA_CHOICES
 )
 
 User = get_user_model()
@@ -62,14 +66,14 @@ logger = logging.getLogger(__name__)
 GOOGLE_CLIENT_ID = getattr(settings, 'GOOGLE_CLIENT_ID', '')
 
 # ============================================================
-# 0️⃣ API DE CONSTANTES DO SISTEMA (NOVO)
+# 0️⃣ API DE CONSTANTES DO SISTEMA (ATUALIZADA)
 # ============================================================
 
 class ConstantesSistemaView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        # Helper robusto (mesmo da resposta anterior)
+        # Helper robusto
         def format_choices_pncp(choices_tuple):
             results = []
             for c in choices_tuple:
@@ -84,25 +88,24 @@ class ConstantesSistemaView(APIView):
             return [{"id": c[0], "label": c[1]} for c in choices_tuple]
 
         data = {
-            # Listas de Opções
+            # --- LISTAS DE OPÇÕES (PNCP) ---
             "modalidades": format_choices_pncp(MODALIDADE_CHOICES),
-            "fundamentacoes": format_choices_simple(FUNDAMENTACAO_CHOICES), # Usando o novo choice
-            "amparos_legais": format_choices_simple(AMPARO_LEGAL_CHOICES),  # Usando o novo choice
-            
-            # --- MAPAS DE DEPENDÊNCIA (ENVIA O CERÉBRO PARA O FRONT) ---
-            "mapa_modalidade_lei": MAP_MODALIDADE_FUNDAMENTACAO,
-            "mapa_lei_amparo": MAP_FUNDAMENTACAO_AMPARO,
-
-            # Outros dados existentes
+            "amparos_legais": format_choices_simple(AMPARO_LEGAL_CHOICES),
             "modos_disputa": format_choices_pncp(MODO_DISPUTA_CHOICES),
             "instrumentos_convocatorios": format_choices_pncp(INSTRUMENTO_CONVOCATORIO_CHOICES),
             "criterios_julgamento": format_choices_pncp(CRITERIO_JULGAMENTO_CHOICES),
             "situacoes_item": format_choices_pncp(SITUACAO_ITEM_CHOICES),
             "tipos_beneficio": format_choices_pncp(TIPO_BENEFICIO_CHOICES),
             "categorias_item": format_choices_pncp(CATEGORIA_ITEM_CHOICES),
+            
+            # --- LISTAS INTERNAS ---
             "situacoes_processo": format_choices_simple(SITUACAO_CHOICES),
             "tipos_organizacao": format_choices_simple(TIPO_ORGANIZACAO_CHOICES),
             "naturezas_despesa": format_choices_simple(NATUREZAS_DESPESA_CHOICES),
+
+            # --- MAPA DE DEPENDÊNCIA (CÉREBRO DO FILTRO) ---
+            # Envia o mapa { ID_MODALIDADE: [LISTA_IDS_AMPARO] }
+            "mapa_modalidade_amparo": MAP_MODALIDADE_AMPARO,
         }
         
         return Response(data)
@@ -200,7 +203,7 @@ class OrgaoViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Nenhuma unidade retornada pelo PNCP."}, status=status.HTTP_404_NOT_FOUND)
 
         # Lógica de Filtragem e Criação
-        ALLOW_KEYWORDS = ["SECRETARIA", "FUNDO", "CONTROLADORIA", "GABINETE", "PREFEITURA", "CAMARA"] # Ajustado
+        ALLOW_KEYWORDS = ["SECRETARIA", "FUNDO", "CONTROLADORIA", "GABINETE", "PREFEITURA", "CAMARA"]
         EXCLUDE_KEYWORDS = []
         EXCLUDE_CODES = {"000000001", "000000000", "1"}
 
@@ -213,7 +216,6 @@ class OrgaoViewSet(viewsets.ModelViewSet):
             return re.sub(r"\s+", " ", s)
 
         def deve_incluir(nome_unidade, codigo_unidade):
-            # Lógica simplificada: Se veio do PNCP vinculado ao CNPJ, geralmente é válido importar
             c = (codigo_unidade or "").strip()
             if c in EXCLUDE_CODES: return False
             return True
@@ -306,12 +308,10 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     search_fields = ["numero_processo", "numero_certame", "objeto"]
     
-    # Nota: 'modalidade' agora filtra pelo ID inteiro (ex: 6 para Pregão)
-    # Se o frontend enviar slug, o filtro padrão falhará. O ideal é o front usar IDs.
     filterset_fields = ["modalidade", "situacao", "entidade", "orgao"]
 
     # ----------------------------------------------------------------------
-    # IMPORTAÇÃO XLSX (Via Service)
+    # IMPORTAÇÃO XLSX
     # ----------------------------------------------------------------------
     @action(
         detail=False,
@@ -328,10 +328,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             return Response({"detail": "O arquivo deve ser .xlsx."}, status=400)
 
         try:
-            # Chama o serviço isolado que agora retorna IDs corretos para o model
             resultado = ImportacaoService.processar_planilha_padrao(arquivo)
-            
-            # O resultado['processo'] já é um objeto salvo no banco com IDs PNCP
             processo_serializer = self.get_serializer(resultado['processo'])
             
             return Response(
@@ -369,11 +366,9 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             return Response({"detail": "O arquivo do documento é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Chama o serviço de integração que já lida com IDs
             resultado = PNCPService.publicar_compra(processo, arquivo, titulo)
             
-            # Atualiza status local se der certo
-            processo.situacao = "publicado" # Usar slug da situação
+            processo.situacao = "publicado" 
             processo.save()
 
             return Response({
@@ -451,7 +446,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         return Response({"detail": "Nenhum vínculo encontrado para remover."}, status=status.HTTP_404_NOT_FOUND)
 
     # ----------------------------------------------------------------------
-    # GERENCIAMENTO DE LOTES (NESTED)
+    # GERENCIAMENTO DE LOTES
     # ----------------------------------------------------------------------
     @action(detail=True, methods=["get", "post"], url_path="lotes")
     def lotes(self, request, *args, **kwargs):
