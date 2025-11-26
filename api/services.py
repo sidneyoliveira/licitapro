@@ -17,14 +17,13 @@ logger = logging.getLogger(__name__)
 class PNCPService:
     BASE_URL = getattr(settings, 'PNCP_BASE_URL', 'https://treina.pncp.gov.br/api/pncp/v1')
     
-    # --- TOKEN HARDCODED PARA TESTE (TEMPORÁRIO) ---
+    # --- TOKEN HARDCODED PARA TESTE (COMO SOLICITADO) ---
+    # Substitua pelo token real quando for para produção
     ACCESS_TOKEN = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2ODJiYTE0YS1jMTJkLTRhOWYtOWMxOS1hNjYyNDIzMGMxMzkiLCJleHAiOjE3NjQxMDgzNzgsImFkbWluaXN0cmFkb3IiOmZhbHNlLCJjcGZDbnBqIjoiMTEwMzU1NDQwMDAxMDUiLCJlbWFpbCI6ImNvbnRhdG9fbGxAaG90bWFpbC5jb20iLCJnZXN0YW9lbnRlIjp0cnVlLCJpZEJhc2VEYWRvcyI6Mjg2NCwibm9tZSI6IkwgJiBMIEFTU0VTU09SSUEgQ09OU1VMVE9SSUEgRSBTRVJWScOHT1MgTFREQSJ9.z_WK_EbWuJrK9HFPQUMFa4IZLG-8IUfYjZzSHBey8WXHyHSnHAOIcrWCxXlBG39JICac2QV5B8qnCiF-tP_9NA"
 
     @staticmethod
     def _extrair_user_id_token(token):
-        """
-        Extrai o ID do usuário (idBaseDados) do JWT para usar na vinculação.
-        """
+        """Extrai o ID do usuário (idBaseDados) do JWT."""
         try:
             if not token: return None
             parts = token.split('.')
@@ -35,20 +34,21 @@ class PNCPService:
             payload_json = base64.b64decode(payload_b64).decode('utf-8')
             payload = json.loads(payload_json)
             
-            # Pega ID base de dados (prioritário) ou outros
+            # Prioriza idBaseDados conforme seu script de teste que funcionou
             return payload.get('idBaseDados') or payload.get('sub') or payload.get('user_id')
         except Exception as e:
-            logger.error(f"Erro ao decodificar JWT do PNCP: {e}")
+            logger.error(f"Erro ao decodificar JWT: {e}")
             return None
 
     @classmethod
     def _vincular_usuario_ao_orgao(cls, user_id, cnpj):
         """
-        Vincula o usuário ao órgão usando o endpoint correto (Manual 6.1.5).
+        Vincula o usuário ao órgão (Manual 6.1.5).
         """
         if not user_id or not cnpj:
             return
 
+        # Endpoint correto de vinculação de usuário
         url = f"{cls.BASE_URL}/usuarios/{user_id}/orgaos"
         headers = {
             "Authorization": f"Bearer {cls.ACCESS_TOKEN}",
@@ -60,30 +60,33 @@ class PNCPService:
         }
 
         try:
-            logger.info(f"Tentando vincular Usuario {user_id} ao Orgao {cnpj}...")
-            # verify=False para evitar erros de SSL em ambiente de teste
+            logger.info(f"[PNCP] Vinculando Usuario {user_id} ao Orgao {cnpj}...")
             response = requests.post(url, headers=headers, json=payload, verify=False, timeout=10)
             
             if response.status_code in [200, 201]:
-                logger.info("Vinculação realizada/confirmada com sucesso.")
+                logger.info("[PNCP] Vinculação SUCESSO.")
             else:
-                logger.warning(f"Aviso na vinculação: {response.status_code} - {response.text}")
+                # Log de aviso, pois pode já estar vinculado
+                logger.warning(f"[PNCP] Aviso vinculação: {response.status_code} - {response.text}")
                 
         except Exception as e:
-            logger.error(f"Erro ao tentar vincular usuário ao órgão: {e}")
+            logger.error(f"[PNCP] Erro de conexão na vinculação: {e}")
 
     @staticmethod
     def _handle_error_response(response):
+        """
+        Trata erros da API e loga o corpo da resposta para debug.
+        """
         try:
             err_json = response.json()
             detail = err_json.get("message") or err_json.get("detail") or err_json.get("errors") or str(err_json)
             if isinstance(detail, list):
                 detail = " | ".join([str(e) for e in detail])
         except:
-            detail = response.text[:300]
+            detail = response.text[:500] # Pega os primeiros 500 chars do erro
         
         msg = f"PNCP Recusou ({response.status_code}): {detail}"
-        logger.error(msg)
+        logger.error(f"[PNCP ERROR] {msg}") # Log no terminal
         raise ValueError(msg)
 
     @classmethod
@@ -93,44 +96,31 @@ class PNCPService:
         """
         
         if not cls.ACCESS_TOKEN:
-            raise ValueError("Token ausente no Serviço.")
+            raise ValueError("Token de Acesso PNCP não configurado.")
 
-        # ------------------------------------------------------------------
-        # 1. PREPARAÇÃO E VINCULAÇÃO
-        # ------------------------------------------------------------------
+        # 1. PREPARAÇÃO
         cnpj_orgao = re.sub(r'\D', '', processo.entidade.cnpj)
         
+        # Tenta vincular (igual ao seu script Python que funcionou)
         try:
-            # Extrai ID do token hardcoded e tenta vincular
             user_id = cls._extrair_user_id_token(cls.ACCESS_TOKEN)
             if user_id:
                 cls._vincular_usuario_ao_orgao(user_id, cnpj_orgao)
-            else:
-                logger.warning("Não foi possível extrair ID do usuário do token.")
-        except Exception as e:
-            logger.error(f"Falha na vinculação: {e}")
+        except Exception:
+            pass
 
-        # ------------------------------------------------------------------
-        # 2. VALIDAÇÃO
-        # ------------------------------------------------------------------
+        # Validações básicas
         erros = []
-        if not processo.numero_certame: erros.append("Número do Certame é obrigatório.")
-        if not processo.entidade or not processo.entidade.cnpj: erros.append("CNPJ inválido.")
+        if not processo.numero_certame: erros.append("Número do Certame obrigatório")
+        if not processo.modalidade: erros.append("Modalidade obrigatória")
         
-        # Validação simples de IDs > 0
-        if not processo.modalidade: erros.append("Modalidade não definida.")
-        if not processo.modo_disputa: erros.append("Modo de Disputa não definido.")
-        if not processo.amparo_legal: erros.append("Amparo Legal não definido.")
-
         itens = processo.itens.all()
-        if not itens.exists(): erros.append("É necessário cadastrar ao menos um Item.")
+        if not itens.exists(): erros.append("Pelo menos um Item é obrigatório")
         
         if erros:
-            raise ValueError("Validação Falhou: " + " | ".join(erros))
+            raise ValueError(" | ".join(erros))
 
-        # ------------------------------------------------------------------
-        # 3. DADOS GERAIS
-        # ------------------------------------------------------------------
+        # 2. DADOS GERAIS
         if processo.data_processo:
             ano_compra = int(processo.data_processo.year)
         else:
@@ -141,31 +131,47 @@ class PNCPService:
             codigo_unidade = processo.orgao.codigo_unidade
 
         # ------------------------------------------------------------------
-        # 4. DATAS (CORREÇÃO ISO SEM OFFSET E MICROSEGUNDOS)
+        # [cite_start]3. DATAS (CORREÇÃO DEFINITIVA) [cite: 1397, 1398]
         # ------------------------------------------------------------------
         dt_abertura = processo.data_abertura
         if not dt_abertura:
              dt_abertura = datetime.now()
 
+        # Garante Fuso Horário de Brasília (America/Sao_Paulo)
+        sp_tz = pytz.timezone('America/Sao_Paulo')
+        
         if not dt_abertura.tzinfo:
-            sp_tz = pytz.timezone('America/Sao_Paulo')
+            # Se a data do banco vier sem fuso (naive), assume que é Brasília
             dt_abertura = sp_tz.localize(dt_abertura)
         else:
-            sp_tz = pytz.timezone('America/Sao_Paulo')
+            # Se já tiver fuso, converte para Brasília
             dt_abertura = dt_abertura.astimezone(sp_tz)
         
-        # Formato YYYY-MM-DDTHH:MM:SS
+        # O PNCP espera o formato YYYY-MM-DDTHH:MM:SS (Sem o offset -03:00 no final da string)
+        # Exemplo do manual: "2022-07-21T08:00:00"
         data_abertura_str = dt_abertura.strftime('%Y-%m-%dT%H:%M:%S')
         
-        dt_encerramento = dt_abertura + timedelta(minutes=30)
+        # Data de Encerramento (Opcional para algumas modalidades, mas bom enviar)
+        # Adiciona 1 hora por padrão se não tiver lógica específica
+        dt_encerramento = dt_abertura + timedelta(minutes=60)
         data_encerramento_str = dt_encerramento.strftime('%Y-%m-%dT%H:%M:%S')
 
         # ------------------------------------------------------------------
-        # 5. PAYLOAD
+        # 4. PAYLOAD
         # ------------------------------------------------------------------
+        # Limpa numero da compra (apenas digitos)
         raw_numero = str(processo.numero_certame).split('/')[0]
         numero_compra_clean = re.sub(r'\D', '', raw_numero)
         if not numero_compra_clean: numero_compra_clean = "1"
+        
+        # Converte IDs para int para evitar erro de tipo
+        try:
+            modalidade_id = int(processo.modalidade)
+            modo_disputa_id = int(processo.modo_disputa)
+            amparo_id = int(processo.amparo_legal)
+            inst_id = int(processo.instrumento_convocatorio or 1)
+        except (ValueError, TypeError):
+            raise ValueError("IDs de Modalidade/Disputa/Amparo devem ser numéricos.")
 
         payload = {
             "codigoUnidadeCompradora": codigo_unidade,
@@ -174,15 +180,16 @@ class PNCPService:
             "numeroCompra": numero_compra_clean,
             "numeroProcesso": str(processo.numero_processo or processo.numero_certame),
             
-            "tipoInstrumentoConvocatorioId": int(processo.instrumento_convocatorio or 1),
-            "modalidadeId": int(processo.modalidade),
-            "modoDisputaId": int(processo.modo_disputa),
-            "amparoLegalId": int(processo.amparo_legal),
+            "tipoInstrumentoConvocatorioId": inst_id,
+            "modalidadeId": modalidade_id,
+            "modoDisputaId": modo_disputa_id,
+            "amparoLegalId": amparo_id,
             
             "srp": bool(processo.registro_preco),
-            "objetoCompra": (processo.objeto or f"Licitação {processo.numero_processo}")[:5000],
-            "informacaoComplementar": "Processo integrado via API Licitapro.",
+            "objetoCompra": (processo.objeto or "Objeto não informado")[:5000],
+            "informacaoComplementar": "Integrado via Licitapro",
             
+            # DATAS SEM OFFSET
             "dataAberturaProposta": data_abertura_str,
             "dataEncerramentoProposta": data_encerramento_str,
             
@@ -196,25 +203,24 @@ class PNCPService:
             qtd = float(item.quantidade or 0)
             vl_total = round(vl_unitario * qtd, 4)
             
+            # Lógica simples M/S baseada na categoria
             cat_id = int(item.categoria_item or 1)
             tipo_ms = "M"
-            if cat_id in [2, 4, 6, 8, 9]: 
-                tipo_ms = "S"
+            if cat_id in [2, 4, 6, 8, 9]: tipo_ms = "S"
 
             item_payload = {
                 "numeroItem": item.ordem or idx,
                 "materialOuServico": tipo_ms,
                 "tipoBeneficioId": int(item.tipo_beneficio or 1),
                 "incentivoProdutivoBasico": False,
-                "descricao": (item.descricao or "Item sem descrição")[:255],
+                "descricao": (item.descricao or "Item")[:255],
                 "quantidade": qtd,
                 "unidadeMedida": (item.unidade or "UN")[:20],
                 "valorUnitarioEstimado": vl_unitario,
                 "valorTotal": vl_total,
-                
                 "criterioJulgamentoId": int(processo.criterio_julgamento or 1),
                 "itemCategoriaId": cat_id,
-                
+                # Valores Padrão de Catálogo (Para evitar erro 400 se faltar)
                 "catalogoId": 1, 
                 "catalogoCodigoItem": "15055", 
                 "categoriaItemCatalogoId": 1
@@ -222,13 +228,21 @@ class PNCPService:
             payload["itensCompra"].append(item_payload)
 
         # ------------------------------------------------------------------
-        # 6. ENVIO
+        # DEBUG LOGGING (MECANISMO DE IDENTIFICAÇÃO DE ERRO)
+        # ------------------------------------------------------------------
+        logger.info("=== PAYLOAD SENDO ENVIADO AO PNCP ===")
+        logger.info(json.dumps(payload, indent=2, ensure_ascii=False))
+        logger.info("=====================================")
+
+        # ------------------------------------------------------------------
+        # 5. ENVIO
         # ------------------------------------------------------------------
         if hasattr(arquivo, 'seek'):
             arquivo.seek(0)
 
         filename = getattr(arquivo, 'name', 'edital.pdf')
         
+        # Atenção: O JSON deve ir como 'compra' com content-type application/json
         files = {
             'documento': (filename, arquivo, 'application/pdf'),
             'compra': (None, json.dumps(payload), 'application/json')
@@ -242,8 +256,11 @@ class PNCPService:
         }
 
         try:
-            logger.info(f"Enviando para PNCP: {url}")
+            logger.info(f"Enviando POST para: {url}")
+            # Timeout alto para upload
             response = requests.post(url, headers=headers, files=files, verify=False, timeout=90)
+            
+            logger.info(f"Status Code PNCP: {response.status_code}")
             
             if response.status_code in [200, 201]:
                 return response.json()
@@ -251,10 +268,10 @@ class PNCPService:
                 cls._handle_error_response(response)
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Erro de Conexão PNCP: {e}")
-            raise ValueError(f"Falha de comunicação com o PNCP: {str(e)}")
+            logger.error(f"Erro Conexão: {e}")
+            raise ValueError(f"Falha de comunicação: {str(e)}")
 
 class ImportacaoService:
     @staticmethod
     def processar_planilha_padrao(arquivo):
-        raise NotImplementedError("Importação via planilha não implementada.")
+        raise NotImplementedError("Importação não implementada.")
