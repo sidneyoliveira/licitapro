@@ -111,12 +111,14 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     entidade_obj = EntidadeMiniSerializer(source="entidade", read_only=True)
     orgao_obj = OrgaoMiniSerializer(source="orgao", read_only=True)
 
+    # Definimos como CharField para aceitar tanto ID (ex: "1") quanto Slug (ex: "pregao_eletronico")
     modalidade = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     modo_disputa = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    instrumento_convocatorio = serializers.CharField(required=False, allow_blank=True, allow_null=True) # Antiga fundamentacao
+    instrumento_convocatorio = serializers.CharField(required=False, allow_blank=True, allow_null=True) 
     amparo_legal = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     
-    fundamentacao = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
+    # Mantemos fundamentacao como campo de escrita opcional (não sobrescreve mais instrumento)
+    fundamentacao = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = ProcessoLicitatorio
@@ -160,7 +162,6 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         # 1. Converter Modalidade (Slug -> ID)
         if 'modalidade' in data and data['modalidade']:
             slug = data['modalidade']
-            # Tenta pegar do mapa, se não achar, mantém o valor (pode já ser ID ou inválido)
             data['modalidade'] = MAP_MODALIDADE_PNCP.get(slug, slug)
 
         # 2. Converter Modo de Disputa (Slug -> ID)
@@ -171,15 +172,16 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
         # 3. Converter Amparo Legal (Slug -> ID)
         if 'amparo_legal' in data and data['amparo_legal']:
             slug = data['amparo_legal']
-            # O mapa contém todos os amparos da 14.133 mapeados pelo slug único
             data['amparo_legal'] = MAP_AMPARO_LEGAL_PNCP.get(slug, slug)
 
-        # 4. Tratamento de compatibilidade para 'fundamentacao' -> 'instrumento_convocatorio'
-        # Se o front enviar 'fundamentacao' (slug antigo), tentamos mapear para Instrumento Convocatório
-        fundamentacao = data.get('fundamentacao') or data.get('instrumento_convocatorio')
-        if fundamentacao:
-            # Mapeia slugs como 'edital', 'aviso_contratacao_direta' para IDs
-            data['instrumento_convocatorio'] = MAP_INSTRUMENTO_CONVOCATORIO_PNCP.get(fundamentacao, fundamentacao)
+        # 4. Tratamento de Instrumento Convocatório (Slug -> ID)
+        # Se vier texto (ex: 'edital'), converte para ID. Se vier ID (ex: '1'), mantém.
+        if 'instrumento_convocatorio' in data and data['instrumento_convocatorio']:
+            slug = data['instrumento_convocatorio']
+            data['instrumento_convocatorio'] = MAP_INSTRUMENTO_CONVOCATORIO_PNCP.get(slug, slug)
+        
+        # REMOVIDO: O bloco que tentava usar 'fundamentacao' como fallback para 'instrumento_convocatorio'.
+        # Isso causava o erro 500 ao tentar salvar "lei_14133" em um campo inteiro.
 
         return super().to_internal_value(data)
 
