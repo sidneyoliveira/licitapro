@@ -1,112 +1,18 @@
 # api/services.py
 
+import logging
 import json
 import re
 import requests
 import base64
-import unicodedata
-import logging
-from typing import Optional, Dict, List, Any, Union
-from datetime import datetime, time, timedelta
-from decimal import Decimal, InvalidOperation
-
+import pytz
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
 from django.conf import settings
-from django.core.files.base import File
-# Tenta importar from_excel, se falhar define função dummy
-try:
-    from openpyxl.utils.datetime import from_excel as excel_to_datetime
-except ImportError:
-    excel_to_datetime = None
+from decimal import Decimal
 
-import pytz  # Essencial para conversão de fuso
-
-# Models e Choices
-from .models import (
-    Entidade, Orgao, ProcessoLicitatorio, Lote, Item, Fornecedor, FornecedorProcesso
-)
-from .choices import (
-    MAP_MODALIDADE_PNCP,
-    MAP_MODO_DISPUTA_PNCP,
-    MAP_AMPARO_LEGAL_PNCP,
-    MAP_INSTRUMENTO_CONVOCATORIO_PNCP,
-    MAP_SITUACAO_ITEM_PNCP,
-    MAP_TIPO_BENEFICIO_PNCP,
-    MAP_CATEGORIA_ITEM_PNCP
-)
-
+# Configuração de Logger
 logger = logging.getLogger(__name__)
-
-# ==============================================================================
-# SERVIÇO 1: IMPORTAÇÃO EXCEL
-# ==============================================================================
-
-class ImportacaoService:
-    """
-    Serviço responsável pela normalização e tratamento de dados vindos de planilhas Excel.
-    """
-    @staticmethod
-    def _normalize_key(s: Any) -> str:
-        if not s: return ""
-        s = str(s).strip()
-        s = unicodedata.normalize("NFD", s)
-        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-        s = s.replace("º", "").replace("°", "").replace("§", "")
-        return re.sub(r"\s+", "_", s).lower()
-
-    @classmethod
-    def get_id_from_map(cls, mapa: Dict[str, int], valor: Any) -> Optional[int]:
-        if not valor: return None
-        if isinstance(valor, int): return valor
-        if str(valor).isdigit(): return int(valor)
-        slug = cls._normalize_key(valor)
-        return mapa.get(slug)
-
-    @staticmethod
-    def _normalize(s: Any) -> str:
-        if s is None: return ""
-        s = str(s).strip()
-        s = unicodedata.normalize("NFD", s)
-        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-        return re.sub(r"\s+", " ", s).upper()
-
-    @staticmethod
-    def _to_decimal(v: Any) -> Optional[Decimal]:
-        if v in (None, ""): return None
-        try:
-            sv = str(v).strip()
-            if "," in sv and "." in sv:
-                sv = sv.replace(".", "").replace(",", ".")
-            else:
-                sv = sv.replace(",", ".")
-            return Decimal(sv)
-        except (ValueError, InvalidOperation):
-            return None
-
-    @staticmethod
-    def _to_date(v: Any, wb_epoch: Optional[datetime] = None) -> Optional[datetime.date]:
-        if not v: return None
-        if isinstance(v, datetime): return v.date()
-        if isinstance(v, (int, float)) and wb_epoch and excel_to_datetime:
-            try:
-                return excel_to_datetime(v, wb_epoch).date()
-            except Exception:
-                return None
-        if isinstance(v, str):
-            for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-                try:
-                    return datetime.strptime(v.strip(), fmt).date()
-                except ValueError:
-                    continue
-        return None
-    
-    @staticmethod
-    def processar_planilha_padrao(arquivo):
-        raise NotImplementedError("Lógica de importação via Excel deve ser implementada.")
-
-
-# ==============================================================================
-# SERVIÇO 2: INTEGRAÇÃO PNCP (V1) - CORRIGIDO
-# ==============================================================================
 
 class PNCPService:
     BASE_URL = getattr(settings, 'PNCP_BASE_URL', 'https://pncp.gov.br/api/pncp/v1')
@@ -114,27 +20,60 @@ class PNCPService:
 
     @staticmethod
     def _extrair_user_id_token(token):
+        """
+        Extrai o ID do usuário (idBaseDados) do JWT para usar na vinculação.
+        """
         try:
             if not token: return None
+            # O JWT é dividido em 3 partes. O payload é a segunda.
             parts = token.split('.')
             if len(parts) < 2: return None
+            
             payload_b64 = parts[1]
+            # Ajusta padding base64 se necessário
             payload_b64 += '=' * (-len(payload_b64) % 4)
             payload_json = base64.b64decode(payload_b64).decode('utf-8')
             payload = json.loads(payload_json)
-            return payload.get('sub') or payload.get('user_id')
+            
+            # Tenta pegar o idBaseDados (comum no PNCP) ou sub/user_id
+            return payload.get('idBaseDados') or payload.get('sub') or payload.get('user_id')
         except Exception as e:
             logger.error(f"Erro ao decodificar JWT do PNCP: {e}")
             return None
 
     @classmethod
     def _vincular_usuario_ao_orgao(cls, user_id, cnpj):
-        url = f"{cls.BASE_URL}/orgaos/{cnpj}/usuarios/{user_id}"
-        headers = {"Authorization": f"Bearer {cls.ACCESS_TOKEN}"}
+        """
+        CORREÇÃO: Vincula o usuário ao órgão usando o endpoint correto (Manual 6.1.5).
+        URL: /v1/usuarios/{id}/orgaos
+        Payload: { "entesAutorizados": [ "CNPJ" ] }
+        """
+        if not user_id or not cnpj:
+            return
+
+        url = f"{cls.BASE_URL}/usuarios/{user_id}/orgaos"
+        headers = {
+            "Authorization": f"Bearer {cls.ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "entesAutorizados": [cnpj]
+        }
+
         try:
-            requests.post(url, headers=headers, verify=False, timeout=10)
-        except Exception:
-            pass
+            # verify=False para evitar erros de SSL em ambientes de teste/homologação
+            logger.info(f"Tentando vincular Usuario {user_id} ao Orgao {cnpj}...")
+            response = requests.post(url, headers=headers, json=payload, verify=False, timeout=10)
+            
+            if response.status_code in [200, 201]:
+                logger.info("Vinculação realizada/confirmada com sucesso.")
+            else:
+                # Não levantamos erro aqui para não bloquear o fluxo caso já esteja vinculado
+                logger.warning(f"Aviso na vinculação (pode já existir): {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            logger.error(f"Erro ao tentar vincular usuário ao órgão: {e}")
 
     @staticmethod
     def _handle_error_response(response):
@@ -151,39 +90,49 @@ class PNCPService:
         raise ValueError(msg)
 
     @classmethod
-    def publicar_compra(cls, processo: ProcessoLicitatorio, arquivo: Any, titulo_documento: str) -> Dict[str, Any]:
+    def publicar_compra(cls, processo, arquivo: Any, titulo_documento: str) -> Dict[str, Any]:
         """
         Executa o fluxo completo de publicação.
         """
         
+        # 0. Verificação Inicial
         if not cls.ACCESS_TOKEN:
-            raise ValueError("Configuração Crítica Ausente: 'PNCP_ACCESS_TOKEN' não encontrado no settings/env.")
+            raise ValueError("Configuração Crítica Ausente: 'PNCP_ACCESS_TOKEN' não encontrado.")
 
         # ------------------------------------------------------------------
-        # 1. VALIDAÇÃO PRELIMINAR
+        # 1. PREPARAÇÃO E VINCULAÇÃO (CRÍTICO PARA O ERRO 401)
+        # ------------------------------------------------------------------
+        cnpj_orgao = re.sub(r'\D', '', processo.entidade.cnpj)
+        
+        # Tenta vincular o usuário ao órgão antes de enviar a compra
+        try:
+            user_id = cls._extrair_user_id_token(cls.ACCESS_TOKEN)
+            if user_id:
+                cls._vincular_usuario_ao_orgao(user_id, cnpj_orgao)
+            else:
+                logger.warning("Não foi possível extrair ID do usuário do token para vinculação automática.")
+        except Exception as e:
+            logger.error(f"Falha no processo de vinculação: {e}")
+
+        # ------------------------------------------------------------------
+        # 2. VALIDAÇÃO BÁSICA
         # ------------------------------------------------------------------
         erros = []
-        if not processo.numero_certame:
-            erros.append("Número do Certame é obrigatório.")
-        if not processo.entidade or not processo.entidade.cnpj:
-            erros.append("Entidade/CNPJ inválido.")
-        
+        if not processo.numero_certame: erros.append("Número do Certame é obrigatório.")
+        if not processo.entidade or not processo.entidade.cnpj: erros.append("Entidade/CNPJ inválido.")
         if not processo.modalidade: erros.append("Modalidade não definida.")
         if not processo.modo_disputa: erros.append("Modo de Disputa não definido.")
         if not processo.amparo_legal: erros.append("Amparo Legal não definido.")
 
         itens = processo.itens.all()
-        if not itens.exists():
-            erros.append("É necessário cadastrar ao menos um Item.")
+        if not itens.exists(): erros.append("É necessário cadastrar ao menos um Item.")
         
         if erros:
             raise ValueError("Validação Falhou:\n" + "\n".join(f"- {msg}" for msg in erros))
 
         # ------------------------------------------------------------------
-        # 2. PREPARAÇÃO
+        # 3. DADOS GERAIS
         # ------------------------------------------------------------------
-        cnpj_orgao = re.sub(r'\D', '', processo.entidade.cnpj)
-        
         if processo.data_processo:
             ano_compra = int(processo.data_processo.year)
         else:
@@ -193,48 +142,34 @@ class PNCPService:
         if processo.orgao and processo.orgao.codigo_unidade:
             codigo_unidade = processo.orgao.codigo_unidade
 
-        # Vinculação preventiva
-        try:
-            user_id = cls._extrair_user_id_token(cls.ACCESS_TOKEN)
-            if user_id:
-                cls._vincular_usuario_ao_orgao(user_id, cnpj_orgao)
-        except Exception:
-            pass
-
         # ------------------------------------------------------------------
-        # 4. CONSTRUÇÃO DO PAYLOAD - CORREÇÃO DE DATAS
+        # 4. DATAS (CORREÇÃO DO ERRO 400 DE DATA)
         # ------------------------------------------------------------------
-        
         dt_abertura = processo.data_abertura
         if not dt_abertura:
              dt_abertura = datetime.now()
 
-        # 1. Garante que a data esteja em Timezone Brasília (America/Sao_Paulo)
-        # O PNCP exige "Horário de Brasília"
-        sp_tz = pytz.timezone('America/Sao_Paulo')
-        
+        # 1. Garante Timezone Brasília
         if not dt_abertura.tzinfo:
-            # Se for naive, assume que já é SP e localiza
+            sp_tz = pytz.timezone('America/Sao_Paulo')
             dt_abertura = sp_tz.localize(dt_abertura)
         else:
-            # Se já tem tz, converte para SP
+            sp_tz = pytz.timezone('America/Sao_Paulo')
             dt_abertura = dt_abertura.astimezone(sp_tz)
         
-        # 2. Formata para string SEM o offset (-03:00), conforme exemplos do Manual
-        # O formato esperado é "YYYY-MM-DDTHH:MM:SS"
+        # 2. Remove microssegundos e formata sem offset (Requisito PNCP)
         data_abertura_str = dt_abertura.strftime('%Y-%m-%dT%H:%M:%S')
         
-        # Para data de encerramento (se não tiver, usamos abertura + 1 minuto para não dar erro de igualdade se houver validação)
-        dt_encerramento = dt_abertura + timedelta(minutes=30) 
+        # Data Encerramento (Abertura + 30min para garantir validade)
+        dt_encerramento = dt_abertura + timedelta(minutes=30)
         data_encerramento_str = dt_encerramento.strftime('%Y-%m-%dT%H:%M:%S')
 
         # ------------------------------------------------------------------
-
-        # Sanitização do Número da Compra
+        # 5. PAYLOAD
+        # ------------------------------------------------------------------
         raw_numero = str(processo.numero_certame).split('/')[0]
         numero_compra_clean = re.sub(r'\D', '', raw_numero)
-        if not numero_compra_clean:
-            numero_compra_clean = "1"
+        if not numero_compra_clean: numero_compra_clean = "1"
 
         payload = {
             "codigoUnidadeCompradora": codigo_unidade,
@@ -243,7 +178,7 @@ class PNCPService:
             "numeroCompra": numero_compra_clean,
             "numeroProcesso": str(processo.numero_processo or processo.numero_certame),
             
-            "tipoInstrumentoConvocatorioId": processo.instrumento_convocatorio or 1,
+            "tipoInstrumentoConvocatorioId": int(processo.instrumento_convocatorio or 1),
             "modalidadeId": int(processo.modalidade),
             "modoDisputaId": int(processo.modo_disputa),
             "amparoLegalId": int(processo.amparo_legal),
@@ -252,7 +187,6 @@ class PNCPService:
             "objetoCompra": (processo.objeto or f"Licitação {processo.numero_processo}")[:5000],
             "informacaoComplementar": "Processo integrado via API Licitapro.",
             
-            # Datas formatadas SEM OFFSET
             "dataAberturaProposta": data_abertura_str,
             "dataEncerramentoProposta": data_encerramento_str,
             
@@ -260,17 +194,17 @@ class PNCPService:
             "itensCompra": []
         }
 
-        # Construção dos Itens
+        # Itens
         for idx, item in enumerate(itens, 1):
             vl_unitario = float(item.valor_estimado or 0)
             qtd = float(item.quantidade or 0)
             vl_total = round(vl_unitario * qtd, 4)
             
+            # Define Material ou Serviço
             cat_id = int(item.categoria_item or 1)
-            # Lógica simples: Categoria 2=Serviço, 4=Serviço Eng, 8=Serviço, 9=Serviço Eng
-            # Isso é uma estimativa baseada em IDs comuns, ajuste conforme seu choices.py real
-            tipo_ms = "M" 
-            if cat_id in [2, 4, 8, 9]: 
+            tipo_ms = "M"
+            # Lista de IDs que representam serviços/obras (Ajuste conforme necessário)
+            if cat_id in [2, 4, 6, 8, 9]: 
                 tipo_ms = "S"
 
             item_payload = {
@@ -287,15 +221,15 @@ class PNCPService:
                 "criterioJulgamentoId": int(processo.criterio_julgamento or 1),
                 "itemCategoriaId": cat_id,
                 
-                # Dados de Catálogo Obrigatórios
+                # Catálogo Genérico (15055 = Outros Materiais de Consumo)
                 "catalogoId": 1, 
-                "catalogoCodigoItem": "15055", # Genérico
+                "catalogoCodigoItem": "15055", 
                 "categoriaItemCatalogoId": 1
             }
             payload["itensCompra"].append(item_payload)
 
         # ------------------------------------------------------------------
-        # 5. ENVIO
+        # 6. ENVIO (MULTIPART)
         # ------------------------------------------------------------------
         if hasattr(arquivo, 'seek'):
             arquivo.seek(0)
@@ -311,11 +245,11 @@ class PNCPService:
         headers = {
             "Authorization": f"Bearer {cls.ACCESS_TOKEN}",
             "Titulo-Documento": titulo_documento,
-            "Tipo-Documento-Id": "1" 
+            "Tipo-Documento-Id": "1" # 1 = Edital
         }
 
         try:
-            # Timeout aumentado para upload de arquivos
+            logger.info(f"Enviando para PNCP: {url}")
             response = requests.post(url, headers=headers, files=files, verify=False, timeout=90)
             
             if response.status_code in [200, 201]:
@@ -326,3 +260,9 @@ class PNCPService:
         except requests.exceptions.RequestException as e:
             logger.error(f"Erro de Conexão PNCP: {e}")
             raise ValueError(f"Falha de comunicação com o PNCP: {str(e)}")
+
+# Mantido para compatibilidade
+class ImportacaoService:
+    @staticmethod
+    def processar_planilha_padrao(arquivo):
+        raise NotImplementedError("Importação via planilha ainda não implementada.")
