@@ -3,9 +3,7 @@
 import logging
 import json
 import re
-from urllib import request as urlrequest
-from urllib.error import URLError, HTTPError
-
+import requests # Usando requests para manter padrão do PNCPService
 from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -16,30 +14,92 @@ from rest_framework import viewsets, permissions, filters, status, parsers, gene
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from django_filters.rest_framework import DjangoFilterBackend
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .services import PNCPService 
+# Imports Locais - Services
+from .services import PNCPService, ImportacaoService
 
-# Imports Locais
+# Imports Locais - Models
 from .models import (
     CustomUser, Entidade, Orgao, ProcessoLicitatorio, Lote, Item,
     Fornecedor, FornecedorProcesso, ItemFornecedor, ContratoEmpenho
 )
+
+# Imports Locais - Serializers
 from .serializers import (
     UserSerializer, EntidadeSerializer, OrgaoSerializer,
     ProcessoLicitatorioSerializer, LoteSerializer, ItemSerializer,
     FornecedorSerializer, FornecedorProcessoSerializer,
     ItemFornecedorSerializer, ContratoEmpenhoSerializer, UsuarioSerializer
 )
-from .services import ImportacaoService  # Serviço criado anteriormente
+
+# Imports Locais - Choices (Para a API de Constantes)
+from .choices import (
+    MODALIDADE_CHOICES,
+    MODO_DISPUTA_CHOICES,
+    INSTRUMENTO_CONVOCATORIO_CHOICES,
+    CRITERIO_JULGAMENTO_CHOICES,
+    AMPARO_LEGAL_CHOICES,
+    SITUACAO_ITEM_CHOICES,
+    TIPO_BENEFICIO_CHOICES,
+    CATEGORIA_ITEM_CHOICES,
+    SITUACAO_CHOICES,
+    TIPO_ORGANIZACAO_CHOICES,
+    NATUREZAS_DESPESA_CHOICES
+)
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
-GOOGLE_CLIENT_ID = getattr(settings, 'GOOGLE_CLIENT_ID', '') 
+GOOGLE_CLIENT_ID = getattr(settings, 'GOOGLE_CLIENT_ID', '')
+
+# ============================================================
+# 0️⃣ API DE CONSTANTES DO SISTEMA (NOVO)
+# ============================================================
+
+class ConstantesSistemaView(APIView):
+    """
+    Endpoint centralizado que fornece todos os dicionários do sistema (PNCP e Internos)
+    para o Frontend. Evita hardcoding de IDs no React.
+    """
+    permission_classes = [AllowAny] # Pode ser fechado se preferir
+
+    def get(self, request):
+        def format_choices_pncp(choices_tuple):
+            """Formata tuplas (ID, SLUG, LABEL) em objetos JSON"""
+            return [
+                {"id": c[0], "slug": c[1], "label": c[2]} 
+                for c in choices_tuple if c[0] is not None # Filtra legados (None)
+            ]
+
+        def format_choices_simple(choices_tuple):
+            """Formata tuplas simples (VALOR, LABEL)"""
+            return [{"id": c[0], "label": c[1]} for c in choices_tuple]
+
+        data = {
+            # Tabelas de Domínio PNCP (IDs Inteiros)
+            "modalidades": format_choices_pncp(MODALIDADE_CHOICES),
+            "modos_disputa": format_choices_pncp(MODO_DISPUTA_CHOICES),
+            "instrumentos_convocatorios": format_choices_pncp(INSTRUMENTO_CONVOCATORIO_CHOICES),
+            "criterios_julgamento": format_choices_pncp(CRITERIO_JULGAMENTO_CHOICES),
+            "amparos_legais": format_choices_pncp(AMPARO_LEGAL_CHOICES),
+            "situacoes_item": format_choices_pncp(SITUACAO_ITEM_CHOICES),
+            "tipos_beneficio": format_choices_pncp(TIPO_BENEFICIO_CHOICES),
+            "categorias_item": format_choices_pncp(CATEGORIA_ITEM_CHOICES),
+            
+            # Tabelas Internas (Strings ou Códigos)
+            "situacoes_processo": format_choices_simple(SITUACAO_CHOICES),
+            "tipos_organizacao": format_choices_simple(TIPO_ORGANIZACAO_CHOICES),
+            "naturezas_despesa": format_choices_simple(NATUREZAS_DESPESA_CHOICES),
+        }
+        
+        return Response(data)
+
+
 # ============================================================
 # 👤 USUÁRIOS
 # ============================================================
@@ -51,7 +111,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     """
     queryset = User.objects.all().order_by("id")
     serializer_class = UsuarioSerializer
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsAdminUser]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
     search_fields = ["username", "email", "first_name", "last_name"]
@@ -62,7 +122,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 class CreateUserView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
 
 class ManageUserView(generics.RetrieveUpdateAPIView):
@@ -71,7 +131,7 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
     PUT/PATCH -> atualiza parcialmente
     """
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_object(self):
         return self.request.user
@@ -89,12 +149,12 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
 class EntidadeViewSet(viewsets.ModelViewSet):
     queryset = Entidade.objects.all().order_by('nome')
     serializer_class = EntidadeSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
 
 class OrgaoViewSet(viewsets.ModelViewSet):
     serializer_class = OrgaoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['entidade']
 
@@ -109,7 +169,6 @@ class OrgaoViewSet(viewsets.ModelViewSet):
     def importar_pncp(self, request):
         """
         Consulta API do PNCP para importar Órgãos vinculados a um CNPJ.
-        Mantido na View pois é uma integração HTTP específica.
         """
         raw_cnpj = (request.data.get('cnpj') or '').strip()
         cnpj_digits = re.sub(r'\D', '', raw_cnpj)
@@ -120,24 +179,22 @@ class OrgaoViewSet(viewsets.ModelViewSet):
         url = f"https://pncp.gov.br/api/pncp/v1/orgaos/{cnpj_digits}/unidades"
 
         try:
-            with urlrequest.urlopen(url, timeout=20) as resp:
-                if resp.status != 200:
-                    return Response({"detail": f"PNCP respondeu {resp.status}"}, status=status.HTTP_502_BAD_GATEWAY)
-                data = json.loads(resp.read().decode('utf-8'))
-        except HTTPError as e:
-            return Response({"detail": f"Falha ao consultar PNCP: HTTP {e.code}"}, status=status.HTTP_502_BAD_GATEWAY)
-        except URLError:
-            return Response({"detail": "Não foi possível alcançar o PNCP."}, status=status.HTTP_502_BAD_GATEWAY)
-        except Exception as e:
-            return Response({"detail": f"Erro inesperado ao consultar PNCP: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            resp = requests.get(url, timeout=20)
+            
+            if resp.status_code != 200:
+                return Response({"detail": f"PNCP respondeu {resp.status_code}"}, status=status.HTTP_502_BAD_GATEWAY)
+            
+            data = resp.json()
+            
+        except requests.RequestException as e:
+            return Response({"detail": f"Erro ao consultar PNCP: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
 
         if not isinstance(data, list) or not data:
             return Response({"detail": "Nenhuma unidade retornada pelo PNCP."}, status=status.HTTP_404_NOT_FOUND)
 
         # Lógica de Filtragem e Criação
-        # ---------------------------------------------------------------------
-        ALLOW_KEYWORDS = ["SECRETARIA", "FUNDO", "CONTROLADORIA", "GABINETE"]
-        EXCLUDE_KEYWORDS = ["PREFEITURA"]
+        ALLOW_KEYWORDS = ["SECRETARIA", "FUNDO", "CONTROLADORIA", "GABINETE", "PREFEITURA", "CAMARA"] # Ajustado
+        EXCLUDE_KEYWORDS = [] # Removido exclusão rígida para evitar falso-negativo
         EXCLUDE_CODES = {"000000001", "000000000", "1"}
 
         def _normalize(txt):
@@ -149,11 +206,10 @@ class OrgaoViewSet(viewsets.ModelViewSet):
             return re.sub(r"\s+", " ", s)
 
         def deve_incluir(nome_unidade, codigo_unidade):
-            n = _normalize(nome_unidade or "")
+            # Lógica simplificada: Se veio do PNCP vinculado ao CNPJ, geralmente é válido importar
             c = (codigo_unidade or "").strip()
             if c in EXCLUDE_CODES: return False
-            if any(word in n for word in EXCLUDE_KEYWORDS): return False
-            return any(word in n for word in ALLOW_KEYWORDS)
+            return True
 
         razao = (data[0].get('orgao') or {}).get('razaoSocial') or ''
         ano_atual = timezone.now().year
@@ -221,7 +277,7 @@ class OrgaoViewSet(viewsets.ModelViewSet):
 class FornecedorViewSet(viewsets.ModelViewSet):
     queryset = Fornecedor.objects.all().order_by('razao_social')
     serializer_class = FornecedorSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, DjangoFilterBackend]
     search_fields = ['razao_social', 'cnpj']
     filterset_fields = ['cnpj']
@@ -239,9 +295,12 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         .order_by("-data_abertura")
     )
     serializer_class = ProcessoLicitatorioSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     search_fields = ["numero_processo", "numero_certame", "objeto"]
+    
+    # Nota: 'modalidade' agora filtra pelo ID inteiro (ex: 6 para Pregão)
+    # Se o frontend enviar slug, o filtro padrão falhará. O ideal é o front usar IDs.
     filterset_fields = ["modalidade", "situacao", "entidade", "orgao"]
 
     # ----------------------------------------------------------------------
@@ -262,10 +321,10 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             return Response({"detail": "O arquivo deve ser .xlsx."}, status=400)
 
         try:
-            # Chama o serviço isolado
+            # Chama o serviço isolado que agora retorna IDs corretos para o model
             resultado = ImportacaoService.processar_planilha_padrao(arquivo)
             
-            # Serializa o resultado para o frontend
+            # O resultado['processo'] já é um objeto salvo no banco com IDs PNCP
             processo_serializer = self.get_serializer(resultado['processo'])
             
             return Response(
@@ -284,7 +343,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.exception("Erro na importação XLSX")
             return Response({"detail": "Erro interno ao processar arquivo."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-   
+    
     @action(
             detail=True,
             methods=['post'],
@@ -303,11 +362,11 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             return Response({"detail": "O arquivo do documento é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Chama o serviço de integração
+            # Chama o serviço de integração que já lida com IDs
             resultado = PNCPService.publicar_compra(processo, arquivo, titulo)
             
             # Atualiza status local se der certo
-            processo.situacao = "Publicado"
+            processo.situacao = "publicado" # Usar slug da situação
             processo.save()
 
             return Response({
@@ -319,8 +378,8 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as e:
             logger.error(f"Erro interno PNCP: {e}")
-            return Response({"detail": "Erro interno ao comunicar com PNCP."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-   
+            return Response({"detail": f"Erro interno ao comunicar com PNCP: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     # ----------------------------------------------------------------------
     # ITENS DO PROCESSO
     # ----------------------------------------------------------------------
@@ -399,8 +458,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         payload = request.data
         try:
             with transaction.atomic():
-                # Delega a lógica de criação para o Model (Fat Model) ou processa aqui se simples
-                # Usando o helper do Model se existir ou lógica direta
                 if hasattr(processo, 'criar_lotes'):
                     if isinstance(payload, list):
                         created = processo.criar_lotes(lotes=payload)
@@ -415,11 +472,8 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                             descricao=payload.get("descricao")
                         )
                 else:
-                    # Fallback caso o método não esteja no model ainda
                     created = []
-                    # ... lógica manual simplificada ...
-                    pass
-
+                    
             return Response(LoteSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({"detail": str(e)}, status=400)
@@ -452,7 +506,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
 class LoteViewSet(viewsets.ModelViewSet):
     queryset = Lote.objects.select_related('processo').all()
     serializer_class = LoteSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['processo']
     search_fields = ['descricao']
@@ -465,7 +519,7 @@ class LoteViewSet(viewsets.ModelViewSet):
 class ItemViewSet(viewsets.ModelViewSet):
     queryset = Item.objects.select_related('processo', 'lote', 'fornecedor').all()
     serializer_class = ItemSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['processo', 'lote', 'fornecedor']
     search_fields = ['descricao', 'unidade', 'especificacao']
@@ -498,7 +552,7 @@ class ItemViewSet(viewsets.ModelViewSet):
 class FornecedorProcessoViewSet(viewsets.ModelViewSet):
     queryset = FornecedorProcesso.objects.select_related('processo', 'fornecedor').all()
     serializer_class = FornecedorProcessoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['processo', 'fornecedor']
     search_fields = ['fornecedor__razao_social', 'fornecedor__cnpj']
@@ -507,7 +561,7 @@ class FornecedorProcessoViewSet(viewsets.ModelViewSet):
 class ItemFornecedorViewSet(viewsets.ModelViewSet):
     queryset = ItemFornecedor.objects.select_related('item', 'fornecedor').all()
     serializer_class = ItemFornecedorSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['item', 'fornecedor', 'vencedor']
     search_fields = ['item__descricao', 'fornecedor__razao_social']
@@ -518,7 +572,7 @@ class ItemFornecedorViewSet(viewsets.ModelViewSet):
 # ============================================================
 
 class ReorderItensView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, _format=None):
         item_ids = request.data.get('item_ids', [])
@@ -533,12 +587,12 @@ class ReorderItensView(APIView):
 
 
 class DashboardStatsView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get(self, _request):
         data = {
             'total_processos': ProcessoLicitatorio.objects.count(),
-            'processos_em_andamento': ProcessoLicitatorio.objects.filter(situacao="Em Contratação").count(),
+            'processos_em_andamento': ProcessoLicitatorio.objects.filter(situacao="em_contratacao").count(),
             'total_fornecedores': Fornecedor.objects.count(),
             'total_orgaos': Orgao.objects.count(),
             'total_itens': Item.objects.count(),
@@ -551,7 +605,7 @@ class DashboardStatsView(APIView):
 # ============================================================
 
 class GoogleLoginView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def post(self, request):
         google_token = request.data.get("token")
@@ -610,7 +664,7 @@ class GoogleLoginView(APIView):
 class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
     queryset = ContratoEmpenho.objects.select_related('processo').all().order_by('-criado_em', 'id')
     serializer_class = ContratoEmpenhoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['processo', 'ano_contrato', 'tipo_contrato_id', 'receita']
     search_fields = ['numero_contrato_empenho', 'processo__numero_processo', 'ni_fornecedor']

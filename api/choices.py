@@ -1,6 +1,198 @@
 # api/choices.py
 
-NATUREZAS_DESPESA = [
+# ==============================================================================
+# MODALIDADES (Lei 14.133/2021)
+# Formato: (ID_PNCP, SLUG, LABEL)
+# ==============================================================================
+MODALIDADE_CHOICES = (
+    (6, "pregao_eletronico", "Pregão - Eletrônico"),
+    (7, "pregao_presencial", "Pregão - Presencial"),
+    (4, "concorrencia_eletronica", "Concorrência - Eletrônica"),
+    (5, "concorrencia_presencial", "Concorrência - Presencial"),
+    (8, "dispensa_licitacao", "Dispensa de Licitação"),
+    (9, "inexigibilidade", "Inexigibilidade"),
+    (11, "pre_qualificacao", "Pré-Qualificação"),
+    (12, "credenciamento", "Credenciamento"),
+    (13, "leilao_eletronico", "Leilão - Eletrônico"),
+    (14, "leilao_presencial", "Leilão - Presencial"),
+    (15, "dialogo_competitivo", "Diálogo Competitivo"),
+)
+
+# ==============================================================================
+# MODO DE DISPUTA
+# Formato: (ID_PNCP, SLUG, LABEL)
+# ==============================================================================
+MODO_DISPUTA_CHOICES = (
+    (1, "aberto", "Aberto"),
+    (2, "fechado", "Fechado"),
+    (3, "aberto_fechado", "Aberto-Fechado"),
+    (4, "dispensa_com_disputa", "Dispensa com Disputa"),
+    (5, "nao_se_aplica", "Não se aplica"),
+    (6, "fechado_aberto", "Fechado-Aberto"),
+)
+
+# ==============================================================================
+# CRITÉRIO DE JULGAMENTO
+# Formato: (ID_PNCP, SLUG, LABEL)
+# ==============================================================================
+CRITERIO_JULGAMENTO_CHOICES = (
+    (1, "menor_preco", "Menor preço"),
+    (2, "maior_desconto", "Maior desconto"),
+    (3, "melhor_tecnica_conteudo", "Melhor técnica ou conteúdo artístico"),
+    (4, "tecnica_e_preco", "Técnica e preço"),
+    (5, "maior_lance", "Maior lance"),
+    (6, "maior_retorno_economico", "Maior retorno econômico"),
+    (7, "nao_se_aplica", "Não se aplica"),
+    (8, "melhor_tecnica", "Melhor técnica"),
+    (9, "conteudo_artistico", "Conteúdo artístico"),
+)
+
+# ==============================================================================
+# INSTRUMENTO CONVOCATÓRIO
+# Formato: (ID_PNCP, SLUG, LABEL)
+# ==============================================================================
+INSTRUMENTO_CONVOCATORIO_CHOICES = (
+    (1, "edital", "Edital"),
+    (2, "aviso_contratacao_direta", "Aviso de Contratação Direta"),
+    (3, "ato_autorizacao_contratacao_direta", "Ato que autoriza a Contratação Direta"),
+    (4, "edital_chamamento_publico", "Edital de Chamamento Público"),
+)
+
+# ==============================================================================
+# SITUAÇÃO DA COMPRA (Controle Interno e PNCP)
+# Formato: (SLUG, LABEL)
+# ==============================================================================
+SITUACAO_CHOICES = (
+    ('aberto', 'Aberto'),
+    ('em_pesquisa', 'Em Pesquisa'),
+    ('aguardando_publicacao', 'Aguardando Publicação'),
+    ('publicado', 'Publicado'),
+    ('em_contratacao', 'Em Contratação'),
+    ('adjudicado', 'Adjudicado'),
+    ('homologado', 'Homologado'),
+    ('revogado', 'Revogado'),
+    ('cancelado', 'Cancelado'),
+    ('deserto', 'Deserto'),
+    ('fracassado', 'Fracassado'),
+)
+
+# ==============================================================================
+# SITUAÇÃO DO ITEM DA CONTRATAÇÃO (PNCP 5.7)
+# Formato: (ID_PNCP, SLUG, LABEL)
+# ==============================================================================
+SITUACAO_ITEM_CHOICES = (
+    (1, "em_andamento", "Em Andamento"),
+    (2, "homologado", "Homologado"),
+    (3, "anulado_revogado_cancelado", "Anulado/Revogado/Cancelado"),
+    (4, "deserto", "Deserto"),
+    (5, "fracassado", "Fracassado"),
+)
+
+# ==============================================================================
+# TIPO DE BENEFÍCIO (ME/EPP)
+# Formato: (ID_PNCP, SLUG, LABEL)
+# ==============================================================================
+TIPO_BENEFICIO_CHOICES = (
+    (1, "participacao_exclusiva", "Participação exclusiva para ME/EPP"),
+    (2, "subcontratacao", "Subcontratação para ME/EPP"),
+    (3, "cota_reservada", "Cota reservada para ME/EPP"),
+    (4, "sem_beneficio", "Sem benefício"),
+    (5, "nao_se_aplica", "Não se aplica"),
+)
+
+# ==============================================================================
+# CATEGORIA DO ITEM (Material, Serviço, Obra...)
+# Formato: (ID_PNCP, SLUG, LABEL)
+# ==============================================================================
+CATEGORIA_ITEM_CHOICES = (
+    (1, "material", "Material"),
+    (2, "servico", "Serviço"),
+    (3, "obra", "Obra"),
+    (4, "servicos_engenharia", "Serviços de Engenharia"),
+    (5, "solucoes_tic", "Soluções de TIC"),
+    (6, "locacao_imoveis", "Locação de Imóveis"),
+    (7, "alienacao_concessao", "Alienação/Concessão/Permissão"),
+    (8, "obras_servicos_engenharia", "Obras e Serviços de Engenharia"),
+)
+
+# ==============================================================================
+# AMPARO LEGAL (IDs baseados na documentação oficial PNCP)
+# Formato: (ID_PNCP, SLUG, LABEL)
+# ==============================================================================
+AMPARO_LEGAL_CHOICES = (
+    # --- Lei 14.133/2021: Art. 28 (Modalidades) ---
+    (1, "lei14133_art28_i", "Lei 14.133/2021, Art. 28, I (Pregão)"),
+    (2, "lei14133_art28_ii", "Lei 14.133/2021, Art. 28, II (Concorrência)"),
+    (3, "lei14133_art28_iii", "Lei 14.133/2021, Art. 28, III (Concurso)"),
+    (4, "lei14133_art28_iv", "Lei 14.133/2021, Art. 28, IV (Leilão)"),
+    (5, "lei14133_art28_v", "Lei 14.133/2021, Art. 28, V (Diálogo Competitivo)"),
+
+    # --- Lei 14.133/2021: Art. 74 (Inexigibilidade) ---
+    (6, "lei14133_art74_i", "Lei 14.133/2021, Art. 74, I (Fornecedor Exclusivo)"),
+    (7, "lei14133_art74_ii", "Lei 14.133/2021, Art. 74, II (Artista Consagrado)"),
+    (8, "lei14133_art74_iii_a", "Lei 14.133/2021, Art. 74, III, a (Estudos Técnicos)"),
+    (9, "lei14133_art74_iii_b", "Lei 14.133/2021, Art. 74, III, b (Pareceres/Perícias)"),
+    (10, "lei14133_art74_iii_c", "Lei 14.133/2021, Art. 74, III, c (Assessoria/Consultoria)"),
+    (11, "lei14133_art74_iii_d", "Lei 14.133/2021, Art. 74, III, d (Fiscalização/Supervisão)"),
+    (12, "lei14133_art74_iii_e", "Lei 14.133/2021, Art. 74, III, e (Patrocínio/Defesa)"),
+    (13, "lei14133_art74_iii_f", "Lei 14.133/2021, Art. 74, III, f (Treinamento)"),
+    (14, "lei14133_art74_iii_g", "Lei 14.133/2021, Art. 74, III, g (Restauração Histórica)"),
+    (15, "lei14133_art74_iii_h", "Lei 14.133/2021, Art. 74, III, h (Controles de Qualidade)"),
+    (16, "lei14133_art74_iv", "Lei 14.133/2021, Art. 74, IV (Credenciamento - Inex.)"),
+    (17, "lei14133_art74_v", "Lei 14.133/2021, Art. 74, V (Aquisição Imóvel)"),
+    (50, "lei14133_art74_caput", "Lei 14.133/2021, Art. 74, caput (Outras Inexigibilidades)"),
+
+    # --- Lei 14.133/2021: Art. 75 (Dispensa) ---
+    (18, "lei14133_art75_i", "Lei 14.133/2021, Art. 75, I (Valor < 100k - Engenharia)"),
+    (19, "lei14133_art75_ii", "Lei 14.133/2021, Art. 75, II (Valor < 50k - Outros)"),
+    (20, "lei14133_art75_iii_a", "Lei 14.133/2021, Art. 75, III, a (Licitação Deserta/Fracassada)"),
+    (21, "lei14133_art75_iii_b", "Lei 14.133/2021, Art. 75, III, b (Preços Superiores Mercado)"),
+    (22, "lei14133_art75_iv_a", "Lei 14.133/2021, Art. 75, IV, a (Garantia Técnica)"),
+    (23, "lei14133_art75_iv_b", "Lei 14.133/2021, Art. 75, IV, b (Acordo Internacional)"),
+    (24, "lei14133_art75_iv_c", "Lei 14.133/2021, Art. 75, IV, c (Pesquisa e Desenv.)"),
+    (25, "lei14133_art75_iv_d", "Lei 14.133/2021, Art. 75, IV, d (Transferência Tecnologia)"),
+    (26, "lei14133_art75_iv_e", "Lei 14.133/2021, Art. 75, IV, e (Hortifrutigranjeiros)"),
+    (27, "lei14133_art75_iv_f", "Lei 14.133/2021, Art. 75, IV, f (Alta Tecnologia/Defesa)"),
+    (28, "lei14133_art75_iv_g", "Lei 14.133/2021, Art. 75, IV, g (Materiais Forças Armadas)"),
+    (29, "lei14133_art75_iv_h", "Lei 14.133/2021, Art. 75, IV, h (Operações de Paz)"),
+    (30, "lei14133_art75_iv_i", "Lei 14.133/2021, Art. 75, IV, i (Abastecimento Militar)"),
+    (31, "lei14133_art75_iv_j", "Lei 14.133/2021, Art. 75, IV, j (Catadores Resíduos)"),
+    (32, "lei14133_art75_iv_k", "Lei 14.133/2021, Art. 75, IV, k (Obras Arte/Históricas)"),
+    (33, "lei14133_art75_iv_l", "Lei 14.133/2021, Art. 75, IV, l (Rastreamento/Sigilo)"),
+    (34, "lei14133_art75_iv_m", "Lei 14.133/2021, Art. 75, IV, m (Medicamentos Doenças Raras)"),
+    (35, "lei14133_art75_v", "Lei 14.133/2021, Art. 75, V (Inovação Tecnológica)"),
+    (36, "lei14133_art75_vi", "Lei 14.133/2021, Art. 75, VI (Segurança Nacional)"),
+    (37, "lei14133_art75_vii", "Lei 14.133/2021, Art. 75, VII (Guerra/Calamidade)"),
+    (38, "lei14133_art75_viii", "Lei 14.133/2021, Art. 75, VIII (Emergência/Calamidade Pública)"),
+    (39, "lei14133_art75_ix", "Lei 14.133/2021, Art. 75, IX (Órgão Adm. Pública)"),
+    (40, "lei14133_art75_x", "Lei 14.133/2021, Art. 75, X (Intervenção Econômica)"),
+    (41, "lei14133_art75_xi", "Lei 14.133/2021, Art. 75, XI (Contrato de Programa)"),
+    (42, "lei14133_art75_xii", "Lei 14.133/2021, Art. 75, XII (Prod. Estratégicos SUS)"),
+    (43, "lei14133_art75_xiii", "Lei 14.133/2021, Art. 75, XIII (Comissão Avaliação)"),
+    (44, "lei14133_art75_xiv", "Lei 14.133/2021, Art. 75, XIV (Assoc. Pessoas Deficiência)"),
+    (45, "lei14133_art75_xv", "Lei 14.133/2021, Art. 75, XV (Inst. Pesquisa/Recuperação)"),
+    (46, "lei14133_art75_xvi", "Lei 14.133/2021, Art. 75, XVI (Insumos Saúde Fundação)"),
+    (60, "lei14133_art75_xvii", "Lei 14.133/2021, Art. 75, XVII (Cisternas/Água)"),
+    (77, "lei14133_art75_xviii", "Lei 14.133/2021, Art. 75, XVIII (Cozinha Solidária)"),
+
+    # --- Lei 14.133/2021: Art. 78/79 (Credenciamento/Auxiliares) ---
+    (47, "lei14133_art78_i", "Lei 14.133/2021, Art. 78, I (Credenciamento - Geral)"),
+    (48, "lei14133_art78_ii", "Lei 14.133/2021, Art. 78, II (Pré-qualificação)"),
+    (49, "lei14133_art78_iii", "Lei 14.133/2021, Art. 78, III (Manifestação Interesse)"),
+    (140, "lei14133_art79_i", "Lei 14.133/2021, Art. 79, I (Cred. Paralela/Não Excludente)"),
+    (141, "lei14133_art79_ii", "Lei 14.133/2021, Art. 79, II (Cred. Seleção Terceiros)"),
+    (142, "lei14133_art79_iii", "Lei 14.133/2021, Art. 79, III (Cred. Mercados Fluidos)"),
+
+    # --- Lei 11.947/2009 (Merenda Escolar) ---
+    (138, "lei11947_art14", "Lei 11.947/2009, Art. 14 (Agricultura Familiar)"),
+    (139, "lei11947_art21", "Lei 11.947/2009, Art. 21 (Emergencial PNAE)"),
+)
+
+# ==============================================================================
+# NATUREZAS DE DESPESA
+# Formato: (CODIGO, DESCRICAO) - Padrão simples Django pois código é string
+# ==============================================================================
+NATUREZAS_DESPESA_CHOICES = (
     ("33901100", "33901100 - Vencimentos e vantagens fixas - pessoal civil"),
     ("33901200", "33901200 - Vencimentos e vantagens fixas - pessoal militar"),
     ("33901400", "33901400 - Diárias"),
@@ -47,106 +239,17 @@ NATUREZAS_DESPESA = [
     ("44907400", "44907400 - Aquisição de equipamentos de informática"),
     ("44907500", "44907500 - Aquisição de equipamentos hospitalares"),
     ("44909000", "44909000 - Outras despesas de capital"),
-]
-
-MODO_DISPUTA_CHOICES = (
-    ("aberto", "Aberto"),
-    ("fechado", "Fechado"),
-    ("aberto_e_fechado", "Aberto e Fechado"),
 )
 
-CRITERIO_JULGAMENTO_CHOICES = (
-    ("menor_preco", "Menor Preço"),
-    ("maior_desconto", "Maior Desconto"),
-)
+# ==============================================================================
+# MAPAS AUXILIARES PARA SERVIÇOS (Busca rápida por Slug)
+# ==============================================================================
 
-AMPARO_LEGAL_CHOICES = (
-    ("art_23", "Art. 23 (Lei 8.666/93)"),
-    ("art_24", "Art. 24 (Lei 8.666/93)"),
-    ("art_25", "Art. 25 (Lei 8.666/93)"),
-    ("art_4", "Art. 4º (Lei 10.520/02)"),
-    ("art_5", "Art. 5º (Lei 10.520/02)"),
-    ("art_28_i", "Art. 28, inciso I (Lei 14.133/21)"),
-    ("art_28_ii", "Art. 28, inciso II (Lei 14.133/21)"),
-    ("art_75_par7", "Art. 75, § 7º (Lei 14.133/21)"),
-    ("art_75_i", "Art. 75, inciso I (Lei 14.133/21)"),
-    ("art_75_ii", "Art. 75, inciso II (Lei 14.133/21)"),
-    ("art_75_iii_a", "Art. 75, inciso III, a"),
-    ("art_75_iii_b", "Art. 75, inciso III, b"),
-    ("art_75_iii_c", "Art. 75, inciso III, c"),
-    ("art_75_iii_d", "Art. 75, inciso III, d"),
-    ("art_75_iii_e", "Art. 75, inciso III, e"),
-    ("art_75_iii_f", "Art. 75, inciso III, f"),
-    ("art_75_iv_a", "Art. 75, inciso IV, a"),
-    ("art_75_iv_b", "Art. 75, inciso IV, b"),
-    ("art_75_iv_c", "Art. 75, inciso IV, c"),
-    ("art_75_iv_d", "Art. 75, inciso IV, d"),
-    ("art_75_iv_e", "Art. 75, inciso IV, e"),
-    ("art_75_iv_f", "Art. 75, inciso IV, f"),
-    ("art_75_iv_j", "Art. 75, inciso IV, j"),
-    ("art_75_iv_k", "Art. 75, inciso IV, k"),
-    ("art_75_iv_m", "Art. 75, inciso IV, m"),
-    ("art_75_ix", "Art. 75, inciso IX"),
-    ("art_75_viii", "Art. 75, inciso VIII"),
-    ("art_75_xv", "Art. 75, inciso XV"),
-    ("lei_11947_art14_1", "Lei 11.947/2009, Art. 14, § 1º"),
-    ("art_79_i", "Art. 79, inciso I (Credenciamento)"),
-    ("art_79_ii", "Art. 79, inciso II (Credenciamento)"),
-    ("art_79_iii", "Art. 79, inciso III (Credenciamento)"),
-    ("art_74_caput", "Art. 74, caput (Inexigibilidade)"),
-    ("art_74_i", "Art. 74, I"),
-    ("art_74_ii", "Art. 74, II"),
-    ("art_74_iii_a", "Art. 74, III, a"),
-    ("art_74_iii_b", "Art. 74, III, b"),
-    ("art_74_iii_c", "Art. 74, III, c"),
-    ("art_74_iii_d", "Art. 74, III, d"),
-    ("art_74_iii_e", "Art. 74, III, e"),
-    ("art_74_iii_f", "Art. 74, III, f"),
-    ("art_74_iii_g", "Art. 74, III, g"),
-    ("art_74_iii_h", "Art. 74, III, h"),
-    ("art_74_iv", "Art. 74, IV"),
-    ("art_74_v", "Art. 74, V"),
-    ("art_86_2", "Art. 86, § 2º (Adesão SRP)"),
-)
-
-MODALIDADE_CHOICES = (
-    ('Pregão Eletrônico', 'Pregão Eletrônico'),
-    ('Concorrência Eletrônica', 'Concorrência Eletrônica'),
-    ('Dispensa Eletrônica', 'Dispensa Eletrônica'),
-    ('Inexigibilidade Eletrônica', 'Inexigibilidade Eletrônica'),
-    ('Adesão a Registro de Preços', 'Adesão a Registro de Preços'),
-    ('Credenciamento', 'Credenciamento'),
-)
-
-CLASSIFICACAO_CHOICES = (
-    ('Compras', 'Compras'),
-    ('Serviços Comuns', 'Serviços Comuns'),
-    ('Serviços de Engenharia Comuns', 'Serviços de Engenharia Comuns'),
-    ('Obras Comuns', 'Obras Comuns'),
-)
-
-TIPO_ORGANIZACAO_CHOICES = (
-    ('Lote', 'Lote'), 
-    ('Item', 'Item')
-)
-
-SITUACAO_CHOICES = (
-    ('Aberto', 'Aberto'),
-    ('Em Pesquisa', 'Em Pesquisa'),
-    ('Aguardando Publicação', 'Aguardando Publicação'),
-    ('Publicado', 'Publicado'),
-    ('Em Contratação', 'Em Contratação'),
-    ('Adjudicado/Homologado', 'Adjudicado/Homologado'),
-    ('Revogado/Cancelado', 'Revogado/Cancelado'),
-)
-
-FUNDAMENTACAO_CHOICES = (
-    ("lei_14133", "Lei 14.133/21"),
-    ("lei_8666",  "Lei 8.666/93"),
-    ("lei_10520", "Lei 10.520/02"),
-)
-
-TIPO_PESSOA_CHOICES = (
-    ('PJ', 'Pessoa Jurídica'), 
-    ('PF', 'Pessoa Física')
-)
+# Dicionários { "slug": ID_PNCP }
+MAP_AMPARO_LEGAL_PNCP = {item[1]: item[0] for item in AMPARO_LEGAL_CHOICES if item[0] is not None}
+MAP_MODALIDADE_PNCP = {item[1]: item[0] for item in MODALIDADE_CHOICES}
+MAP_MODO_DISPUTA_PNCP = {item[1]: item[0] for item in MODO_DISPUTA_CHOICES}
+MAP_INSTRUMENTO_CONVOCATORIO_PNCP = {item[1]: item[0] for item in INSTRUMENTO_CONVOCATORIO_CHOICES}
+MAP_SITUACAO_ITEM_PNCP = {item[1]: item[0] for item in SITUACAO_ITEM_CHOICES}
+MAP_TIPO_BENEFICIO_PNCP = {item[1]: item[0] for item in TIPO_BENEFICIO_CHOICES}
+MAP_CATEGORIA_ITEM_PNCP = {item[1]: item[0] for item in CATEGORIA_ITEM_CHOICES}

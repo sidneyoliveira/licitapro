@@ -5,19 +5,19 @@ from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-# Importação das escolhas (Choices) para manter o model limpo
-# Certifique-se de ter criado o arquivo api/choices.py conforme a etapa anterior
+# Importação das escolhas (Choices) atualizadas (agora baseadas em IDs inteiros)
 from .choices import (
-    NATUREZAS_DESPESA,
+    NATUREZAS_DESPESA_CHOICES,
     MODO_DISPUTA_CHOICES,
     CRITERIO_JULGAMENTO_CHOICES,
     AMPARO_LEGAL_CHOICES,
     MODALIDADE_CHOICES,
-    CLASSIFICACAO_CHOICES,
-    TIPO_ORGANIZACAO_CHOICES,
-    SITUACAO_CHOICES,
-    FUNDAMENTACAO_CHOICES,
-    TIPO_PESSOA_CHOICES
+    SITUACAO_CHOICES,          # String
+    TIPO_ORGANIZACAO_CHOICES,  # String
+    INSTRUMENTO_CONVOCATORIO_CHOICES,
+    SITUACAO_ITEM_CHOICES,     # Novo
+    TIPO_BENEFICIO_CHOICES,    # Novo
+    CATEGORIA_ITEM_CHOICES     # Novo
 )
 
 # ============================================================
@@ -99,15 +99,19 @@ class ProcessoLicitatorio(models.Model):
     objeto = models.TextField(blank=True, null=True)
 
     # --- Classificadores ---
-    modalidade = models.CharField(max_length=50, blank=True, choices=MODALIDADE_CHOICES)
-    classificacao = models.CharField(max_length=50, blank=True, choices=CLASSIFICACAO_CHOICES)
+    # Agora Modalidade é Inteiro (ID do PNCP)
+    modalidade = models.IntegerField(choices=MODALIDADE_CHOICES, blank=True, null=True, verbose_name="Modalidade (ID)")
+    
+    # Classificação ainda pode ser string se for controle interno, ou ajustar se houver tabela PNCP
+    classificacao = models.CharField(max_length=50, blank=True, null=True) 
+    
     tipo_organizacao = models.CharField(max_length=10, blank=True, choices=TIPO_ORGANIZACAO_CHOICES)
     
     situacao = models.CharField(
         max_length=50, 
         blank=True, 
         choices=SITUACAO_CHOICES,
-        default='Em Pesquisa'
+        default='em_pesquisa'
     )
 
     # --- Datas e Valores ---
@@ -137,11 +141,14 @@ class ProcessoLicitatorio(models.Model):
 
     data_criacao_sistema = models.DateTimeField(auto_now_add=True, blank=True)
 
-    # --- Detalhes Jurídicos/PNCP ---
-    fundamentacao = models.CharField(max_length=16, choices=FUNDAMENTACAO_CHOICES, blank=True, null=True)
-    amparo_legal = models.CharField(max_length=32, choices=AMPARO_LEGAL_CHOICES, blank=True, null=True)
-    modo_disputa = models.CharField(max_length=24, choices=MODO_DISPUTA_CHOICES, blank=True, null=True)
-    criterio_julgamento = models.CharField(max_length=32, choices=CRITERIO_JULGAMENTO_CHOICES, blank=True, null=True)
+    # --- Detalhes Jurídicos/PNCP (Agora IDs Inteiros) ---
+    instrumento_convocatorio = models.IntegerField(choices=INSTRUMENTO_CONVOCATORIO_CHOICES, blank=True, null=True, verbose_name="Instrumento Convocatório (ID)")
+    amparo_legal = models.IntegerField(choices=AMPARO_LEGAL_CHOICES, blank=True, null=True, verbose_name="Amparo Legal (ID)")
+    modo_disputa = models.IntegerField(choices=MODO_DISPUTA_CHOICES, blank=True, null=True, verbose_name="Modo de Disputa (ID)")
+    criterio_julgamento = models.IntegerField(choices=CRITERIO_JULGAMENTO_CHOICES, blank=True, null=True, verbose_name="Critério de Julgamento (ID)")
+
+    # Mantido campo legado para não quebrar migrations antigas imediatamente, se desejar remover depois
+    fundamentacao = models.CharField(max_length=50, blank=True, null=True, help_text="Campo legado. Use instrumento_convocatorio.")
 
     class Meta:
         ordering = ['-data_processo']
@@ -333,11 +340,18 @@ class Item(models.Model):
     )
     
     unidade = models.CharField(max_length=20)
-    quantidade = models.DecimalField(max_digits=12, decimal_places=2)
+    quantidade = models.DecimalField(max_digits=12, decimal_places=4) # Aumentei decimais para precisão
     valor_estimado = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     
     ordem = models.PositiveIntegerField(default=1)
-    natureza = models.CharField(choices=NATUREZAS_DESPESA, blank=True, null=True)
+    
+    # Classificadores (Atualizados para PNCP)
+    natureza = models.CharField(max_length=8, choices=NATUREZAS_DESPESA_CHOICES, blank=True, null=True)
+    
+    # Novos campos com IDs Inteiros
+    situacao_item = models.IntegerField(choices=SITUACAO_ITEM_CHOICES, default=1, verbose_name="Situação do Item (ID)")
+    tipo_beneficio = models.IntegerField(choices=TIPO_BENEFICIO_CHOICES, blank=True, null=True, verbose_name="Tipo de Benefício (ID)")
+    categoria_item = models.IntegerField(choices=CATEGORIA_ITEM_CHOICES, blank=True, null=True, verbose_name="Categoria do Item (ID)")
 
     class Meta:
         ordering = ['ordem']
@@ -428,9 +442,9 @@ class ContratoEmpenho(models.Model):
     unidade_codigo = models.CharField(max_length=32, blank=True, null=True)
     ni_fornecedor = models.CharField(max_length=14, blank=True, null=True)
     
+    # Ajuste: se Tipo de Pessoa tiver um Choices definido, use aqui
     tipo_pessoa_fornecedor = models.CharField(
         max_length=2,
-        choices=TIPO_PESSOA_CHOICES,
         blank=True,
         null=True
     )
