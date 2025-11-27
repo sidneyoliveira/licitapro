@@ -26,8 +26,11 @@ class PNCPService:
     BASE_URL = getattr(settings, 'PNCP_BASE_URL', "https://treina.pncp.gov.br/api/pncp/v1")
     
     # Credenciais (Via .env)
-    USERNAME = getattr(settings, 'PNCP_USERNAME', '')
-    PASSWORD = getattr(settings, 'PNCP_PASSWORD', '')
+    # USERNAME = getattr(settings, 'PNCP_USERNAME', '')
+    # PASSWORD = getattr(settings, 'PNCP_PASSWORD', '')
+
+    USERNAME = '682ba14a-c12d-4a9f-9c19-a6624230c139'
+    PASSWORD = 'mqBM3Ju6ZtiP45jg'
     
     # Token de Fallback (Apenas para desenvolvimento/testes rápidos)
     # _FALLBACK_TOKEN = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2ODJiYTE0YS1jMTJkLTRhOWYtOWMxOS1hNjYyNDIzMGMxMzkiLCJleHAiOjE3NjQxMDgzNzgsImFkbWluaXN0cmFkb3IiOmZhbHNlLCJjcGZDbnBqIjoiMTEwMzU1NDQwMDAxMDUiLCJlbWFpbCI6ImNvbnRhdG9fbGxAaG90bWFpbC5jb20iLCJnZXN0YW9lbnRlIjp0cnVlLCJpZEJhc2VEYWRvcyI6Mjg2NCwibm9tZSI6IkwgJiBMIEFTU0VTU09SSUEgQ09OU1VMVE9SSUEgRSBTRVJWScOHT1MgTFREQSJ9.z_WK_EbWuJrK9HFPQUMFa4IZLG-8IUfYjZzSHBey8WXHyHSnHAOIcrWCxXlBG39JICac2QV5B8qnCiF-tP_9NA"
