@@ -213,10 +213,8 @@ class PNCPService:
                 "valorUnitarioEstimado": vl_unit,
                 "valorTotal": round(vl_unit * qtd, 4),
                 "criterioJulgamentoId": crit_id,
-                "itemCategoriaId": cat_id,
-                "catalogoId": 1, 
-                "catalogoCodigoItem": "15055", 
-                "categoriaItemCatalogoId": 1
+                "itemCategoriaId": 3,
+                "catalogoId": 2,
             })
 
         # 6. Envio
