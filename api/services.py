@@ -149,7 +149,7 @@ class PNCPService:
                 "orcamentoSigiloso": False,
                 "criterioJulgamentoId": crit_id,
                 
-                "itemCategoriaId": cat_id_final,
+                "itemCategoriaId": 3,
                 "catalogoId": 2,
             })
 
