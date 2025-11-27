@@ -12,9 +12,10 @@ from typing import Dict, Any, Optional
 from decimal import Decimal
 from django.conf import settings
 import pytz
-# Configuração de Logs
-logger = logging.getLogger("api")
 
+def log_console(msg):
+    sys.stderr.write(f"[PNCP TESTE] {msg}\n")
+    sys.stderr.flush()
 class PNCPService:
     """
     Serviço para integração com o Portal Nacional de Contratações Públicas (PNCP).
@@ -234,8 +235,8 @@ class PNCPService:
             "Tipo-Documento-Id": "1"
         }
 
-        logger.info(f"[PNCP SEND] URL: {url} | Payload: {json.dumps(payload, ensure_ascii=False)} | Headers: {str(headers)[:100]}...")
-
+        log_console(f"[PNCP SEND] URL: {url} | Payload: {json.dumps(payload, ensure_ascii=False)} | Headers: {str(headers)[:100]}...")
+        
         try:
             cls._log(f"Enviando requisição para: {url}")
             response = requests.post(url, headers=headers, files=files, verify=False, timeout=90)
