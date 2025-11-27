@@ -87,7 +87,7 @@ class PNCPService:
             
             return decoded.get("idBaseDados") or decoded.get("sub")
         except Exception as e:
-            logger.error(f"Erro ao decodificar token: {e}")
+            log_console.error(f"Erro ao decodificar token: {e}")
             return None
 
     @classmethod
@@ -261,7 +261,7 @@ class PNCPService:
             msg = response.text[:200]
         
         full_msg = f"PNCP Recusou ({response.status_code}): {msg}"
-        logger.error(full_msg)
+        log_console.error(full_msg)
         raise ValueError(full_msg)
 
 # Classe utilitária para importação (Stub)
