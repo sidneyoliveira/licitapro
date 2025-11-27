@@ -203,6 +203,7 @@ class PNCPService:
                 "materialOuServico": tipo_ms,
                 "tipoBeneficioId": int(item.tipo_beneficio or 1),
                 "incentivoProdutivoBasico": False,
+                "orcamentoSigiloso": False,
                 "aplicabilidadeMargemPreferenciaNormal": False,
                 "aplicabilidadeMargemPreferenciaAdicional": False,
                 "codigoTipoMargemPreferencia": 1,
