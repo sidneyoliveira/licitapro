@@ -1,204 +1,264 @@
 # api/services.py
 
 import json
+import re
 import requests
 import base64
 import sys
 import time
-from typing import Dict, Any
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
+from decimal import Decimal
 from django.conf import settings
-
-# Logger manual para garantir saída no terminal da Hostinger
-def log_console(msg):
-    sys.stderr.write(f"[PNCP TESTE] {msg}\n")
-    sys.stderr.flush()
+import pytz
+# Configuração de Logs
+logger = logging.getLogger("api")
 
 class PNCPService:
-    # --- VARIÁVEIS DO SEU SCRIPT QUE FUNCIONOU ---
-    TOKEN = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2ODJiYTE0YS1jMTJkLTRhOWYtOWMxOS1hNjYyNDIzMGMxMzkiLCJleHAiOjE3NjQyNTQxMTcsImFkbWluaXN0cmFkb3IiOmZhbHNlLCJjcGZDbnBqIjoiMTEwMzU1NDQwMDAxMDUiLCJlbWFpbCI6ImNvbnRhdG9fbGxAaG90bWFpbC5jb20iLCJnZXN0YW9lbnRlIjp0cnVlLCJpZEJhc2VEYWRvcyI6Mjg2NCwibm9tZSI6IkwgJiBMIEFTU0VTU09SSUEgQ09OU1VMVE9SSUEgRSBTRVJWScOHT1MgTFREQSJ9.UeDwKQtPzIX86QVXKY7e5u--em5iaGED_NcE518HSQSM_ZY6cXSSOVSxKCrukl8KWbyTLySNgUP_EfxjjZqACw"
-    BASE_URL = "https://treina.pncp.gov.br/api/pncp/v1"
+    """
+    Serviço para integração com o Portal Nacional de Contratações Públicas (PNCP).
+    Documentação: https://pncp.gov.br/
+    """
+    
+    # Configurações de Ambiente
+    # Prioriza URL de Treinamento para evitar acidentes em Produção durante desenvolvimento
+    BASE_URL = getattr(settings, 'PNCP_BASE_URL', "https://treina.pncp.gov.br/api/pncp/v1")
+    
+    # Credenciais (Via .env)
+    USERNAME = getattr(settings, 'PNCP_USERNAME', '')
+    PASSWORD = getattr(settings, 'PNCP_PASSWORD', '')
+    
+    # Token de Fallback (Apenas para desenvolvimento/testes rápidos)
+    # _FALLBACK_TOKEN = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2ODJiYTE0YS1jMTJkLTRhOWYtOWMxOS1hNjYyNDIzMGMxMzkiLCJleHAiOjE3NjQxMDgzNzgsImFkbWluaXN0cmFkb3IiOmZhbHNlLCJjcGZDbnBqIjoiMTEwMzU1NDQwMDAxMDUiLCJlbWFpbCI6ImNvbnRhdG9fbGxAaG90bWFpbC5jb20iLCJnZXN0YW9lbnRlIjp0cnVlLCJpZEJhc2VEYWRvcyI6Mjg2NCwibm9tZSI6IkwgJiBMIEFTU0VTU09SSUEgQ09OU1VMVE9SSUEgRSBTRVJWScOHT1MgTFREQSJ9.z_WK_EbWuJrK9HFPQUMFa4IZLG-8IUfYjZzSHBey8WXHyHSnHAOIcrWCxXlBG39JICac2QV5B8qnCiF-tP_9NA"
+
+    @classmethod
+    def _log(cls, msg: str, level: str = "info"):
+        """Helper para garantir saída no console do servidor (Gunicorn/Docker)."""
+        formatted_msg = f"[PNCP] {msg}"
+        if level == "error":
+            sys.stderr.write(f"❌ {formatted_msg}\n")
+        else:
+            sys.stderr.write(f"ℹ️ {formatted_msg}\n")
+        sys.stderr.flush()
+
+    @classmethod
+    def _get_token(cls) -> str:
+        """
+        Obtém um token válido. 
+        1. Tenta login com usuário/senha do .env.
+        2. Se falhar ou não existir, usa o token de fallback.
+        """
+        if cls.USERNAME and cls.PASSWORD:
+            try:
+                url = f"{cls.BASE_URL}/usuarios/login"
+                payload = {"login": cls.USERNAME, "senha": cls.PASSWORD}
+                cls._log(f"Autenticando usuário: {cls.USERNAME}...")
+                
+                response = requests.post(url, json=payload, verify=False, timeout=10)
+                if response.status_code == 200:
+                    token = response.headers.get("Authorization", "").replace("Bearer ", "")
+                    cls._log("Novo token gerado com sucesso.")
+                    return token
+                else:
+                    cls._log(f"Falha no login automático: {response.status_code}", "error")
+            except Exception as e:
+                cls._log(f"Erro ao conectar para login: {e}", "error")
+
+        cls._log("Usando token estático (Fallback).")
+        return cls._FALLBACK_TOKEN
 
     @staticmethod
-    def _get_user_id_from_token(token):
+    def _extrair_user_id(token: str) -> Optional[int]:
+        """Decodifica o JWT para extrair o ID do usuário (idBaseDados)."""
         try:
-            payload = token.split(".")[1]
-            payload += "=" * ((4 - len(payload) % 4) % 4)
-            decoded = json.loads(base64.urlsafe_b64decode(payload))
-            user_id = decoded.get("idBaseDados")
-            log_console(f"ID Usuário extraído do Token: {user_id}")
-            return user_id
+            if not token: return None
+            parts = token.split('.')
+            if len(parts) < 2: return None
+            
+            # Ajuste de padding Base64
+            payload_b64 = parts[1] + '=' * ((4 - len(parts[1]) % 4) % 4)
+            decoded = json.loads(base64.urlsafe_b64decode(payload_b64))
+            
+            return decoded.get("idBaseDados") or decoded.get("sub")
         except Exception as e:
-            log_console(f"Erro ao decodificar token: {e}")
+            logger.error(f"Erro ao decodificar token: {e}")
             return None
 
     @classmethod
-    def _garantir_permissao_ente(cls, user_id, cnpj_orgao):
-        if not user_id: return
-        
-        url_permissao = f"{cls.BASE_URL}/usuarios/{user_id}/orgaos"
-        headers_perm = {
-            "Authorization": f"Bearer {cls.TOKEN}",
-            "Content-Type": "application/json",
-            "accept": "*/*"
-        }
-        
-        payload_perm = {"entesAutorizados": [cnpj_orgao]}
-        
-        log_console(f"Tentando vincular usuário {user_id} ao órgão {cnpj_orgao}...")
+    def _garantir_permissao(cls, token: str, user_id: int, cnpj: str):
+        """
+        Verifica e vincula o usuário ao órgão (Endpoint: /usuarios/{id}/orgaos).
+        Essencial para o ambiente de Treinamento.
+        """
+        if not user_id or not cnpj: return
+
+        url = f"{cls.BASE_URL}/usuarios/{user_id}/orgaos"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {"entesAutorizados": [cnpj]}
+
         try:
-            response = requests.post(url_permissao, headers=headers_perm, json=payload_perm, verify=False, timeout=15)
-            if response.status_code in [200, 201]:
-                log_console("✅ Permissão concedida/atualizada com sucesso.")
-            else:
-                log_console(f"⚠️ Aviso na permissão: {response.status_code} - {response.text}")
+            cls._log(f"Verificando permissão para Usuário {user_id} no Órgão {cnpj}...")
+            requests.post(url, headers=headers, json=payload, verify=False, timeout=10)
+            # Sucesso ou 400/422 (já vinculado) são aceitáveis aqui
         except Exception as e:
-            log_console(f"❌ Erro ao tentar vincular permissão: {e}")
+            cls._log(f"Erro não-bloqueante na vinculação: {e}", "error")
 
     @classmethod
     def publicar_compra(cls, processo, arquivo: Any, titulo_documento: str) -> Dict[str, Any]:
-        log_console(">>> INICIANDO PUBLICAÇÃO (MÓDULO REPLICADO DO SCRIPT)")
+        """
+        Orquestra a publicação da compra (edital/aviso) no PNCP.
+        """
+        cls._log(f"Iniciando publicação do Processo: {processo.numero_processo}")
 
-        # 1. Prepara CNPJ
-        cnpj_orgao = "".join(filter(str.isdigit, processo.entidade.cnpj))
-        
-        # 2. Garante permissão
-        user_id = cls._get_user_id_from_token(cls.TOKEN)
-        cls._garantir_permissao_ente(user_id, cnpj_orgao)
+        # 1. Autenticação
+        token = cls._get_token()
+        if not token:
+            raise ValueError("Não foi possível obter um token de acesso ao PNCP.")
 
-        # 3. Configura URL
-        url_compra = f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras"
+        # 2. Preparação de Dados
+        cnpj_orgao = re.sub(r'\D', '', processo.entidade.cnpj)
+        user_id = cls._extrair_user_id(token)
+        
+        # Garante permissão (Delay para propagação)
+        if user_id:
+            cls._garantir_permissao(token, user_id, cnpj_orgao)
+            time.sleep(1) 
 
-        # 4. Prepara Payload
-        from datetime import datetime, timedelta
+        # 3. Formatação de Datas (Estrito: YYYY-MM-DDTHH:MM:SS)
+        dt_abertura = processo.data_abertura or datetime.now()
         
-        # Datas
-        dt_abertura = processo.data_abertura 
-        if not dt_abertura: dt_abertura = datetime.now()
-        if dt_abertura.tzinfo: dt_abertura = dt_abertura.replace(tzinfo=None)
-        
+        # Timezone
+        sp_tz = pytz.timezone('America/Sao_Paulo')
+        if not dt_abertura.tzinfo:
+            dt_abertura = sp_tz.localize(dt_abertura)
+        else:
+            dt_abertura = dt_abertura.astimezone(sp_tz)
+            
+        # Strings limpas para o payload
         data_abertura_str = dt_abertura.strftime("%Y-%m-%dT%H:%M:%S")
-        dt_fim = dt_abertura + timedelta(days=4) 
+        dt_fim = dt_abertura + timedelta(days=30) # Default +30 dias
         data_encerramento_str = dt_fim.strftime("%Y-%m-%dT%H:%M:%S")
 
-        # Sanitização
-        raw_num = str(processo.numero_certame).split('/')[0]
-        numero_compra = "".join(filter(str.isdigit, raw_num)) or "1"
+        # 4. Sanitização de Campos
+        raw_num_compra = str(processo.numero_certame).split('/')[0]
+        numero_compra = "".join(filter(str.isdigit, raw_num_compra)) or "1"
         
+        # IDs com fallback seguro
         try:
-            mod_id = int(processo.modalidade)
-            disp_id = int(processo.modo_disputa)
-            amp_id = int(processo.amparo_legal)
+            mod_id = int(processo.modalidade or 1)
+            disp_id = int(processo.modo_disputa or 1)
+            amp_id = int(processo.amparo_legal or 4) # 4 = Lei 14.133 (Exemplo)
             inst_id = int(processo.instrumento_convocatorio or 1)
             crit_id = int(processo.criterio_julgamento or 1)
-        except:
-            log_console("Erro convertendo IDs. Usando fallbacks.")
-            mod_id, disp_id, amp_id, inst_id, crit_id = 1, 1, 4, 1, 5
+        except ValueError:
+            raise ValueError("IDs de domínio (Modalidade, Amparo, etc.) devem ser números inteiros.")
 
+        # 5. Construção do Payload
         payload = {
-            "codigoUnidadeCompradora": processo.orgao.codigo_unidade or "202511",
+            "codigoUnidadeCompradora": processo.orgao.codigo_unidade or "000000",
+            "cnpjOrgao": cnpj_orgao,
+            "anoCompra": int(processo.data_processo.year) if processo.data_processo else datetime.now().year,
             "numeroCompra": numero_compra,
-            "anoCompra": int(processo.data_processo.year) if processo.data_processo else 2025,
-            "numeroProcesso": str(processo.numero_processo or "0001"),
+            "numeroProcesso": str(processo.numero_processo),
+            
             "tipoInstrumentoConvocatorioId": inst_id,
             "modalidadeId": mod_id,
             "modoDisputaId": disp_id,
             "amparoLegalId": amp_id,
+            
             "srp": bool(processo.registro_preco),
-            "objetoCompra": (processo.objeto ),
-            "informacaoComplementar": "Teste via API Django",
+            "objetoCompra": (processo.objeto or "Objeto não informado")[:5000],
+            "informacaoComplementar": "Integrado via API Licitapro",
+            
             "dataAberturaProposta": data_abertura_str,
             "dataEncerramentoProposta": data_encerramento_str,
+            
             "linkSistemaOrigem": "http://l3solution.net.br",
-            "linkProcessoEletronico": "http://l3solution.net.br",
-            "justificativaPresencial": "",
-            "fontesOrcamentarias": [],
             "itensCompra": []
         }
 
         # Itens
+        if not processo.itens.exists():
+            raise ValueError("A contratação deve possuir ao menos um item.")
+
         for idx, item in enumerate(processo.itens.all(), 1):
             vl_unit = float(item.valor_estimado or 0)
             qtd = float(item.quantidade or 1)
-            vl_total = round(vl_unit * qtd, 4)
- 
-            cat_id_banco = int(item.categoria_item or 0)
-            cat_id_final = cat_id_banco        
-                      
-            if cat_id_final == 0: cat_id_final = 1 
+            
+            # Correção Inteligente da Categoria para Pregão (ID 6)
+            cat_id = int(item.categoria_item or 1)
+            if mod_id == 6 and cat_id == 1: 
+                cat_id = 2 # Força Bens Móveis se for Pregão e estiver como Imóveis
 
-            tipo_ms = "M" 
-
-            if cat_id_final in [4, 8, 9]: 
-                tipo_ms = "S"
+            # Tipo Material (M) ou Serviço (S)
+            tipo_ms = "S" if cat_id in [2, 4, 8, 9] else "M"
 
             payload["itensCompra"].append({
                 "numeroItem": item.ordem or idx,
                 "materialOuServico": tipo_ms,
-                "tipoBeneficioId": int(item.tipo_beneficio or 5),
+                "tipoBeneficioId": int(item.tipo_beneficio or 1),
                 "incentivoProdutivoBasico": False,
                 "aplicabilidadeMargemPreferenciaNormal": False,
                 "aplicabilidadeMargemPreferenciaAdicional": False,
                 "codigoTipoMargemPreferencia": 1,
                 "inConteudoNacional": True,
-                "descricao": (item.descricao)[:255],
-                "informacaoComplementar": (item.especificacao)[:255],
+                "descricao": (item.descricao or "Item")[:255],
                 "quantidade": qtd,
-                "unidadeMedida": (item.unidade or "Unidade")[:20],
+                "unidadeMedida": (item.unidade or "UN")[:20],
                 "valorUnitarioEstimado": vl_unit,
-                "valorTotal": vl_total,
-                "orcamentoSigiloso": False,
+                "valorTotal": round(vl_unit * qtd, 4),
                 "criterioJulgamentoId": crit_id,
-                
-                "itemCategoriaId": 3,
-                "catalogoId": 2,
+                "itemCategoriaId": cat_id,
+                "catalogoId": 1, 
+                "catalogoCodigoItem": "15055", 
+                "categoriaItemCatalogoId": 1
             })
 
-        # Debug Payload
-        log_console("Payload JSON:")
-        log_console(json.dumps(payload, indent=2, ensure_ascii=False))
-
-        # 5. Envio
-        headers = {
-            "Authorization": f"Bearer {cls.TOKEN}",
-            "Titulo-Documento": titulo_documento or "Edital de Teste",
-            "Tipo-Documento-Id": "1",
-            "accept": "*/*"
-        }
-
-        if hasattr(arquivo, 'seek'):
-            arquivo.seek(0)
-        
-        fname = getattr(arquivo, 'name', 'edital.pdf')
+        # 6. Envio
+        if hasattr(arquivo, 'seek'): arquivo.seek(0)
         
         files = {
-            'documento': (fname, arquivo, 'application/pdf'),
+            'documento': (getattr(arquivo, 'name', 'edital.pdf'), arquivo, 'application/pdf'),
             'compra': (None, json.dumps(payload), 'application/json')
         }
 
+        url = f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Titulo-Documento": titulo_documento or "Edital",
+            "Tipo-Documento-Id": "1"
+        }
+
         try:
-            log_console(f"Enviando POST para: {url_compra}")
-            response = requests.post(url_compra, headers=headers, files=files, verify=False, timeout=90)
-            
-            log_console(f"Status Code: {response.status_code}")
+            cls._log(f"Enviando requisição para: {url}")
+            response = requests.post(url, headers=headers, files=files, verify=False, timeout=90)
             
             if response.status_code in [200, 201]:
-                log_console("✅ SUCESSO! Recurso criado.")
+                cls._log("Compra publicada com sucesso!")
                 return response.json()
             else:
-                log_console("Falha na requisição.")
-                try:
-                    err_json = response.json()
-                    log_console(f"Erro JSON: {err_json}")
-                    raise ValueError(f"PNCP Recusou ({response.status_code}): {err_json}")
-                except json.JSONDecodeError:
-                    log_console(f"Erro Texto: {response.text}")
-                    raise ValueError(f"PNCP Recusou ({response.status_code}): {response.text[:200]}")
+                cls._handle_error(response)
 
-        except Exception as e:
-            log_console(f"Erro na requisição: {e}")
-            raise ValueError(str(e))
+        except requests.exceptions.RequestException as e:
+            cls._log(f"Erro de conexão: {e}", "error")
+            raise ValueError(f"Falha de comunicação com PNCP: {str(e)}")
 
+    @staticmethod
+    def _handle_error(response):
+        """Processa e levanta erro formatado."""
+        try:
+            err = response.json()
+            msg = err.get("message") or err.get("detail") or str(err)
+        except:
+            msg = response.text[:200]
+        
+        full_msg = f"PNCP Recusou ({response.status_code}): {msg}"
+        logger.error(full_msg)
+        raise ValueError(full_msg)
+
+# Classe utilitária para importação (Stub)
 class ImportacaoService:
     @staticmethod
     def processar_planilha_padrao(arquivo):
-        pass
+        raise NotImplementedError("Importação não implementada.")
