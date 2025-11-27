@@ -160,7 +160,7 @@ class PNCPService:
 
         # 5. Construção do Payload
         payload = {
-            "codigoUnidadeCompradora": processo.orgao.codigo_unidade or "000000",
+            "codigoUnidadeCompradora": processo.orgao.codigo_unidade,
             "cnpjOrgao": cnpj_orgao,
             "anoCompra": int(processo.data_processo.year) if processo.data_processo else datetime.now().year,
             "numeroCompra": numero_compra,
@@ -233,6 +233,8 @@ class PNCPService:
             "Titulo-Documento": titulo_documento or "Edital",
             "Tipo-Documento-Id": "1"
         }
+
+        logger.info(f"[PNCP SEND] URL: {url} | Payload: {json.dumps(payload, ensure_ascii=False)} | Headers: {str(headers)[:100]}...")
 
         try:
             cls._log(f"Enviando requisição para: {url}")
