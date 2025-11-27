@@ -15,22 +15,15 @@ def log_console(msg):
 
 class PNCPService:
     # --- VARIÁVEIS DO SEU SCRIPT QUE FUNCIONOU ---
-    # Hardcoded para garantir que o Django use EXATAMENTE isso
-    TOKEN = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2ODJiYTE0YS1jMTJkLTRhOWYtOWMxOS1hNjYyNDIzMGMxMzkiLCJleHAiOjE3NjQyNTE5MTAsImFkbWluaXN0cmFkb3IiOmZhbHNlLCJjcGZDbnBqIjoiMTEwMzU1NDQwMDAxMDUiLCJlbWFpbCI6ImNvbnRhdG9fbGxAaG90bWFpbC5jb20iLCJnZXN0YW9lbnRlIjp0cnVlLCJpZEJhc2VEYWRvcyI6Mjg2NCwibm9tZSI6IkwgJiBMIEFTU0VTU09SSUEgQ09OU1VMVE9SSUEgRSBTRVJWScOHT1MgTFREQSJ9.M4re0rPu7PmbN2F10Yz5QM-C568Zp62p7a62JopOheJXGeIx4_HQFMYHHJ7-UNSbsRQmZVoLKW05-whXVgsMvA"
+    TOKEN = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2ODJiYTE0YS1jMTJkLTRhOWYtOWMxOS1hNjYyNDIzMGMxMzkiLCJleHAiOjE3NjQxMDgzNzgsImFkbWluaXN0cmFkb3IiOmZhbHNlLCJjcGZDbnBqIjoiMTEwMzU1NDQwMDAxMDUiLCJlbWFpbCI6ImNvbnRhdG9fbGxAaG90bWFpbC5jb20iLCJnZXN0YW9lbnRlIjp0cnVlLCJpZEJhc2VEYWRvcyI6Mjg2NCwibm9tZSI6IkwgJiBMIEFTU0VTU09SSUEgQ09OU1VMVE9SSUEgRSBTRVJWScOHT1MgTFREQSJ9.z_WK_EbWuJrK9HFPQUMFa4IZLG-8IUfYjZzSHBey8WXHyHSnHAOIcrWCxXlBG39JICac2QV5B8qnCiF-tP_9NA"
     BASE_URL = "https://treina.pncp.gov.br/api/pncp/v1"
 
     @staticmethod
     def _get_user_id_from_token(token):
-        """
-        Lógica exata do seu script para decodificar o token
-        """
         try:
             payload = token.split(".")[1]
-            # Ajuste de padding para base64
             payload += "=" * ((4 - len(payload) % 4) % 4)
             decoded = json.loads(base64.urlsafe_b64decode(payload))
-            
-            # No seu script você pega 'idBaseDados'. Vamos garantir isso.
             user_id = decoded.get("idBaseDados")
             log_console(f"ID Usuário extraído do Token: {user_id}")
             return user_id
@@ -40,11 +33,7 @@ class PNCPService:
 
     @classmethod
     def _garantir_permissao_ente(cls, user_id, cnpj_orgao):
-        """
-        Lógica exata do seu script para vincular o usuário ao órgão
-        """
-        if not user_id:
-            return
+        if not user_id: return
         
         url_permissao = f"{cls.BASE_URL}/usuarios/{user_id}/orgaos"
         headers_perm = {
@@ -53,63 +42,48 @@ class PNCPService:
             "accept": "*/*"
         }
         
-        payload_perm = {
-            "entesAutorizados": [cnpj_orgao]
-        }
+        payload_perm = {"entesAutorizados": [cnpj_orgao]}
         
         log_console(f"Tentando vincular usuário {user_id} ao órgão {cnpj_orgao}...")
         try:
-            # verify=False é crucial no ambiente de Treina
             response = requests.post(url_permissao, headers=headers_perm, json=payload_perm, verify=False, timeout=15)
-            
             if response.status_code in [200, 201]:
                 log_console("✅ Permissão concedida/atualizada com sucesso.")
             else:
-                log_console(f"⚠️ Aviso na permissão (pode já existir): {response.status_code} - {response.text}")
+                log_console(f"⚠️ Aviso na permissão: {response.status_code} - {response.text}")
         except Exception as e:
             log_console(f"❌ Erro ao tentar vincular permissão: {e}")
 
     @classmethod
     def publicar_compra(cls, processo, arquivo: Any, titulo_documento: str) -> Dict[str, Any]:
-        """
-        Método principal que orquestra a publicação usando os dados do Django
-        mas a infraestrutura do seu script.
-        """
         log_console(">>> INICIANDO PUBLICAÇÃO (MÓDULO REPLICADO DO SCRIPT)")
 
-        # 1. Prepara CNPJ (Remove caracteres não numéricos)
+        # 1. Prepara CNPJ
         cnpj_orgao = "".join(filter(str.isdigit, processo.entidade.cnpj))
         
-        # 2. Garante permissão (Igual ao script)
+        # 2. Garante permissão
         user_id = cls._get_user_id_from_token(cls.TOKEN)
         cls._garantir_permissao_ente(user_id, cnpj_orgao)
 
         # 3. Configura URL
         url_compra = f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras"
 
-        # 4. Prepara Payload (Mapeando Model -> JSON do Script)
+        # 4. Prepara Payload
         from datetime import datetime, timedelta
         
-        # Datas: Formato estrito YYYY-MM-DDTHH:MM:SS (sem offset, igual script)
+        # Datas
         dt_abertura = processo.data_abertura 
-        if not dt_abertura:
-            dt_abertura = datetime.now()
-        
-        # Se tiver fuso, remove para garantir string limpa
-        if dt_abertura.tzinfo:
-            dt_abertura = dt_abertura.replace(tzinfo=None)
+        if not dt_abertura: dt_abertura = datetime.now()
+        if dt_abertura.tzinfo: dt_abertura = dt_abertura.replace(tzinfo=None)
         
         data_abertura_str = dt_abertura.strftime("%Y-%m-%dT%H:%M:%S")
-        
-        # Data encerramento simulada (+4 dias ou +30 min)
         dt_fim = dt_abertura + timedelta(days=4) 
         data_encerramento_str = dt_fim.strftime("%Y-%m-%dT%H:%M:%S")
 
-        # Sanitização do Número da Compra
+        # Sanitização
         raw_num = str(processo.numero_certame).split('/')[0]
         numero_compra = "".join(filter(str.isdigit, raw_num)) or "1"
         
-        # IDs Seguros (Int)
         try:
             mod_id = int(processo.modalidade)
             disp_id = int(processo.modo_disputa)
@@ -117,28 +91,23 @@ class PNCPService:
             inst_id = int(processo.instrumento_convocatorio or 1)
             crit_id = int(processo.criterio_julgamento or 1)
         except:
-            log_console("Erro convertendo IDs. Usando fallbacks do script.")
+            log_console("Erro convertendo IDs. Usando fallbacks.")
             mod_id, disp_id, amp_id, inst_id, crit_id = 1, 1, 4, 1, 5
 
-        # Payload estruturado idêntico ao do script
         payload = {
             "codigoUnidadeCompradora": processo.orgao.codigo_unidade or "202511",
             "numeroCompra": numero_compra,
             "anoCompra": int(processo.data_processo.year) if processo.data_processo else 2025,
-            "numeroProcesso": str(processo.numero_processo or "0001"),
-            
+            "numeroProcesso": str(processo.numero_processo),
             "tipoInstrumentoConvocatorioId": inst_id,
             "modalidadeId": mod_id,
             "modoDisputaId": disp_id,
             "amparoLegalId": amp_id,
-            
             "srp": bool(processo.registro_preco),
-            "objetoCompra": (processo.objeto or "GENEROS DIVERSOS")[:5000],
-            "informacaoComplementar": "Teste via API Django",
-            
+            "objetoCompra": (processo.objeto ),
+            "informacaoComplementar": (processo.especificacao ),
             "dataAberturaProposta": data_abertura_str,
             "dataEncerramentoProposta": data_encerramento_str,
-            
             "linkSistemaOrigem": "http://l3solution.net.br",
             "linkProcessoEletronico": "http://l3solution.net.br",
             "justificativaPresencial": "",
@@ -151,30 +120,33 @@ class PNCPService:
             vl_unit = float(item.valor_estimado or 0)
             qtd = float(item.quantidade or 1)
             vl_total = round(vl_unit * qtd, 4)
+ 
+            cat_id_banco = int(item.categoria_item or 0)
+            cat_id_final = cat_id_banco
             
-            cat_id = int(item.categoria_item or 1)
-            tipo_ms = "M" # Simplificação igual ao script
+            # Lógica de segurança para Pregão (6)
+            if mod_id == 6:
+           
+           
+                 if cat_id_banco == 1: 
+                     cat_id_final = 2 
             
-            # CORREÇÃO: Adicionados campos obrigatórios de Margem de Preferência e Conteúdo Nacional
-            # com valores default 'False' se não existirem no model
-            margem_normal = getattr(item, 'aplicabilidadeMargemPreferenciaNormal', False)
-            margem_adicional = getattr(item, 'aplicabilidadeMargemPreferenciaAdicional', False)
-            conteudo_nacional = getattr(item, 'inConteudoNacional', True) # Padrão True ou False conforme regra de negócio
-            cod_tipo_margem = getattr(item, 'codigoTipoMargemPreferencia', 1)
+            if cat_id_final == 0: cat_id_final = 2 
+
+            tipo_ms = "M" 
+
+            if cat_id_final in [4, 8, 9]: 
+                tipo_ms = "S"
 
             payload["itensCompra"].append({
                 "numeroItem": item.ordem or idx,
                 "materialOuServico": tipo_ms,
                 "tipoBeneficioId": int(item.tipo_beneficio or 5),
                 "incentivoProdutivoBasico": False,
-                
-                # --- CAMPOS QUE FALTAVAM E CAUSARAM ERRO 422 ---
-                "aplicabilidadeMargemPreferenciaNormal": bool(margem_normal),
-                "aplicabilidadeMargemPreferenciaAdicional": bool(margem_adicional),
-                "codigoTipoMargemPreferencia": int(cod_tipo_margem),
-                "inConteudoNacional": bool(conteudo_nacional),
-                # -----------------------------------------------
-
+                "aplicabilidadeMargemPreferenciaNormal": False,
+                "aplicabilidadeMargemPreferenciaAdicional": False,
+                "codigoTipoMargemPreferencia": 1,
+                "inConteudoNacional": True,
                 "descricao": (item.descricao or "ITEM")[:255],
                 "informacaoComplementar": "ESPECIFICACAO",
                 "quantidade": qtd,
@@ -183,18 +155,16 @@ class PNCPService:
                 "valorTotal": vl_total,
                 "orcamentoSigiloso": False,
                 "criterioJulgamentoId": crit_id,
-                "itemCategoriaId": cat_id,
-                "codigoRegistroImobiliario": "12345-Reg",
-                "catalogoId": 1,
-                "categoriaItemCatalogoId": 1,
-                "catalogoCodigoItem": "15055" # Genérico seguro
+                
+                "itemCategoriaId": cat_id_final,
+                "catalogoId": 2,
             })
 
         # Debug Payload
         log_console("Payload JSON:")
         log_console(json.dumps(payload, indent=2, ensure_ascii=False))
 
-        # 5. Envio (Headers e Files iguais ao script)
+        # 5. Envio
         headers = {
             "Authorization": f"Bearer {cls.TOKEN}",
             "Titulo-Documento": titulo_documento or "Edital de Teste",
@@ -235,7 +205,6 @@ class PNCPService:
             log_console(f"Erro na requisição: {e}")
             raise ValueError(str(e))
 
-# Mantido para não quebrar imports na view
 class ImportacaoService:
     @staticmethod
     def processar_planilha_padrao(arquivo):
