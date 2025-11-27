@@ -122,16 +122,9 @@ class PNCPService:
             vl_total = round(vl_unit * qtd, 4)
  
             cat_id_banco = int(item.categoria_item or 0)
-            cat_id_final = cat_id_banco
-            
-            # Lógica de segurança para Pregão (6)
-            if mod_id == 6:
-           
-           
-                 if cat_id_banco == 1: 
-                     cat_id_final = 2 
-            
-            if cat_id_final == 0: cat_id_final = 2 
+            cat_id_final = cat_id_banco        
+                      
+            if cat_id_final == 0: cat_id_final = 1 
 
             tipo_ms = "M" 
 
