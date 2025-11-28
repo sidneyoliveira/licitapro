@@ -883,3 +883,17 @@ class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
         "processo__numero_processo",
         "ni_fornecedor",
     ]
+
+class SystemConfigView(APIView):
+    """
+    Retorna configurações públicas do sistema para o Frontend.
+    NUNCA retorne SECRET_KEY ou senhas aqui.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({
+            "google_client_id": settings.GOOGLE_CLIENT_ID,
+            "api_url": "https://l3solution.net.br/api/", # Opcional, para confirmação
+            "environment": "production" if not settings.DEBUG else "development"
+        })

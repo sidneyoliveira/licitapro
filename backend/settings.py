@@ -23,10 +23,8 @@ ALLOWED_HOSTS = [
     '72.60.154.234', 
     '127.0.0.1', 
     'localhost',
-    'licitapro1.onrender.com'
 ]
 
-# Lê o Token do PNCP do .env
 PNCP_ACCESS_TOKEN = os.getenv('PNCP_ACCESS_TOKEN')
 
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
@@ -67,8 +65,6 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 CSRF_TRUSTED_ORIGINS = [
-    'https://licitapro1.onrender.com', # Render usa HTTPS
-    'http://licitapro1.onrender.com',
     'http://l3solution.net.br',
     'https://l3solution.net.br'
 ]
