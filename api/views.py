@@ -894,6 +894,6 @@ class SystemConfigView(APIView):
     def get(self, request):
         return Response({
             "google_client_id": settings.GOOGLE_CLIENT_ID,
-            "api_url": "https://l3solution.net.br/api/", # Opcional, para confirmação
+            "api_url": "http://l3solution.net.br/api/", # Opcional, para confirmação
             "environment": "production" if not settings.DEBUG else "development"
         })

@@ -61,12 +61,17 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://l3solution.net.br",
-    "https://l3solution.net.br", # Adicione HTTPS se usar
+    "https://l3solution.net.br",
+    "http://www.l3solution.net.br",
+    "https://www.l3solution.net.br",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
+    'https://licitapro1.onrender.com',
     'http://l3solution.net.br',
-    'https://l3solution.net.br'
+    'https://l3solution.net.br',
+    'http://www.l3solution.net.br',
+    'https://www.l3solution.net.br',
 ]
 
 
