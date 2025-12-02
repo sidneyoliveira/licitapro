@@ -556,62 +556,40 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
     @action(
-        detail=True,
-        methods=["post"],
-        url_path="publicar-pncp",
-        parser_classes=[parsers.MultiPartParser, parsers.FormParser],
-    )
+    detail=True,
+    methods=["post"],
+    url_path="publicar-pncp",
+    parser_classes=[parsers.MultiPartParser, parsers.FormParser],
+)
     def publicar_pncp(self, request, pk=None):
         processo = self.get_object()
         arquivo = request.FILES.get("arquivo")
+        titulo = request.data.get("titulo_documento") or "Edital de Licitação"
 
-        titulo = request.data.get("titulo_documento") or request.data.get("titulo") or "Edital de Licitação"
-        raw_tipo = request.data.get("tipo_documento_id") or request.data.get("tipo_documento")
-        
-        tipo_documento_id = parse_pncp_id(raw_tipo, MAP_INSTRUMENTO_CONVOCATORIO_PNCP, "tipo_documento")
-        
-        tipo_doc_header = INSTRUMENTO_TO_TIPO_DOC_HEADER.get(inst_id, 1)
-        headers["Tipo-Documento-Id"] = str(tipo_doc_header)
-        
         if not arquivo:
-            return Response({"detail": "O arquivo do documento é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "O arquivo do documento é obrigatório."}, status=400)
+
+        if not processo.entidade_id or not (processo.entidade and processo.entidade.cnpj):
+            return Response({"detail": "Processo sem Entidade/CNPJ. Preencha a entidade e o CNPJ antes de publicar."}, status=400)
+
+        if not processo.orgao_id or not (processo.orgao and processo.orgao.codigo_unidade):
+            return Response({"detail": "Processo sem Órgão/código da unidade compradora. Preencha orgao.codigo_unidade."}, status=400)
 
         try:
-            resultado = PNCPService.publicar_compra(
-                processo=processo,
-                arquivo=arquivo,
-                titulo_documento=titulo,
-                tipo_documento_id=int(tipo_documento_id),
-            )
-
+            resultado = PNCPService.publicar_compra(processo, arquivo, titulo)
             processo.situacao = "publicado"
             processo.save(update_fields=["situacao"])
-            
-            processo.pncp_ano_compra = resultado.get("anoCompra") or payload["anoCompra"]
-            processo.pncp_sequencial_compra = resultado.get("sequencial") or resultado.get("sequencialCompra")  # depende do retorno real
-            processo.pncp_publicado_em = timezone.now()
-            processo.pncp_ultimo_retorno = resultado
-
-            processo.save(update_fields=["pncp_ano_compra","pncp_sequencial_compra","pncp_publicado_em","pncp_ultimo_retorno"])
-            
-            return Response(
-                {"detail": "Publicado no PNCP com sucesso!", "pncp_data": resultado},
-                status=status.HTTP_200_OK,
-            )
+            return Response({"detail": "Publicado no PNCP com sucesso!", "pncp_data": resultado}, status=200)
 
         except ValueError as e:
-            # Se sua mensagem vem como "PNCP recusou a operação (400): ..."
-            msg = str(e)
-            m = re.search(r"\((\d{3})\)", msg)
-            http_status = int(m.group(1)) if m else 400
-            return Response({"detail": msg}, status=http_status)
+            # Erro esperado (PNCP, validações, etc)
+            return Response({"detail": str(e)}, status=400)
 
         except Exception as e:
-            logger.exception("Erro interno PNCP")
-            return Response(
-                {"detail": f"Erro interno ao comunicar com PNCP: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            logger.exception("Erro interno PNCP (publicar_pncp)")
+            return Response({"detail": f"Erro interno ao publicar: {str(e)}"}, status=500)
+        
+    
     # ----------------------------------------------------------------------
     # ITENS DO PROCESSO
     # ----------------------------------------------------------------------

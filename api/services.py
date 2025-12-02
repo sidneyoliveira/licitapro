@@ -251,7 +251,7 @@ class PNCPService:
                 return {"raw_response": resp.text}
 
         cls._handle_error(resp)
-        
+
     @classmethod
     def publicar_compra(cls, processo, arquivo, titulo_documento: str, tipo_documento_id: int = 1) -> Dict[str, Any]:
 
@@ -269,9 +269,12 @@ class PNCPService:
         token = cls._get_token()
 
         # 2. Preparação de Dados
-        cnpj_orgao = re.sub(r"\D", "", processo.entidade.cnpj or "")
-        if not cnpj_orgao:
-            raise ValueError("CNPJ do órgão não informado ou inválido.")
+        cnpj_orgao = re.sub(r"\D", "", (processo.entidade.cnpj or "")) if processo.entidade else ""
+        if len(cnpj_orgao) != 14:
+            raise ValueError("CNPJ da entidade inválido/ausente.")
+
+        if not processo.orgao or not processo.orgao.codigo_unidade:
+            raise ValueError("Código da unidade compradora (orgao.codigo_unidade) inválido/ausente.")
 
         user_id = cls._extrair_user_id(token)
 
