@@ -462,7 +462,99 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
-    
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="retificar-pncp",
+        parser_classes=[parsers.MultiPartParser, parsers.FormParser],
+    )
+    def retificar_pncp(self, request, pk=None):
+        """
+        Retificação: anexa um novo documento à contratação já existente no PNCP.
+        Requer que o processo já tenha ano/sequencial PNCP.
+        """
+        processo = self.get_object()
+        arquivo = request.FILES.get("arquivo")
+
+        if not arquivo:
+            return Response(
+                {"detail": "O arquivo do documento é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        titulo = (request.data.get("titulo_documento") or request.data.get("titulo") or "Retificação")[:255]
+        justificativa = (request.data.get("justificativa") or request.data.get("observacao") or "").strip()
+
+        # (opcional, mas recomendado)
+        if not justificativa:
+            return Response(
+                {"detail": "Justificativa/observação é obrigatória para retificação."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Tipo do documento (aceita id numérico ou slug)
+        raw_tipo = request.data.get("tipo_documento_id") or request.data.get("tipo_documento")
+        try:
+            tipo_documento_id = _parse_pncp_id(raw_tipo, MAP_INSTRUMENTO_CONVOCATORIO_PNCP, "tipo_documento")
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Ano/sequencial: tenta no model (se existir) e depois no request
+        ano_compra = getattr(processo, "pncp_ano_compra", None) or request.data.get("ano_compra") or request.data.get("ano")
+        sequencial_compra = getattr(processo, "pncp_sequencial_compra", None) or request.data.get("sequencial_compra") or request.data.get("sequencial")
+
+        if not ano_compra or not sequencial_compra:
+            return Response(
+                {
+                    "detail": (
+                        "Processo ainda não tem referência PNCP (ano_compra/sequencial_compra). "
+                        "Publique primeiro e grave esses campos, ou envie 'ano_compra' e 'sequencial_compra' no body."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # CNPJ do órgão/entidade
+        cnpj_orgao = re.sub(r"\D", "", (processo.entidade.cnpj or ""))
+        if len(cnpj_orgao) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido/ausente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            resultado = PNCPService.anexar_documento_compra(
+                cnpj_orgao=cnpj_orgao,
+                ano_compra=int(ano_compra),
+                sequencial_compra=int(sequencial_compra),
+                arquivo=arquivo,
+                titulo_documento=titulo,
+                tipo_documento_id=tipo_documento_id,
+            )
+
+            # Se você tiver campos PNCP no model, grave aqui (opcional)
+            if hasattr(processo, "pncp_ultimo_retorno"):
+                processo.pncp_ultimo_retorno = resultado
+                processo.save(update_fields=["pncp_ultimo_retorno"])
+
+            return Response(
+                {"detail": "Retificação enviada ao PNCP (documento anexado).", "pncp_data": resultado},
+                status=status.HTTP_200_OK,
+            )
+
+        except ValueError as e:
+            # tenta extrair (400), (422) etc da mensagem do service, se você usou esse padrão
+            msg = str(e)
+            m = re.search(r"\((\d{3})\)", msg)
+            code = int(m.group(1)) if m else 400
+            return Response({"detail": msg}, status=code)
+
+        except Exception as e:
+            logger.exception("Erro interno retificar PNCP")
+            return Response(
+                {"detail": f"Erro interno ao comunicar com PNCP: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
     @action(
         detail=True,
         methods=["post"],

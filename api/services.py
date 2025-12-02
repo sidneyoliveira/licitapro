@@ -190,7 +190,68 @@ class PNCPService:
                 f"Erro não-bloqueante ao vincular usuário ao órgão no PNCP: {exc}",
                 "error",
             )
+    @classmethod
+    def anexar_documento_compra(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        arquivo: IO[bytes],
+        titulo_documento: str,
+        tipo_documento_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Insere/anexa um documento à contratação já existente no PNCP.
+        Manual: 6.3.6 Inserir Documento a uma Contratação.
+        Endpoint: /v1/orgaos/{cnpj}/compras/{ano}/{sequencial}/arquivos (POST)
+        """
+        token = cls._get_token()
 
+        if hasattr(arquivo, "seek"):
+            arquivo.seek(0)
+
+        url = f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/{int(ano_compra)}/{int(sequencial_compra)}/arquivos"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Titulo-Documento": (titulo_documento or "Documento")[:255],
+            "Tipo-Documento-Id": str(int(tipo_documento_id)),
+            "accept": "*/*",
+        }
+
+        files = {
+            "arquivo": (
+                getattr(arquivo, "name", "documento.pdf"),
+                arquivo,
+                "application/pdf",
+            )
+        }
+
+        cls._log(f"Anexando documento à compra: {url}")
+
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                files=files,
+                verify=cls.VERIFY_SSL,
+                timeout=90,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (anexar documento): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        # Manual retorna 200 para sucesso em consulta/lista, e em geral upload pode ser 200/201
+        if resp.status_code in (200, 201):
+            try:
+                return resp.json()
+            except ValueError:
+                return {"raw_response": resp.text}
+
+        cls._handle_error(resp)
+        
     @classmethod
     def publicar_compra(cls, processo, arquivo, titulo_documento: str, tipo_documento_id: int = 1) -> Dict[str, Any]:
 
