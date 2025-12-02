@@ -66,6 +66,7 @@ from .choices import (
     SITUACAO_CHOICES,
     TIPO_ORGANIZACAO_CHOICES,
     NATUREZAS_DESPESA_CHOICES,
+    MAP_INSTRUMENTO_CONVOCATORIO_PNCP
 )
 
 User = get_user_model()
@@ -73,6 +74,22 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_CLIENT_ID = getattr(settings, "GOOGLE_CLIENT_ID", "") or ""
 
+def parse_pncp_id(raw, slug_map, field_name="campo"):
+    if raw is None or str(raw).strip() == "":
+        raise ValueError(f"{field_name} é obrigatório.")
+    raw = str(raw).strip()
+
+    # tenta int primeiro
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+
+    # tenta slug
+    _id = slug_map.get(raw)
+    if not _id:
+        raise ValueError(f"{field_name} inválido: '{raw}'. Envie um ID numérico ou um slug conhecido.")
+    return int(_id)
 
 # ============================================================
 # 0️⃣ API DE CONSTANTES DO SISTEMA (ATUALIZADA)
@@ -457,8 +474,13 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         arquivo = request.FILES.get("arquivo")
 
         titulo = request.data.get("titulo_documento") or request.data.get("titulo") or "Edital de Licitação"
-        tipo_documento_id = request.data.get("tipo_documento_id") or request.data.get("tipo_documento") or 1
-
+        raw_tipo = request.data.get("tipo_documento_id") or request.data.get("tipo_documento")
+        
+        tipo_documento_id = parse_pncp_id(raw_tipo, MAP_INSTRUMENTO_CONVOCATORIO_PNCP, "tipo_documento")
+        
+        tipo_doc_header = INSTRUMENTO_TO_TIPO_DOC_HEADER.get(inst_id, 1)
+        headers["Tipo-Documento-Id"] = str(tipo_doc_header)
+        
         if not arquivo:
             return Response({"detail": "O arquivo do documento é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
 
