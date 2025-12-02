@@ -31,8 +31,8 @@ class PNCPService:
     )
 
     # Credenciais (definidas via .env / settings)
-    USERNAME: str = getattr(settings, "PNCP_USERNAME", "") or ""
-    PASSWORD: str = getattr(settings, "PNCP_PASSWORD", "") or ""
+    USERNAME: str = getattr(settings, "PNCP_USERNAME", "")
+    PASSWORD: str = getattr(settings, "PNCP_PASSWORD", "")
 
     # Tempo máximo padrão das requisições HTTP (em segundos)
     DEFAULT_TIMEOUT: int = 30
@@ -91,7 +91,7 @@ class PNCPService:
 
         Levanta ValueError se não for possível obter token.
         """
-        cls._debug_credenciais()  # <<< AQUI é feito o "print" (log) das credenciais do env
+        cls._debug_credenciais() 
 
         if not cls.USERNAME or not cls.PASSWORD:
             msg = "Credenciais PNCP (USERNAME/PASSWORD) não configuradas no ambiente."
