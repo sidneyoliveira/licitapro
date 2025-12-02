@@ -192,12 +192,8 @@ class PNCPService:
             )
 
     @classmethod
-    def publicar_compra(
-        cls,
-        processo: Any,
-        arquivo: IO[bytes],
-        titulo_documento: str,
-    ) -> Dict[str, Any]:
+    def publicar_compra(cls, processo, arquivo, titulo_documento: str, tipo_documento_id: int = 1) -> Dict[str, Any]:
+
         """
         Orquestra a publicação da compra (edital/aviso) no PNCP.
 
@@ -263,7 +259,7 @@ class PNCPService:
         # 5. Construção do Payload
         payload: Dict[str, Any] = {
             "codigoUnidadeCompradora": processo.orgao.codigo_unidade,
-            "cnpjOrgao": cnpj_orgao,
+            # "cnpjOrgao": cnpj_orgao,
             "anoCompra": ano_compra,
             "numeroCompra": numero_compra,
             "numeroProcesso": str(processo.numero_processo),
@@ -274,10 +270,10 @@ class PNCPService:
             "srp": bool(getattr(processo, "registro_preco", False)),
             "objetoCompra": (processo.objeto or "Objeto não informado")[:5000],
             "informacaoComplementar": "Integrado via API Licitapro",
-            "fontesOrcamentarias": 2,
+            "fontesOrcamentarias": [2],
             "dataAberturaProposta": data_abertura_str,
             "dataEncerramentoProposta": data_encerramento_str,
-            "linkSistemaOrigem": "http://l3solution.net.br",
+            # "linkSistemaOrigem": "http://l3solution.net.br",
             "itensCompra": [],
         }
 
@@ -337,8 +333,8 @@ class PNCPService:
         url = f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras"
         headers = {
             "Authorization": f"Bearer {token}",
-            "Titulo-Documento": titulo_documento or "Edital",
-            "Tipo-Documento-Id": "1",
+            "Titulo-Documento": (titulo_documento or "Edital")[:255],
+            "Tipo-Documento-Id": str(int(tipo_documento_id)),
         }
 
         logger.info(

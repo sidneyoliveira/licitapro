@@ -427,7 +427,25 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 {"detail": "Erro interno ao processar arquivo."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+    @action(detail=True, methods=["get"], url_path="status-pncp")
+    def status_pncp(self, request, pk=None):
+        processo = self.get_object()
 
+        # ajuste conforme seus campos reais
+        publicado = (processo.situacao == "publicado")
+
+        return Response(
+            {
+                "publicado": publicado,
+                "situacao": processo.situacao,
+                # se você tiver campos PNCP no model, exponha aqui:
+                "ano_compra": getattr(processo, "pncp_ano_compra", None),
+                "sequencial_pncp": getattr(processo, "pncp_sequencial_compra", None),
+                "url_pncp": getattr(processo, "pncp_url", None),
+            },
+            status=status.HTTP_200_OK,
+        )
+    
     @action(
         detail=True,
         methods=["post"],
@@ -435,45 +453,51 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         parser_classes=[parsers.MultiPartParser, parsers.FormParser],
     )
     def publicar_pncp(self, request, pk=None):
-        """
-        Recebe um arquivo (Edital/Aviso) e envia o processo para o PNCP.
-        """
         processo = self.get_object()
         arquivo = request.FILES.get("arquivo")
-        titulo = request.data.get("titulo_documento", "Edital de Licitação")
+
+        titulo = request.data.get("titulo_documento") or request.data.get("titulo") or "Edital de Licitação"
+        tipo_documento_id = request.data.get("tipo_documento_id") or request.data.get("tipo_documento") or 1
 
         if not arquivo:
-            return Response(
-                {"detail": "O arquivo do documento é obrigatório."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "O arquivo do documento é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            resultado = PNCPService.publicar_compra(processo, arquivo, titulo)
+            resultado = PNCPService.publicar_compra(
+                processo=processo,
+                arquivo=arquivo,
+                titulo_documento=titulo,
+                tipo_documento_id=int(tipo_documento_id),
+            )
 
             processo.situacao = "publicado"
             processo.save(update_fields=["situacao"])
+            
+            processo.pncp_ano_compra = resultado.get("anoCompra") or payload["anoCompra"]
+            processo.pncp_sequencial_compra = resultado.get("sequencial") or resultado.get("sequencialCompra")  # depende do retorno real
+            processo.pncp_publicado_em = timezone.now()
+            processo.pncp_ultimo_retorno = resultado
 
+            processo.save(update_fields=["pncp_ano_compra","pncp_sequencial_compra","pncp_publicado_em","pncp_ultimo_retorno"])
+            
             return Response(
-                {
-                    "detail": "Publicado no PNCP com sucesso!",
-                    "pncp_data": resultado,
-                },
+                {"detail": "Publicado no PNCP com sucesso!", "pncp_data": resultado},
                 status=status.HTTP_200_OK,
             )
 
         except ValueError as e:
-            return Response(
-                {"detail": str(e)},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            # Se sua mensagem vem como "PNCP recusou a operação (400): ..."
+            msg = str(e)
+            m = re.search(r"\((\d{3})\)", msg)
+            http_status = int(m.group(1)) if m else 400
+            return Response({"detail": msg}, status=http_status)
+
         except Exception as e:
-            logger.error(f"Erro interno PNCP: {e}")
+            logger.exception("Erro interno PNCP")
             return Response(
                 {"detail": f"Erro interno ao comunicar com PNCP: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
     # ----------------------------------------------------------------------
     # ITENS DO PROCESSO
     # ----------------------------------------------------------------------

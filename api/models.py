@@ -149,7 +149,12 @@ class ProcessoLicitatorio(models.Model):
 
     # Mantido campo legado para não quebrar migrations antigas imediatamente, se desejar remover depois
     fundamentacao = models.CharField(max_length=50, blank=True, null=True, help_text="Campo legado. Use instrumento_convocatorio.")
+    pncp_publicado_em = models.DateTimeField(blank=True, null=True)
+    pncp_ano_compra = models.PositiveIntegerField(blank=True, null=True)
+    pncp_sequencial_compra = models.PositiveIntegerField(blank=True, null=True)
 
+    pncp_link = models.URLField(blank=True, null=True)
+    pncp_ultimo_retorno = models.JSONField(blank=True, null=True)
     class Meta:
         ordering = ['-data_processo']
         verbose_name = "Processo Licitatório"
@@ -255,6 +260,20 @@ class ProcessoLicitatorio(models.Model):
 
         raise ValidationError("Parâmetros insuficientes para organização de lotes.")
 
+class DocumentoPNCP(models.Model):
+    processo = models.ForeignKey(ProcessoLicitatorio, related_name="docs_pncp", on_delete=models.CASCADE)
+
+    tipo_documento_id = models.PositiveIntegerField()  # PNCP: Tipo-Documento-Id
+    titulo = models.CharField(max_length=255, default="Documento")
+    observacao = models.TextField(blank=True, null=True)
+
+    arquivo_nome = models.CharField(max_length=255, blank=True, null=True)
+    arquivo_hash = models.CharField(max_length=80, blank=True, null=True)
+
+    pncp_sequencial_documento = models.PositiveIntegerField(blank=True, null=True)
+    ativo = models.BooleanField(default=True)
+
+    criado_em = models.DateTimeField(auto_now_add=True)
 
 # ============================================================
 # 📦 LOTE
@@ -353,6 +372,8 @@ class Item(models.Model):
     tipo_beneficio = models.IntegerField(choices=TIPO_BENEFICIO_CHOICES, blank=True, null=True, verbose_name="Tipo de Benefício (ID)")
     categoria_item = models.IntegerField(choices=CATEGORIA_ITEM_CHOICES, blank=True, null=True, verbose_name="Categoria do Item (ID)")
 
+    pncp_numero_item = models.PositiveIntegerField(blank=True, null=True)
+    pncp_ultima_atualizacao = models.DateTimeField(blank=True, null=True)
     class Meta:
         ordering = ['ordem']
         constraints = [
