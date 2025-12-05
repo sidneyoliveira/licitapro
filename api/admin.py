@@ -147,4 +147,4 @@ class AnotacaoAdmin(admin.ModelAdmin):
 @admin.register(ArquivoUser)
 class ArquivoUserAdmin(admin.ModelAdmin):
     list_display = ('id', 'usuario', 'arquivo', 'descricao', 'criado_em')
-    search_fields = ('usuario__username', 'descricao')
+    search_fields = ('usuario', 'descricao')
