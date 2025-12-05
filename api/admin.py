@@ -9,6 +9,7 @@ from .models import (
     FornecedorProcesso,
     Item,
     ItemFornecedor,
+    Anotacao
 )
 
 # ============================================================
@@ -135,3 +136,10 @@ class ItemFornecedorAdmin(admin.ModelAdmin):
     list_display = ('item', 'fornecedor', 'valor_proposto', 'vencedor')
     list_filter = ('vencedor', 'fornecedor')
     search_fields = ('item__descricao', 'fornecedor__razaosocial')
+
+
+@admin.register(Anotacao)
+class AnotacaoAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'text', 'created_at', 'updated_at')
+    search_fields = ('user__username', 'text')
+    list_filter = ('created_at', 'updated_at')
