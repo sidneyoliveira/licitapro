@@ -12,7 +12,7 @@ from .models import (
     ItemFornecedor,
     ContratoEmpenho,
     Anotacao,
-    ArquivosUser
+    ArquivoUser
 )
 from .choices import (
     MAP_MODALIDADE_PNCP,
@@ -310,7 +310,7 @@ class AnotacaoSerializer(serializers.ModelSerializer):
 # 📝 ARQUIVOS DO USUARIO
 # ============================================================
 
-class ArquivosUser(serializers.ModelSerializer):
+class ArquivoUserSerializers(serializers.ModelSerializer):
     class Meta:
-        model = ArquivosUser
+        model = ArquivoUser
         fields = ("id", "usuario", "arquivo", "descricao", "criado_em")

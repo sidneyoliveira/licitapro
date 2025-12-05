@@ -9,7 +9,8 @@ from .models import (
     FornecedorProcesso,
     Item,
     ItemFornecedor,
-    Anotacao
+    Anotacao,
+    ArquivoUser,
 )
 
 # ============================================================

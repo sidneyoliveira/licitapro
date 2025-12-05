@@ -508,7 +508,7 @@ class Anotacao(models.Model):
 # 📝 ARQUIVOS DO USUARIO
 # ============================================================
 
-class ArquivosUser(models.Model):
+class ArquivoUser(models.Model):
     usuario = models.ForeignKey(
         CustomUser,
         on_delete=models.CASCADE,

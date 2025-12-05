@@ -23,7 +23,7 @@ from .views import (
     ConstantesSistemaView,
     SystemConfigView,
     AnotacaoViewSet,
-    ArquivoUserViewSet
+    ArquivoUserViewSet,
 )
 
 # ============================================================
