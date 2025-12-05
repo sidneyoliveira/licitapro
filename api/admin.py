@@ -140,6 +140,4 @@ class ItemFornecedorAdmin(admin.ModelAdmin):
 
 @admin.register(Anotacao)
 class AnotacaoAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'text', 'created_at', 'updated_at')
-    search_fields = ('user__username', 'text')
-    list_filter = ('created_at', 'updated_at')
+    list_display = ('id', 'user', 'text',)
