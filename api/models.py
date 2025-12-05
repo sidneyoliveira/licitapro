@@ -482,7 +482,7 @@ class ContratoEmpenho(models.Model):
         return f"Contrato/Empenho {self.numero_contrato_empenho}/{self.ano_contrato}"
 
 # ============================================================
-# 📝 ANOTAÇÕES (NOVO)
+# 📝 ANOTAÇÕES
 # ============================================================
 
 class Anotacao(models.Model):
@@ -502,3 +502,26 @@ class Anotacao(models.Model):
 
     def __str__(self):
         return f"Nota de {self.usuario.username} em {self.criado_em.strftime('%d/%m/%Y')}"
+    
+
+# ============================================================
+# 📝 ARQUIVOS DO USUARIO
+# ============================================================
+
+class ArquivosUser(models.Model):
+    usuario = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='arquivos'
+    )
+    arquivo = models.FileField(upload_to='user_files/')
+    descricao = models.CharField(max_length=255, blank=True, null=True)
+    enviado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-enviado_em']
+        verbose_name = "Arquivo do Usuário"
+        verbose_name_plural = "Arquivos dos Usuários"
+
+    def __str__(self):
+        return f"Arquivo de {self.usuario.username} - {self.descricao or self.arquivo.name}"

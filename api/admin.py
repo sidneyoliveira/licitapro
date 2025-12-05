@@ -141,3 +141,9 @@ class ItemFornecedorAdmin(admin.ModelAdmin):
 @admin.register(Anotacao)
 class AnotacaoAdmin(admin.ModelAdmin):
     list_display = ('id', 'usuario', 'texto',)
+
+
+@admin.register(ArquivoUser)
+class ArquivoUserAdmin(admin.ModelAdmin):
+    list_display = ('id', 'usuario', 'arquivo', 'descricao', 'criado_em')
+    search_fields = ('usuario__username', 'descricao')

@@ -11,7 +11,8 @@ from .models import (
     FornecedorProcesso,
     ItemFornecedor,
     ContratoEmpenho,
-    Anotacao
+    Anotacao,
+    ArquivosUser
 )
 from .choices import (
     MAP_MODALIDADE_PNCP,
@@ -302,3 +303,14 @@ class AnotacaoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Anotacao
         fields = ("id", "text", "date")
+
+
+
+# ============================================================
+# 📝 ARQUIVOS DO USUARIO
+# ============================================================
+
+class ArquivosUser(serializers.ModelSerializer):
+    class Meta:
+        model = ArquivosUser
+        fields = ("id", "usuario", "arquivo", "descricao", "criado_em")

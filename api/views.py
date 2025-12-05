@@ -35,7 +35,8 @@ from .models import (
     FornecedorProcesso,
     ItemFornecedor,
     ContratoEmpenho,
-    Anotacao
+    Anotacao,
+    ArquivosUser
 )
 
 # Imports Locais - Serializers
@@ -51,7 +52,8 @@ from .serializers import (
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
     UsuarioSerializer,
-    AnotacaoSerializer
+    AnotacaoSerializer,
+    ArquivosUserSerializer
 )
 
 # Imports Locais - Choices (Atualizado para nova lógica sem Fundamentação)
@@ -1032,4 +1034,20 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         # Vincula automaticamente a nota ao usuário logado
+        serializer.save(usuario=self.request.user)
+
+# ============================================================
+# 🗂️ ARQUIVOS USUÁRIO VIEWSET
+# ============================================================
+
+class ArquivosUserViewSet(viewsets.ModelViewSet):
+    serializer_class = ArquivosUserSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Retorna apenas os arquivos do usuário logado
+        return ArquivosUser.objects.filter(usuario=self.request.user).order_by('-criado_em')
+
+    def perform_create(self, serializer):
+        # Vincula automaticamente o arquivo ao usuário logado
         serializer.save(usuario=self.request.user)
