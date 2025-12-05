@@ -35,6 +35,7 @@ from .models import (
     FornecedorProcesso,
     ItemFornecedor,
     ContratoEmpenho,
+    Anotacao
 )
 
 # Imports Locais - Serializers
@@ -50,6 +51,7 @@ from .serializers import (
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
     UsuarioSerializer,
+    AnotacaoSerializer
 )
 
 # Imports Locais - Choices (Atualizado para nova lógica sem Fundamentação)
@@ -1001,6 +1003,7 @@ class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
     ]
 
 class SystemConfigView(APIView):
+    
     """
     Retorna configurações públicas do sistema para o Frontend.
     NUNCA retorne SECRET_KEY ou senhas aqui.
@@ -1013,3 +1016,20 @@ class SystemConfigView(APIView):
             "api_url": "http://l3solution.net.br/api/", # Opcional, para confirmação
             "environment": "production" if not settings.DEBUG else "development"
         })
+    
+
+# ============================================================
+# 📝 ANOTAÇÕES VIEWSET
+# ============================================================
+
+class AnotacaoViewSet(viewsets.ModelViewSet):
+    serializer_class = AnotacaoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Retorna apenas as anotações do usuário logado
+        return Anotacao.objects.filter(usuario=self.request.user).order_by('-criado_em')
+
+    def perform_create(self, serializer):
+        # Vincula automaticamente a nota ao usuário logado
+        serializer.save(usuario=self.request.user)

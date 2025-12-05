@@ -11,6 +11,7 @@ from .models import (
     FornecedorProcesso,
     ItemFornecedor,
     ContratoEmpenho,
+    Anotacao
 )
 from .choices import (
     MAP_MODALIDADE_PNCP,
@@ -288,3 +289,16 @@ class ContratoEmpenhoSerializer(serializers.ModelSerializer):
             "criado_em",
             "atualizado_em",
         )
+
+# ============================================================
+# 📝 ANOTAÇÕES
+# ============================================================
+
+class AnotacaoSerializer(serializers.ModelSerializer):
+    # Mapeando para bater com o frontend (que espera 'text' e 'date')
+    text = serializers.CharField(source='texto')
+    date = serializers.DateTimeField(source='criado_em', read_only=True)
+
+    class Meta:
+        model = Anotacao
+        fields = ("id", "text", "date")

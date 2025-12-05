@@ -21,7 +21,8 @@ from .views import (
     GoogleLoginView,
     UsuarioViewSet,
     ConstantesSistemaView,
-    SystemConfigView
+    SystemConfigView,
+    AnotacaoViewSet
 )
 
 # ============================================================
@@ -49,6 +50,8 @@ router.register(r'itens-fornecedor', ItemFornecedorViewSet, basename='item-forne
 router.register(r'contratos', ContratoEmpenhoViewSet, basename='contrato')
 
 router.register(r'usuarios', UsuarioViewSet, basename='usuario')
+
+router.register(r'anotacoes', AnotacaoViewSet, basename='anotacao')
 
 # ============================================================
 # 🛣️ URLPATTERNS COMPLETO
