@@ -22,7 +22,8 @@ from .views import (
     UsuarioViewSet,
     ConstantesSistemaView,
     SystemConfigView,
-    AnotacaoViewSet
+    AnotacaoViewSet,
+    ArquivoUserViewSet
 )
 
 # ============================================================
@@ -52,6 +53,8 @@ router.register(r'contratos', ContratoEmpenhoViewSet, basename='contrato')
 router.register(r'usuarios', UsuarioViewSet, basename='usuario')
 
 router.register(r'anotacoes', AnotacaoViewSet, basename='anotacao')
+
+router.register(r'arquivos-user', ArquivoUserViewSet, basename='arquivos-user')
 
 # ============================================================
 # 🛣️ URLPATTERNS COMPLETO
