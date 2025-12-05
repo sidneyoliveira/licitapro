@@ -140,4 +140,4 @@ class ItemFornecedorAdmin(admin.ModelAdmin):
 
 @admin.register(Anotacao)
 class AnotacaoAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'text',)
+    list_display = ('id', 'usuario', 'texto',)
