@@ -12,7 +12,8 @@ from .models import (
     ItemFornecedor,
     ContratoEmpenho,
     Anotacao,
-    ArquivoUser
+    ArquivoUser,
+    DocumentoPNCP
 )
 from .choices import (
     MAP_MODALIDADE_PNCP,
@@ -139,6 +140,12 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "situacao",         
             "criterio_julgamento",
             
+            "pncp_publicado_em",
+            "pncp_ano_compra",
+            "pncp_sequencial_compra",
+            "pncp_link",
+            "pncp_ultimo_retorno",
+
             "data_processo",
             "data_abertura",
             "valor_referencia",
@@ -305,7 +312,6 @@ class AnotacaoSerializer(serializers.ModelSerializer):
         fields = ("id", "text", "date")
 
 
-
 # ============================================================
 # 📝 ARQUIVOS DO USUARIO
 # ============================================================
@@ -313,4 +319,46 @@ class AnotacaoSerializer(serializers.ModelSerializer):
 class ArquivoUserSerializers(serializers.ModelSerializer):
     class Meta:
         model = ArquivoUser
-        fields = ("id", "usuario", "arquivo", "descricao", "criado_em")
+        fields = ("id", "usuario", "arquivo", "descricao", "enviado_em")
+        read_only_fields = ("usuario", "enviado_em")
+
+
+# ============================================================
+# 📎 DOCUMENTOS PNCP (Arquivos da Contratação)
+# ============================================================
+
+class DocumentoPNCPSerializer(serializers.ModelSerializer):
+    # Nome legível do tipo de documento (baseado na tabela do manual)
+    tipo_documento_nome = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DocumentoPNCP
+        fields = (
+            "id",
+            "processo",
+            "tipo_documento_id",
+            "tipo_documento_nome",
+            "titulo",
+            "observacao",
+            "arquivo_nome",
+            "pncp_sequencial_documento",
+            "ativo",
+            "criado_em",
+        )
+
+    def get_tipo_documento_nome(self, obj):
+        mapa = {
+            1: "Aviso de Contratação Direta",
+            2: "Edital",
+            3: "Minuta do Contrato",
+            4: "Termo de Referência",
+            5: "Anteprojeto",
+            6: "Projeto Básico",
+            7: "Estudo Técnico Preliminar",
+            8: "Projeto Executivo",
+            9: "Mapa de Riscos",
+            10: "DFD",
+            19: "Minuta de Ata de Registro de Preços",
+            20: "Ato que autoriza a Contratação Direta",
+        }
+        return mapa.get(obj.tipo_documento_id, f"Tipo {obj.tipo_documento_id}")

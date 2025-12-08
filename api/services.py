@@ -7,7 +7,7 @@ import sys
 import time
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, IO
+from typing import Dict, Any, Optional, IO, List
 
 import pytz
 import requests
@@ -19,58 +19,50 @@ logger = logging.getLogger("api")
 class PNCPService:
     """
     Serviço para integração com o Portal Nacional de Contratações Públicas (PNCP).
-    Documentação: https://pncp.gov.br/
+    Documentação: Manual de Integração PNCP v2.3.8.
     """
 
     # Configurações de Ambiente
-    # Prioriza URL de Treinamento para evitar acidentes em Produção durante desenvolvimento
     BASE_URL: str = getattr(
         settings,
         "PNCP_BASE_URL",
         "https://treina.pncp.gov.br/api/pncp/v1",
     )
 
-    # Credenciais (definidas via .env / settings)
+    # Credenciais
     USERNAME: str = getattr(settings, "PNCP_USERNAME", "")
     PASSWORD: str = getattr(settings, "PNCP_PASSWORD", "")
 
     # Tempo máximo padrão das requisições HTTP (em segundos)
     DEFAULT_TIMEOUT: int = 30
 
-    # Controle de verificação de SSL (ideal: True em produção)
+    # Verificação de SSL
     VERIFY_SSL: bool = getattr(settings, "PNCP_VERIFY_SSL", False)
+
+    # ------------------------------------------------------------------ #
+    # HELPERS INTERNOS                                                   #
+    # ------------------------------------------------------------------ #
 
     @classmethod
     def _log(cls, msg: str, level: str = "info") -> None:
         """
-        Helper para garantir saída no console do servidor (Gunicorn/Docker).
-        Usa stderr para facilitar coleta em logs.
+        Helper para logar em stderr (útil em Docker / Gunicorn).
         """
-        formatted_msg = f"[PNCP] {msg}"
-
+        formatted = f"[PNCP] {msg}\n"
         if level == "error":
-            sys.stderr.write(f"❌ {formatted_msg}\n")
+            sys.stderr.write("❌ " + formatted)
         else:
-            sys.stderr.write(f"ℹ️ {formatted_msg}\n")
-
+            sys.stderr.write("ℹ️ " + formatted)
         sys.stderr.flush()
 
     @classmethod
     def _debug_credenciais(cls) -> None:
         """
-        Exibe (em log) os valores de USERNAME e PASSWORD vindos do .env/settings.
-
-        Por segurança, a senha NÃO é exibida integralmente.
-        Caso precise debugar algo mais profundo, altere conscientemente.
+        Log mínimo das credenciais (sem expor senha completa).
         """
-        if cls.USERNAME:
-            username_visivel = cls.USERNAME
-        else:
-            username_visivel = "<vazio>"
-
+        username_visivel = cls.USERNAME or "<vazio>"
         if cls.PASSWORD:
-            # Exibe apenas parte da senha para debug, sem expor tudo.
-            senha_mascarada = cls.PASSWORD
+            senha_mascarada = cls.PASSWORD[:2] + "***"
         else:
             senha_mascarada = "<vazio>"
 
@@ -82,26 +74,20 @@ class PNCPService:
     @classmethod
     def _get_token(cls) -> str:
         """
-        Obtém um token válido autenticando usuário/senha do .env.
-
-        Fluxo:
-        1. Valida se USERNAME/PASSWORD estão configurados.
-        2. Realiza POST para /usuarios/login.
-        3. Extrai o token do header Authorization (Bearer ...).
-
-        Levanta ValueError se não for possível obter token.
+        Obtém token Bearer no endpoint /usuarios/login.
+        Levanta ValueError em caso de erro.
         """
-        cls._debug_credenciais() 
+        cls._debug_credenciais()
 
         if not cls.USERNAME or not cls.PASSWORD:
             msg = "Credenciais PNCP (USERNAME/PASSWORD) não configuradas no ambiente."
-            cls._log(msg, level="error")
+            cls._log(msg, "error")
             raise ValueError(msg)
 
         url = f"{cls.BASE_URL}/usuarios/login"
         payload = {"login": cls.USERNAME, "senha": cls.PASSWORD}
 
-        cls._log(f"Autenticando usuário: {cls.USERNAME}...")
+        cls._log(f"Autenticando usuário no PNCP: {cls.USERNAME}...")
 
         try:
             response = requests.post(
@@ -118,23 +104,20 @@ class PNCPService:
         if response.status_code == 200:
             token_header = response.headers.get("Authorization", "")
             token = token_header.replace("Bearer ", "").strip()
-
             if not token:
-                msg = "Login no PNCP retornou sucesso, mas sem token no header Authorization."
+                msg = "Login no PNCP retornou 200, mas sem token no header Authorization."
                 cls._log(msg, "error")
                 raise ValueError(msg)
 
-            cls._log("Novo token PNCP gerado com sucesso.")
+            cls._log("Token PNCP obtido com sucesso.")
             return token
 
-        # Se chegou aqui, houve erro de autenticação
         cls._handle_error(response)
 
     @staticmethod
     def _extrair_user_id(token: str) -> Optional[int]:
         """
-        Decodifica o JWT para extrair o ID do usuário (idBaseDados ou sub).
-        Retorna None caso não seja possível extrair.
+        Decodifica o JWT e tenta extrair 'idBaseDados' ou 'sub' como user_id.
         """
         try:
             if not token:
@@ -144,7 +127,6 @@ class PNCPService:
             if len(parts) < 2:
                 return None
 
-            # Ajuste de padding Base64
             payload_b64 = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
             decoded = json.loads(base64.urlsafe_b64decode(payload_b64))
 
@@ -157,11 +139,8 @@ class PNCPService:
     @classmethod
     def _garantir_permissao(cls, token: str, user_id: Optional[int], cnpj: str) -> None:
         """
-        Verifica e vincula o usuário ao órgão (Endpoint: /usuarios/{id}/orgaos).
-
-        Observação:
-        - Em ambiente de treinamento, muitas vezes é necessário vincular
-          explicitamente o usuário a cada órgão por CNPJ.
+        Verifica/vincula o usuário ao órgão (endpoint /usuarios/{id}/orgaos).
+        Não bloqueante em caso de falha.
         """
         if not user_id or not cnpj:
             return
@@ -177,7 +156,6 @@ class PNCPService:
             cls._log(
                 f"Verificando/vinculando permissão do usuário {user_id} ao órgão {cnpj}..."
             )
-            # Sucesso ou 400/422 (já vinculado) são aceitáveis aqui
             requests.post(
                 url,
                 headers=headers,
@@ -190,6 +168,129 @@ class PNCPService:
                 f"Erro não-bloqueante ao vincular usuário ao órgão no PNCP: {exc}",
                 "error",
             )
+
+    @staticmethod
+    def _handle_error(response: requests.Response) -> None:
+        """
+        Processa erro vindo do PNCP e levanta ValueError com mensagem amigável.
+        """
+        try:
+            err = response.json()
+            msg = err.get("message") or err.get("detail") or str(err)
+        except Exception:  # noqa: BLE001
+            msg = (response.text or "").strip()[:500]
+
+        full_msg = f"PNCP recusou a operação ({response.status_code}): {msg}"
+        logger.error(full_msg)
+        raise ValueError(full_msg)
+
+    # ------------------------------------------------------------------ #
+    # 6.3.5 – Consultar uma Contratação                                  #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def consultar_compra(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+    ) -> Dict[str, Any]:
+        """
+        Consulta uma contratação no PNCP.
+        Endpoint: /v1/orgaos/{cnpj}/compras/{ano}/{sequencial} (GET)
+        """
+        token = cls._get_token()
+
+        url = f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/{int(ano_compra)}/{int(sequencial_compra)}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "accept": "*/*",
+        }
+
+        cls._log(f"Consultando contratação no PNCP: {url}")
+
+        try:
+            resp = requests.get(
+                url,
+                headers=headers,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (consultar contratação): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code == 200:
+            try:
+                return resp.json()
+            except ValueError:
+                return {"raw_response": resp.text}
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # 6.3.8 – Consultar TODOS Documentos de uma Contratação              #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def listar_documentos_compra(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Lista os documentos pertencentes a uma contratação.
+        Endpoint: /v1/orgaos/{cnpj}/compras/{ano}/{sequencial}/arquivos (GET)
+        """
+        token = cls._get_token()
+
+        url = f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/{int(ano_compra)}/{int(sequencial_compra)}/arquivos"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "accept": "*/*",
+        }
+
+        cls._log(f"Listando documentos da contratação: {url}")
+
+        try:
+            resp = requests.get(
+                url,
+                headers=headers,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (listar documentos): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+            except ValueError:
+                # Caso PNCP mude o retorno, devolvemos bruto
+                return [{"raw_response": resp.text}]
+
+            # Manual sugere um objeto com chave "documentos" ou similar.
+            # Caso o PNCP já retorne uma lista, tratamos também.
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                docs = data.get("documentos") or data.get("Documentos")
+                if isinstance(docs, list):
+                    return docs
+            return [data]
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # 6.3.6 – Inserir Documento a uma Contratação                        #
+    # ------------------------------------------------------------------ #
+
     @classmethod
     def anexar_documento_compra(
         cls,
@@ -200,11 +301,18 @@ class PNCPService:
         arquivo: IO[bytes],
         titulo_documento: str,
         tipo_documento_id: int,
+        content_type: str = "application/pdf",
     ) -> Dict[str, Any]:
         """
         Insere/anexa um documento à contratação já existente no PNCP.
-        Manual: 6.3.6 Inserir Documento a uma Contratação.
         Endpoint: /v1/orgaos/{cnpj}/compras/{ano}/{sequencial}/arquivos (POST)
+
+        Retorna:
+            {
+              "location": "<url do recurso>",
+              "status_code": 201,
+              "raw_response": "...",  # quando houver
+            }
         """
         token = cls._get_token()
 
@@ -222,13 +330,13 @@ class PNCPService:
 
         files = {
             "arquivo": (
-                getattr(arquivo, "name", "documento.pdf"),
+                getattr(arquivo, "name", "documento"),
                 arquivo,
-                "application/pdf",
+                content_type,
             )
         }
 
-        cls._log(f"Anexando documento à compra: {url}")
+        cls._log(f"Anexando documento à contratação: {url}")
 
         try:
             resp = requests.post(
@@ -243,32 +351,227 @@ class PNCPService:
             cls._log(msg, "error")
             raise ValueError(msg) from exc
 
-        # Manual retorna 200 para sucesso em consulta/lista, e em geral upload pode ser 200/201
         if resp.status_code in (200, 201):
+            location = resp.headers.get("location") or resp.headers.get("Location")
+            result: Dict[str, Any] = {
+                "location": location,
+                "status_code": resp.status_code,
+            }
+            # Em alguns ambientes pode vir um corpo vazio; tentamos parsear:
             try:
-                return resp.json()
+                body = resp.json()
+                if isinstance(body, dict):
+                    result.update(body)
             except ValueError:
-                return {"raw_response": resp.text}
+                result["raw_response"] = resp.text
+            cls._log(f"Documento anexado com sucesso. Location: {location}")
+            return result
 
         cls._handle_error(resp)
 
-    @classmethod
-    def publicar_compra(cls, processo, arquivo, titulo_documento: str, tipo_documento_id: int = 1) -> Dict[str, Any]:
+    # ------------------------------------------------------------------ #
+    # 6.3.7 – Excluir Documento de uma Contratação                       #
+    # ------------------------------------------------------------------ #
 
+    @classmethod
+    def excluir_documento_compra(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_arquivo: int,
+        justificativa: str = "Exclusão solicitada pelo sistema de origem.",
+    ) -> bool:
+        """
+        Exclui um documento de uma contratação.
+        Endpoint: /v1/orgaos/{cnpj}/compras/{ano}/{sequencial}/arquivos/{sequencialDocumento} (DELETE)
+
+        Envia JSON no corpo:
+            { "justificativa": "..." }
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/arquivos/{int(sequencial_arquivo)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "*/*",
+        }
+
+        payload = {
+            "justificativa": justificativa[:255],
+        }
+
+        cls._log(f"Excluindo documento {sequencial_arquivo} da contratação: {url}")
+
+        try:
+            resp = requests.delete(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (excluir documento): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 204):
+            cls._log("Documento excluído com sucesso do PNCP.")
+            return True
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # Atualização de Metadados de Documento (título / tipo)             #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def atualizar_metadados_documento(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_arquivo: int,
+        titulo_documento: str,
+        tipo_documento_id: int,
+    ) -> bool:
+        """
+        Atualiza o título e/ou tipo de um documento já publicado no PNCP.
+        Endpoint (Swagger): /v1/orgaos/{cnpj}/compras/{ano}/{sequencial}/arquivos/{sequencialArquivo} (PUT)
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/arquivos/{int(sequencial_arquivo)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "*/*",
+        }
+
+        payload = {
+            "tipoDocumentoId": int(tipo_documento_id),
+            "titulo": (titulo_documento or "Documento")[:255],
+        }
+
+        cls._log(f"Atualizando metadados do documento {sequencial_arquivo}: {url}")
+
+        try:
+            resp = requests.put(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (atualizar documento): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 204):
+            cls._log("Metadados do documento atualizados com sucesso.")
+            return True
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # Substituição de Documento (excluir + anexar)                       #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def substituir_documento(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_arquivo_antigo: int,
+        novo_arquivo: IO[bytes],
+        novo_titulo: str,
+        novo_tipo_id: int,
+        justificativa_exclusao: str = "Substituição de documento solicitada pelo sistema de origem.",
+        content_type: str = "application/pdf",
+    ) -> Dict[str, Any]:
+        """
+        Helper para substituir um arquivo:
+          1. Exclui o documento anterior com justificativa.
+          2. Anexa o novo documento.
+
+        Não é transação atômica no PNCP, mas concentra o fluxo.
+        """
+        cls._log(
+            f"Iniciando substituição do documento {sequencial_arquivo_antigo} "
+            f"da compra {ano_compra}/{sequencial_compra}..."
+        )
+
+        try:
+            cls.excluir_documento_compra(
+                cnpj_orgao=cnpj_orgao,
+                ano_compra=ano_compra,
+                sequencial_compra=sequencial_compra,
+                sequencial_arquivo=sequencial_arquivo_antigo,
+                justificativa=justificativa_exclusao,
+            )
+        except Exception as exc:  # noqa: BLE001
+            cls._log(
+                f"Aviso: falha ao excluir documento antigo durante substituição: {exc}",
+                "error",
+            )
+            # Dependendo da regra de negócio, você pode optar por abortar aqui:
+            # raise
+
+        # Anexa o novo
+        return cls.anexar_documento_compra(
+            cnpj_orgao=cnpj_orgao,
+            ano_compra=ano_compra,
+            sequencial_compra=sequencial_compra,
+            arquivo=novo_arquivo,
+            titulo_documento=novo_titulo,
+            tipo_documento_id=novo_tipo_id,
+            content_type=content_type,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Publicação da COMPRA (já existia)                                  #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def publicar_compra(
+        cls,
+        processo,
+        arquivo,
+        titulo_documento: str,
+        tipo_documento_id: int = 1,
+    ) -> Dict[str, Any]:
         """
         Orquestra a publicação da compra (edital/aviso) no PNCP.
+        OBS.: Este método dispara a criação da contratação no PNCP
+        (/orgaos/{cnpj}/compras) e já envia um documento junto.
 
-        :param processo: Objeto de processo contendo os dados da licitação.
-        :param arquivo: Arquivo de edital (File-like object) em PDF.
-        :param titulo_documento: Título do documento exibido no PNCP.
-        :return: Resposta JSON do PNCP em caso de sucesso.
+        O retorno normalmente contém dados como:
+            - numeroControlePNCP
+            - anoCompra
+            - sequencialCompra
+        que devem ser gravados no modelo Processo para uso posterior
+        (consultar_compra, anexar_documento_compra, etc.).
         """
         cls._log(f"Iniciando publicação do Processo: {processo.numero_processo}")
 
-        # 1. Autenticação
         token = cls._get_token()
 
-        # 2. Preparação de Dados
+        # CNPJ do órgão originário (entidade do processo)
         cnpj_orgao = re.sub(r"\D", "", (processo.entidade.cnpj or "")) if processo.entidade else ""
         if len(cnpj_orgao) != 14:
             raise ValueError("CNPJ da entidade inválido/ausente.")
@@ -278,15 +581,12 @@ class PNCPService:
 
         user_id = cls._extrair_user_id(token)
 
-        # Garante permissão (Delay para propagação)
         if user_id:
             cls._garantir_permissao(token, user_id, cnpj_orgao)
             time.sleep(1)
 
-        # 3. Formatação de Datas (Estrito: YYYY-MM-DDTHH:MM:SS)
+        # Datas (fuso São Paulo)
         dt_abertura: datetime = processo.data_abertura or datetime.now()
-
-        # Timezone São Paulo
         sp_tz = pytz.timezone("America/Sao_Paulo")
         if dt_abertura.tzinfo is None:
             dt_abertura = sp_tz.localize(dt_abertura)
@@ -295,18 +595,17 @@ class PNCPService:
 
         data_abertura_str = dt_abertura.strftime("%Y-%m-%dT%H:%M:%S")
 
-        dt_fim = dt_abertura + timedelta(days=30)  # Default +30 dias
+        dt_fim = dt_abertura + timedelta(days=30)
         data_encerramento_str = dt_fim.strftime("%Y-%m-%dT%H:%M:%S")
 
-        # 4. Sanitização de Campos
+        # Número da compra (sequencial do sistema de origem)
         raw_num_compra = str(processo.numero_certame or "").split("/")[0]
         numero_compra = "".join(filter(str.isdigit, raw_num_compra)) or "1"
 
-        # IDs com fallback seguro
         try:
             mod_id = int(processo.modalidade or 1)
             disp_id = int(processo.modo_disputa or 1)
-            amp_id = int(processo.amparo_legal or 4)  # 4 = Lei 14.133 (Exemplo)
+            amp_id = int(processo.amparo_legal or 4)
             inst_id = int(processo.instrumento_convocatorio or 1)
             crit_id = int(processo.criterio_julgamento or 1)
         except (TypeError, ValueError) as exc:
@@ -320,10 +619,8 @@ class PNCPService:
             else datetime.now().year
         )
 
-        # 5. Construção do Payload
         payload: Dict[str, Any] = {
             "codigoUnidadeCompradora": processo.orgao.codigo_unidade,
-            # "cnpjOrgao": cnpj_orgao,
             "anoCompra": ano_compra,
             "numeroCompra": numero_compra,
             "numeroProcesso": str(processo.numero_processo),
@@ -334,14 +631,12 @@ class PNCPService:
             "srp": bool(getattr(processo, "registro_preco", False)),
             "objetoCompra": (processo.objeto or "Objeto não informado")[:5000],
             "informacaoComplementar": "Integrado via API Licitapro",
-            "fontesOrcamentarias": [2],
+            "fontesOrcamentarias": [2],  # ajustar conforme tabela de domínio, se necessário
             "dataAberturaProposta": data_abertura_str,
             "dataEncerramentoProposta": data_encerramento_str,
-            # "linkSistemaOrigem": "http://l3solution.net.br",
             "itensCompra": [],
         }
 
-        # 6. Itens
         itens_qs = getattr(processo, "itens", None)
         if not itens_qs or not itens_qs.exists():
             raise ValueError("A contratação deve possuir ao menos um item.")
@@ -350,13 +645,10 @@ class PNCPService:
             vl_unit = float(item.valor_estimado or 0)
             qtd = float(item.quantidade or 1)
 
-            # Correção Inteligente da Categoria para Pregão (ID 6)
             cat_id = int(item.categoria_item or 1)
             if mod_id == 6 and cat_id == 1:
-                # Força Bens Móveis se for Pregão e estiver como Imóveis
-                cat_id = 2
+                cat_id = 2  # correção de categoria em pregão
 
-            # Tipo Material (M) ou Serviço (S)
             tipo_ms = "S" if cat_id in [2, 4, 8, 9] else "M"
 
             payload["itensCompra"].append(
@@ -381,7 +673,6 @@ class PNCPService:
                 }
             )
 
-        # 7. Envio
         if hasattr(arquivo, "seek"):
             arquivo.seek(0)
 
@@ -408,7 +699,7 @@ class PNCPService:
             str(headers)[:200],
         )
 
-        cls._log(f"Enviando requisição para: {url}")
+        cls._log(f"Enviando requisição de publicação de compra para: {url}")
 
         try:
             response = requests.post(
@@ -419,7 +710,7 @@ class PNCPService:
                 timeout=90,
             )
         except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP: {exc}"
+            msg = f"Falha de comunicação com PNCP (publicar compra): {exc}"
             cls._log(msg, "error")
             raise ValueError(msg) from exc
 
@@ -428,26 +719,9 @@ class PNCPService:
             try:
                 return response.json()
             except ValueError:
-                # Se por acaso voltar algo que não seja JSON válido
                 return {"raw_response": response.text}
 
-        # Se não for 200/201, trata como erro
         cls._handle_error(response)
-
-    @staticmethod
-    def _handle_error(response: requests.Response) -> None:
-        """
-        Processa e levanta erro formatado a partir da resposta do PNCP.
-        """
-        try:
-            err = response.json()
-            msg = err.get("message") or err.get("detail") or str(err)
-        except Exception:  # noqa: BLE001
-            msg = (response.text or "").strip()[:500]
-
-        full_msg = f"PNCP recusou a operação ({response.status_code}): {msg}"
-        logger.error(full_msg)
-        raise ValueError(full_msg)
 
 
 class ImportacaoService:

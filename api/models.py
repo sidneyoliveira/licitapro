@@ -261,7 +261,11 @@ class ProcessoLicitatorio(models.Model):
         raise ValidationError("Parâmetros insuficientes para organização de lotes.")
 
 class DocumentoPNCP(models.Model):
-    processo = models.ForeignKey(ProcessoLicitatorio, related_name="docs_pncp", on_delete=models.CASCADE)
+    processo = models.ForeignKey(
+        ProcessoLicitatorio,
+        related_name="docs_pncp",
+        on_delete=models.CASCADE
+    )
 
     tipo_documento_id = models.PositiveIntegerField()  # PNCP: Tipo-Documento-Id
     titulo = models.CharField(max_length=255, default="Documento")
@@ -275,6 +279,20 @@ class DocumentoPNCP(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ["-criado_em"]
+        verbose_name = "Documento PNCP"
+        verbose_name_plural = "Documentos PNCP"
+        # se quiser garantir só 1 doc de cada tipo por processo, descomenta:
+        # constraints = [
+        #     models.UniqueConstraint(
+        #         fields=["processo", "tipo_documento_id"],
+        #         name="uniq_tipo_doc_por_processo"
+        #     ),
+        # ]
+
+    def __str__(self):
+        return f"{self.titulo} (Proc: {self.processo.numero_processo})"
 # ============================================================
 # 📦 LOTE
 # ============================================================
@@ -514,7 +532,7 @@ class ArquivoUser(models.Model):
         on_delete=models.CASCADE,
         related_name='arquivos'
     )
-    arquivo = models.FileField(upload_to='user_files/')
+    arquivo = models.FileField(upload_to='arquivos-user/')
     descricao = models.CharField(max_length=255, blank=True, null=True)
     enviado_em = models.DateTimeField(auto_now_add=True)
 

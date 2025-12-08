@@ -36,7 +36,8 @@ from .models import (
     ItemFornecedor,
     ContratoEmpenho,
     Anotacao,
-    ArquivoUser
+    ArquivoUser,
+    DocumentoPNCP
 )
 
 # Imports Locais - Serializers
@@ -452,20 +453,19 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     def status_pncp(self, request, pk=None):
         processo = self.get_object()
 
-        # ajuste conforme seus campos reais
         publicado = (processo.situacao == "publicado")
 
         return Response(
             {
                 "publicado": publicado,
                 "situacao": processo.situacao,
-                # se você tiver campos PNCP no model, exponha aqui:
                 "ano_compra": getattr(processo, "pncp_ano_compra", None),
                 "sequencial_pncp": getattr(processo, "pncp_sequencial_compra", None),
                 "url_pncp": getattr(processo, "pncp_url", None),
             },
             status=status.HTTP_200_OK,
         )
+
     @action(
         detail=True,
         methods=["post"],
@@ -475,7 +475,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
     def retificar_pncp(self, request, pk=None):
         """
         Retificação: anexa um novo documento à contratação já existente no PNCP.
-        Requer que o processo já tenha ano/sequencial PNCP.
+        Usa 6.3.6 Inserir Documento a uma Contratação.
         """
         processo = self.get_object()
         arquivo = request.FILES.get("arquivo")
@@ -489,23 +489,39 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         titulo = (request.data.get("titulo_documento") or request.data.get("titulo") or "Retificação")[:255]
         justificativa = (request.data.get("justificativa") or request.data.get("observacao") or "").strip()
 
-        # (opcional, mas recomendado)
         if not justificativa:
             return Response(
                 {"detail": "Justificativa/observação é obrigatória para retificação."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Tipo do documento (aceita id numérico ou slug)
-        raw_tipo = request.data.get("tipo_documento_id") or request.data.get("tipo_documento")
+        # Tipos de documento da contratação (manual 5.12):
+        # 1 Aviso, 2 Edital, 3 Minuta Contrato, 4 TR, 5 Anteprojeto, 6 Projeto Básico,
+        # 7 ETP, 8 Projeto Executivo, 9 Mapa de Riscos, 10 DFD, 19 Minuta ARP, 20 Ato de Autorização
+        raw_tipo = (
+            request.data.get("tipo_documento_id")
+            or request.data.get("tipo_documento")
+            or "2"  # default: Edital
+        )
         try:
-            tipo_documento_id = _parse_pncp_id(raw_tipo, MAP_INSTRUMENTO_CONVOCATORIO_PNCP, "tipo_documento")
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            tipo_documento_id = int(raw_tipo)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "tipo_documento_id deve ser um inteiro válido (ex: 1, 2, 3, 4, 5...)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # Ano/sequencial: tenta no model (se existir) e depois no request
-        ano_compra = getattr(processo, "pncp_ano_compra", None) or request.data.get("ano_compra") or request.data.get("ano")
-        sequencial_compra = getattr(processo, "pncp_sequencial_compra", None) or request.data.get("sequencial_compra") or request.data.get("sequencial")
+        # Ano/sequencial da contratação no PNCP
+        ano_compra = (
+            getattr(processo, "pncp_ano_compra", None)
+            or request.data.get("ano_compra")
+            or request.data.get("ano")
+        )
+        sequencial_compra = (
+            getattr(processo, "pncp_sequencial_compra", None)
+            or request.data.get("sequencial_compra")
+            or request.data.get("sequencial")
+        )
 
         if not ano_compra or not sequencial_compra:
             return Response(
@@ -518,8 +534,14 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # CNPJ do órgão/entidade
-        cnpj_orgao = re.sub(r"\D", "", (processo.entidade.cnpj or ""))
+        # CNPJ do órgão originário (entidade)
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Processo sem Entidade/CNPJ. Preencha a entidade e o CNPJ antes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj_orgao = re.sub(r"\D", "", processo.entidade.cnpj or "")
         if len(cnpj_orgao) != 14:
             return Response(
                 {"detail": "CNPJ da entidade inválido/ausente."},
@@ -536,21 +558,23 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 tipo_documento_id=tipo_documento_id,
             )
 
-            # Se você tiver campos PNCP no model, grave aqui (opcional)
+            # Se você tiver campos para armazenar último retorno do PNCP:
             if hasattr(processo, "pncp_ultimo_retorno"):
                 processo.pncp_ultimo_retorno = resultado
                 processo.save(update_fields=["pncp_ultimo_retorno"])
 
             return Response(
-                {"detail": "Retificação enviada ao PNCP (documento anexado).", "pncp_data": resultado},
+                {
+                    "detail": "Retificação enviada ao PNCP (documento anexado).",
+                    "pncp_data": resultado,
+                },
                 status=status.HTTP_200_OK,
             )
 
         except ValueError as e:
-            # tenta extrair (400), (422) etc da mensagem do service, se você usou esse padrão
             msg = str(e)
             m = re.search(r"\((\d{3})\)", msg)
-            code = int(m.group(1)) if m else 400
+            code = int(m.group(1)) if m else status.HTTP_400_BAD_REQUEST
             return Response({"detail": msg}, status=code)
 
         except Exception as e:
@@ -559,40 +583,401 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 {"detail": f"Erro interno ao comunicar com PNCP: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
     @action(
-    detail=True,
-    methods=["post"],
-    url_path="publicar-pncp",
-    parser_classes=[parsers.MultiPartParser, parsers.FormParser],
-)
+        detail=True,
+        methods=["post"],
+        url_path="publicar-pncp",
+        parser_classes=[parsers.MultiPartParser, parsers.FormParser],
+    )
     def publicar_pncp(self, request, pk=None):
+        """
+        Publica a contratação no PNCP (cria a compra + envia um documento inicial).
+        Usa PNCPService.publicar_compra.
+        """
         processo = self.get_object()
         arquivo = request.FILES.get("arquivo")
         titulo = request.data.get("titulo_documento") or "Edital de Licitação"
 
         if not arquivo:
-            return Response({"detail": "O arquivo do documento é obrigatório."}, status=400)
+            return Response(
+                {"detail": "O arquivo do documento é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not processo.entidade_id or not (processo.entidade and processo.entidade.cnpj):
-            return Response({"detail": "Processo sem Entidade/CNPJ. Preencha a entidade e o CNPJ antes de publicar."}, status=400)
+            return Response(
+                {"detail": "Processo sem Entidade/CNPJ. Preencha a entidade e o CNPJ antes de publicar."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not processo.orgao_id or not (processo.orgao and processo.orgao.codigo_unidade):
-            return Response({"detail": "Processo sem Órgão/código da unidade compradora. Preencha orgao.codigo_unidade."}, status=400)
+            return Response(
+                {"detail": "Processo sem Órgão/código da unidade compradora. Preencha orgao.codigo_unidade."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Tipo de documento inicial (normalmente 2 = Edital)
+        raw_tipo = request.data.get("tipo_documento_id") or "2"
+        try:
+            tipo_documento_id = int(raw_tipo)
+        except (TypeError, ValueError):
+            tipo_documento_id = 2
 
         try:
-            resultado = PNCPService.publicar_compra(processo, arquivo, titulo)
+            resultado = PNCPService.publicar_compra(
+                processo=processo,
+                arquivo=arquivo,
+                titulo_documento=titulo,
+                tipo_documento_id=tipo_documento_id,
+            )
+
+            # Atualiza campos PNCP no modelo, se existirem
+            updated_fields = []
+
+            ano_compra = resultado.get("anoCompra") or resultado.get("ano_compra")
+            sequencial_compra = (
+                resultado.get("sequencialCompra")
+                or resultado.get("sequencial_compra")
+                or resultado.get("sequencialCompraPNCP")
+            )
+            numero_controle = resultado.get("numeroControlePNCP") or resultado.get("numero_controle_pncp")
+            link_processo = resultado.get("linkProcessoEletronico") or resultado.get("link_processo_eletronico")
+
+            if hasattr(processo, "pncp_ano_compra") and ano_compra:
+                processo.pncp_ano_compra = ano_compra
+                updated_fields.append("pncp_ano_compra")
+
+            if hasattr(processo, "pncp_sequencial_compra") and sequencial_compra:
+                processo.pncp_sequencial_compra = sequencial_compra
+                updated_fields.append("pncp_sequencial_compra")
+
+            if hasattr(processo, "pncp_numero_controle") and numero_controle:
+                processo.pncp_numero_controle = numero_controle
+                updated_fields.append("pncp_numero_controle")
+
+            if hasattr(processo, "pncp_url") and link_processo:
+                processo.pncp_url = link_processo
+                updated_fields.append("pncp_url")
+
+            if hasattr(processo, "pncp_ultimo_retorno"):
+                processo.pncp_ultimo_retorno = resultado
+                updated_fields.append("pncp_ultimo_retorno")
+
             processo.situacao = "publicado"
-            processo.save(update_fields=["situacao"])
-            return Response({"detail": "Publicado no PNCP com sucesso!", "pncp_data": resultado}, status=200)
+            updated_fields.append("situacao")
+
+            if updated_fields:
+                processo.save(update_fields=updated_fields)
+
+            return Response(
+                {"detail": "Publicado no PNCP com sucesso!", "pncp_data": resultado},
+                status=status.HTTP_200_OK,
+            )
 
         except ValueError as e:
-            # Erro esperado (PNCP, validações, etc)
-            return Response({"detail": str(e)}, status=400)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
             logger.exception("Erro interno PNCP (publicar_pncp)")
-            return Response({"detail": f"Erro interno ao publicar: {str(e)}"}, status=500)
-        
+            return Response(
+                {"detail": f"Erro interno ao publicar: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    # ----------------------------------------------------------------------
+    # ARQUIVOS PNCP (para aba "Arquivos")
+    # ----------------------------------------------------------------------
+    @action(
+        detail=True,
+        methods=["get", "post"],
+        url_path="pncp/arquivos",
+        parser_classes=[parsers.MultiPartParser, parsers.FormParser],
+    )
+    def pncp_arquivos(self, request, pk=None):
+        """
+        GET  -> lista documentos da contratação no PNCP (6.3.8)
+        POST -> anexa um novo documento à contratação (6.3.6)
+        """
+        processo = self.get_object()
+
+        # Identificadores PNCP
+        ano_compra = (
+            getattr(processo, "pncp_ano_compra", None)
+            or request.data.get("ano_compra")
+            or request.query_params.get("ano_compra")
+        )
+        sequencial_compra = (
+            getattr(processo, "pncp_sequencial_compra", None)
+            or request.data.get("sequencial_compra")
+            or request.query_params.get("sequencial_compra")
+        )
+
+        if not ano_compra or not sequencial_compra:
+            return Response(
+                {
+                    "detail": (
+                        "Processo ainda não tem referência PNCP (ano_compra/sequencial_compra). "
+                        "Publique primeiro e grave esses campos, ou envie 'ano_compra' e 'sequencial_compra'."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # CNPJ do órgão
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Processo sem Entidade/CNPJ. Preencha a entidade e o CNPJ antes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj_orgao = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        if len(cnpj_orgao) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido/ausente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if request.method == "GET":
+            try:
+                documentos = PNCPService.listar_documentos_compra(
+                    cnpj_orgao=cnpj_orgao,
+                    ano_compra=int(ano_compra),
+                    sequencial_compra=int(sequencial_compra),
+                )
+                return Response(documentos, status=status.HTTP_200_OK)
+            except ValueError as e:
+                msg = str(e)
+                m = re.search(r"\((\d{3})\)", msg)
+                code = int(m.group(1)) if m else status.HTTP_400_BAD_REQUEST
+                return Response({"detail": msg}, status=code)
+            except Exception as e:
+                logger.exception("Erro interno ao listar documentos PNCP")
+                return Response(
+                    {"detail": f"Erro interno ao listar documentos: {str(e)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+        # POST -> anexa documento
+        arquivo = request.FILES.get("arquivo")
+        if not arquivo:
+            return Response(
+                {"detail": "O arquivo do documento é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        titulo = (request.data.get("titulo_documento") or request.data.get("titulo") or arquivo.name)[:255]
+        raw_tipo = (
+            request.data.get("tipo_documento_id")
+            or request.data.get("tipo_documento")
+            or "2"
+        )
+        try:
+            tipo_documento_id = int(raw_tipo)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "tipo_documento_id deve ser um inteiro válido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            resultado = PNCPService.anexar_documento_compra(
+                cnpj_orgao=cnpj_orgao,
+                ano_compra=int(ano_compra),
+                sequencial_compra=int(sequencial_compra),
+                arquivo=arquivo,
+                titulo_documento=titulo,
+                tipo_documento_id=tipo_documento_id,
+            )
+            return Response(
+                {"detail": "Documento anexado ao PNCP com sucesso.", "pncp_data": resultado},
+                status=status.HTTP_201_CREATED,
+            )
+        except ValueError as e:
+            msg = str(e)
+            m = re.search(r"\((\d{3})\)", msg)
+            code = int(m.group(1)) if m else status.HTTP_400_BAD_REQUEST
+            return Response({"detail": msg}, status=code)
+        except Exception as e:
+            logger.exception("Erro interno ao anexar documento PNCP")
+            return Response(
+                {"detail": f"Erro interno ao anexar documento: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"pncp/arquivos/(?P<sequencial_documento>\d+)",
+    )
+    def excluir_pncp_arquivo(self, request, pk=None, sequencial_documento=None):
+        """
+        Exclui um documento de uma contratação no PNCP (6.3.7).
+        """
+        processo = self.get_object()
+
+        ano_compra = getattr(processo, "pncp_ano_compra", None) or request.data.get("ano_compra")
+        sequencial_compra = (
+            getattr(processo, "pncp_sequencial_compra", None)
+            or request.data.get("sequencial_compra")
+        )
+
+        if not ano_compra or not sequencial_compra:
+            return Response(
+                {
+                    "detail": (
+                        "Processo ainda não tem referência PNCP (ano_compra/sequencial_compra). "
+                        "Publique primeiro e grave esses campos, ou envie 'ano_compra' e 'sequencial_compra'."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Processo sem Entidade/CNPJ. Preencha a entidade e o CNPJ antes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj_orgao = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        if len(cnpj_orgao) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido/ausente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        justificativa = (
+            request.data.get("justificativa")
+            or "Exclusão solicitada pelo sistema de origem."
+        )
+
+        try:
+            ok = PNCPService.excluir_documento_compra(
+                cnpj_orgao=cnpj_orgao,
+                ano_compra=int(ano_compra),
+                sequencial_compra=int(sequencial_compra),
+                sequencial_arquivo=int(sequencial_documento),
+                justificativa=justificativa,
+            )
+            if ok:
+                return Response(
+                    {"detail": "Documento excluído com sucesso do PNCP."},
+                    status=status.HTTP_200_OK,
+                )
+            return Response(
+                {"detail": "Falha ao excluir documento no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ValueError as e:
+            msg = str(e)
+            m = re.search(r"\((\d{3})\)", msg)
+            code = int(m.group(1)) if m else status.HTTP_400_BAD_REQUEST
+            return Response({"detail": msg}, status=code)
+        except Exception as e:
+            logger.exception("Erro interno ao excluir documento PNCP")
+            return Response(
+                {"detail": f"Erro interno ao excluir documento: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"pncp/arquivos/(?P<sequencial_documento>\d+)/substituir",
+        parser_classes=[parsers.MultiPartParser, parsers.FormParser],
+    )
+    def substituir_pncp_arquivo(self, request, pk=None, sequencial_documento=None):
+        """
+        Substitui um documento de uma contratação no PNCP:
+        1) Exclui o arquivo antigo com justificativa
+        2) Anexa o novo arquivo (6.3.6 + 6.3.7)
+        """
+        processo = self.get_object()
+        arquivo = request.FILES.get("arquivo")
+
+        if not arquivo:
+            return Response(
+                {"detail": "O novo arquivo do documento é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ano_compra = getattr(processo, "pncp_ano_compra", None) or request.data.get("ano_compra")
+        sequencial_compra = (
+            getattr(processo, "pncp_sequencial_compra", None)
+            or request.data.get("sequencial_compra")
+        )
+
+        if not ano_compra or not sequencial_compra:
+            return Response(
+                {
+                    "detail": (
+                        "Processo ainda não tem referência PNCP (ano_compra/sequencial_compra). "
+                        "Publique primeiro e grave esses campos, ou envie 'ano_compra' e 'sequencial_compra'."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Processo sem Entidade/CNPJ. Preencha a entidade e o CNPJ antes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj_orgao = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        if len(cnpj_orgao) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido/ausente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        justificativa = (
+            request.data.get("justificativa")
+            or "Substituição de documento solicitada pelo sistema de origem."
+        )
+        titulo = (request.data.get("titulo_documento") or request.data.get("titulo") or arquivo.name)[:255]
+        raw_tipo = (
+            request.data.get("tipo_documento_id")
+            or request.data.get("tipo_documento")
+            or "2"
+        )
+        try:
+            novo_tipo_id = int(raw_tipo)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "tipo_documento_id deve ser um inteiro válido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            resultado = PNCPService.substituir_documento(
+                cnpj_orgao=cnpj_orgao,
+                ano_compra=int(ano_compra),
+                sequencial_compra=int(sequencial_compra),
+                sequencial_arquivo_antigo=int(sequencial_documento),
+                novo_arquivo=arquivo,
+                novo_titulo=titulo,
+                novo_tipo_id=novo_tipo_id,
+                justificativa_exclusao=justificativa,
+            )
+            return Response(
+                {
+                    "detail": "Documento substituído com sucesso no PNCP.",
+                    "pncp_data": resultado,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except ValueError as e:
+            msg = str(e)
+            m = re.search(r"\((\d{3})\)", msg)
+            code = int(m.group(1)) if m else status.HTTP_400_BAD_REQUEST
+            return Response({"detail": msg}, status=code)
+        except Exception as e:
+            logger.exception("Erro interno ao substituir documento PNCP")
+            return Response(
+                {"detail": f"Erro interno ao substituir documento: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
     
     # ----------------------------------------------------------------------
     # ITENS DO PROCESSO
