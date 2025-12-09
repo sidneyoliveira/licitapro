@@ -214,10 +214,16 @@ class PNCPService:
         """
         token = cls._get_token()
 
+        # url = (
+        #     f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+        #     f"{int(ano_compra)}/{int(sequencial_compra)}"
+        # )
+        
         url = (
             f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}"
+            f"{2025}/{5}"
         )
+
         headers = {
             "Authorization": f"Bearer {token}",
             "accept": "*/*",
