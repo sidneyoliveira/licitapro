@@ -14,7 +14,8 @@ import requests
 from django.conf import settings
 from django.utils import timezone
 
-from .models import ProcessoLicitatorio  # para ImportacaoService
+# Importação do Model para tipagem e uso no ImportacaoService
+from .models import ProcessoLicitatorio
 
 logger = logging.getLogger("api")
 
@@ -22,7 +23,6 @@ logger = logging.getLogger("api")
 class PNCPService:
     """
     Serviço para integração com o Portal Nacional de Contratações Públicas (PNCP).
-
     Documentação de referência: Manual de Integração PNCP (ex.: v2.3.8).
     """
 
@@ -49,12 +49,20 @@ class PNCPService:
     @classmethod
     def _log(cls, msg: str, level: str = "info") -> None:
         """
-        Log simples em stderr (útil em Docker / Gunicorn).
+        Log simples em stderr (útil em Docker / Gunicorn) e no Logger do Django.
         """
-        formatted = f"[PNCP] {msg}\n"
+        formatted = f"[PNCP] {msg}"
+        
+        # Log no console (stderr)
         prefix = "❌ " if level == "error" else "ℹ️ "
-        sys.stderr.write(prefix + formatted)
+        sys.stderr.write(f"{prefix}{formatted}\n")
         sys.stderr.flush()
+
+        # Log no sistema de arquivos/Django
+        if level == "error":
+            logger.error(formatted)
+        else:
+            logger.info(formatted)
 
     @classmethod
     def _debug_credenciais(cls) -> None:
@@ -144,7 +152,6 @@ class PNCPService:
     def _garantir_permissao(cls, token: str, user_id: Optional[int], cnpj: str) -> None:
         """
         Verifica/vincula o usuário ao órgão (endpoint /usuarios/{id}/orgaos).
-
         Não é bloqueante em caso de erro (apenas loga).
         """
         if not user_id or not cnpj:
@@ -285,7 +292,7 @@ class PNCPService:
             except ValueError:
                 return [{"raw_response": resp.text}]
 
-            # Alguns ambientes retornam lista, outros objeto com chave "documentos"
+            # Tratamento para variações de resposta do PNCP (Lista direta ou envelope)
             if isinstance(data, list):
                 return data
             if isinstance(data, dict):
@@ -511,7 +518,7 @@ class PNCPService:
         content_type: str = "application/pdf",
     ) -> Dict[str, Any]:
         """
-        Helper para substituir um arquivo:
+        Helper para substituir um arquivo no PNCP:
           1. Exclui o documento anterior com justificativa.
           2. Anexa o novo documento.
         """
@@ -520,7 +527,7 @@ class PNCPService:
             f"da compra {ano_compra}/{sequencial_compra}..."
         )
 
-        # Tenta excluir o documento antigo, mas não aborta automaticamente
+        # 1. Tenta excluir o documento antigo
         try:
             cls.excluir_documento_compra(
                 cnpj_orgao=cnpj_orgao,
@@ -531,11 +538,13 @@ class PNCPService:
             )
         except Exception as exc:  # noqa: BLE001
             cls._log(
-                f"Aviso: falha ao excluir documento antigo durante substituição: {exc}",
+                f"Aviso: falha ao excluir documento antigo ({sequencial_arquivo_antigo}) "
+                f"durante substituição: {exc}",
                 "error",
             )
+            # Continua para tentar anexar o novo, conforme regra de negócio comum
 
-        # Em seguida, anexa o novo
+        # 2. Anexa o novo
         return cls.anexar_documento_compra(
             cnpj_orgao=cnpj_orgao,
             ano_compra=ano_compra,
@@ -561,11 +570,13 @@ class PNCPService:
         """
         Publica a contratação no PNCP (cria a compra + envia um documento inicial).
 
-        Retorno normalmente contém:
-            - numeroControlePNCP
-            - anoCompra
-            - sequencialCompra
-        Esses dados devem ser gravados em ProcessoLicitatorio para uso posterior.
+        Retorno esperado (exemplo):
+            {
+              "numeroControlePNCP": "...",
+              "anoCompra": 2023,
+              "sequencialCompra": 1,
+              ...
+            }
         """
         cls._log(f"Iniciando publicação do Processo: {processo.numero_processo}")
 
@@ -581,10 +592,10 @@ class PNCPService:
                 "Código da unidade compradora (orgao.codigo_unidade) inválido/ausente."
             )
 
+        # Garante permissão (Delay para propagação no PNCP)
         user_id = cls._extrair_user_id(token)
         if user_id:
             cls._garantir_permissao(token, user_id, cnpj_orgao)
-            # pequena pausa para o PNCP processar o vínculo
             time.sleep(1)
 
         # --- Datas (fuso São Paulo) --------------------------------------
@@ -636,7 +647,7 @@ class PNCPService:
             "srp": bool(getattr(processo, "registro_preco", False)),
             "objetoCompra": (processo.objeto or "Objeto não informado")[:5000],
             "informacaoComplementar": "Integrado via API Licitapro",
-            "fontesOrcamentarias": [2],  # ajustar conforme tabela de domínio
+            "fontesOrcamentarias": [2],
             "dataAberturaProposta": data_abertura_str,
             "dataEncerramentoProposta": data_encerramento_str,
             "itensCompra": [],
@@ -676,7 +687,7 @@ class PNCPService:
                     "valorTotal": round(vl_unit * qtd, 4),
                     "criterioJulgamentoId": crit_id,
                     "itemCategoriaId": cat_id,
-                    "catalogoId": 2,  # ajustar conforme tabela de domínio, se necessário
+                    "catalogoId": 2,
                 }
             )
 
@@ -732,60 +743,31 @@ class PNCPService:
 
 
 # ====================================================================== #
-# IMPORTAÇÃO DE PLANILHA XLSX                                           #
+# IMPORTAÇÃO DE PLANILHA XLSX                                            #
 # ====================================================================== #
 
 
 class ImportacaoService:
     """
     Serviço utilitário para importação de planilha padrão (.xlsx).
-
-    ⚠ IMPORTANTE:
-    ----------------
-    - A implementação abaixo é um STUB funcional:
-      * cria um ProcessoLicitatorio básico
-      * não lê de fato os itens/lotes/fornecedores da planilha.
-    - Isso evita erro 500 e permite evoluir depois com o layout real.
     """
 
     @staticmethod
     def processar_planilha_padrao(arquivo: IO[bytes]) -> Dict[str, Any]:
         """
         Processa uma planilha .xlsx e cria um ProcessoLicitatorio básico.
-
-        Retorna:
-            {
-              "processo": <ProcessoLicitatorio>,
-              "lotes_criados": 0,
-              "itens_importados": 0,
-              "fornecedores_vinculados": 0,
-            }
-
-        Onde:
-        - "processo" é o objeto criado (para ser serializado na view)
-        - Demais contadores ficam 0 até você implementar o parsing real.
         """
-        from .models import ProcessoLicitatorio  # import local para evitar ciclo
-
         # Nome do arquivo (sem caminho)
         nome_arquivo = getattr(arquivo, "name", "Processo Importado")
         nome_base = str(nome_arquivo).rsplit(".", 1)[0]
 
-        # Aqui você poderia, futuramente, usar openpyxl/pandas para ler a planilha.
-        # Por enquanto, criamos um processo "esqueleto" para não quebrar a API.
+        # Criação do processo "esqueleto"
         processo = ProcessoLicitatorio.objects.create(
             numero_processo=nome_base,
             numero_certame=None,
             objeto=f"Processo importado do arquivo {nome_arquivo}",
             data_processo=timezone.now().date(),
         )
-
-        # TODO: implementar leitura da planilha e criação de:
-        #   - Lotes
-        #   - Itens
-        #   - Fornecedores
-        #   - FornecedorProcesso / ItemFornecedor
-        # com base no layout real do seu .xlsx.
 
         return {
             "processo": processo,
