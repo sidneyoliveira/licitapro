@@ -54,7 +54,8 @@ from .serializers import (
     ContratoEmpenhoSerializer,
     UsuarioSerializer,
     AnotacaoSerializer,
-    ArquivoUserSerializers
+    ArquivoUserSerializers,
+    DocumentoPNCPSerializer
 )
 
 # Imports Locais - Choices (Atualizado para nova lógica sem Fundamentação)
@@ -978,6 +979,27 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 {"detail": f"Erro interno ao substituir documento: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="pncp/arquivos",
+    )
+    def listar_arquivos_pncp(self, request, pk=None):
+        """
+        GET /processos/<id>/pncp/arquivos/
+        -> Lista APENAS o que está salvo localmente em DocumentoPNCP,
+           sem exigir que o processo já tenha ano/sequencial PNCP.
+        """
+        processo = self.get_object()
+
+        docs = DocumentoPNCP.objects.filter(
+            processo=processo,
+            ativo=True,
+        ).order_by("tipo_documento_id", "id")
+
+        serializer = DocumentoPNCPSerializer(docs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
     # ----------------------------------------------------------------------
     # ITENS DO PROCESSO
