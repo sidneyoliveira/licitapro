@@ -54,7 +54,7 @@ from .serializers import (
     ContratoEmpenhoSerializer,
     UsuarioSerializer,
     AnotacaoSerializer,
-    ArquivoUserSerializer
+    ArquivoUserSerializers
 )
 
 # Imports Locais - Choices (Atualizado para nova lógica sem Fundamentação)
