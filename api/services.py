@@ -216,7 +216,7 @@ class PNCPService:
 
         # url = (
         #     f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-        #     f"{int(ano_compra)}/{int(sequencial_compra)}"
+        #     f"{2025}/{5}"
         # )
         
         url = (
@@ -271,7 +271,7 @@ class PNCPService:
 
         url = (
             f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/arquivos"
+            f"{2025}/{5}/arquivos"
         )
         headers = {
             "Authorization": f"Bearer {token}",
@@ -336,7 +336,7 @@ class PNCPService:
 
         url = (
             f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/arquivos"
+            f"{2025}/{5}/arquivos"
         )
 
         headers = {
@@ -410,7 +410,7 @@ class PNCPService:
 
         url = (
             f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/arquivos/{int(sequencial_arquivo)}"
+            f"{2025}/{5}/arquivos/{int(sequencial_arquivo)}"
         )
 
         headers = {
@@ -470,7 +470,7 @@ class PNCPService:
 
         url = (
             f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/arquivos/{int(sequencial_arquivo)}"
+            f"{2025}/{5}/arquivos/{int(sequencial_arquivo)}"
         )
 
         headers = {
