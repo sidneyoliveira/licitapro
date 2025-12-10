@@ -570,6 +570,9 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             if updated_fields:
                 processo.save(update_fields=updated_fields)
 
+            if hasattr(arquivo, 'seek'):
+                arquivo.seek(0)
+
             # Registra documento inicial em DocumentoPNCP (metadados)
             DocumentoPNCP.objects.create(
                 processo=processo,
@@ -577,6 +580,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 titulo=titulo,
                 arquivo_nome=getattr(arquivo, "name", None),
                 observacao=request.data.get("observacao") or None,
+                arquivo=arquivo,
             )
 
             return Response(
@@ -707,6 +711,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 titulo=titulo,
                 observacao=justificativa,
                 arquivo_nome=getattr(arquivo, "name", None),
+                arquivo=arquivo,
             )
 
             return Response(
@@ -860,13 +865,14 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 tipo_documento_id=tipo_documento_id,
             )
 
-            # Registra em DocumentoPNCP (não apaga nada local)
+            # Registra em DocumentoPNCP
             DocumentoPNCP.objects.create(
                 processo=processo,
                 tipo_documento_id=tipo_documento_id,
                 titulo=titulo,
                 arquivo_nome=getattr(arquivo, "name", None),
                 observacao=request.data.get("observacao") or None,
+                arquivo=arquivo,
             )
 
             return Response(
@@ -1072,6 +1078,7 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
                 titulo=titulo,
                 observacao=justificativa,
                 arquivo_nome=getattr(arquivo, "name", None),
+                arquivo=arquivo,
             )
 
             return Response(

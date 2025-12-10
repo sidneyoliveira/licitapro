@@ -271,6 +271,8 @@ class DocumentoPNCP(models.Model):
     titulo = models.CharField(max_length=255, default="Documento")
     observacao = models.TextField(blank=True, null=True)
 
+    arquivo = models.FileField(upload_to='documentos_pncp/', blank=True, null=True)
+    
     arquivo_nome = models.CharField(max_length=255, blank=True, null=True)
     arquivo_hash = models.CharField(max_length=80, blank=True, null=True)
 
