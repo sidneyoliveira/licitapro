@@ -328,7 +328,7 @@ class ArquivoUserSerializers(serializers.ModelSerializer):
 # ============================================================
 
 class DocumentoPNCPSerializer(serializers.ModelSerializer):
-    # Nome legível do tipo de documento (baseado na tabela do manual)
+
     tipo_documento_nome = serializers.SerializerMethodField()
 
     class Meta:
