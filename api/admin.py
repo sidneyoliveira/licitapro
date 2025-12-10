@@ -11,6 +11,7 @@ from .models import (
     ItemFornecedor,
     Anotacao,
     ArquivoUser,
+    DocumentoPNCP
 )
 
 # ============================================================
@@ -148,3 +149,10 @@ class AnotacaoAdmin(admin.ModelAdmin):
 class ArquivoUserAdmin(admin.ModelAdmin):
     list_display = ('id', 'usuario', 'arquivo', 'descricao', 'enviado_em')
     search_fields = ('usuario', 'descricao')
+
+@admin.register(DocumentoPNCP)
+class DocumentoPNCPAdmin(admin.ModelAdmin):
+    list_display = ('id', 'processo', 'tipo_documento_nome', 'titulo', 'arquivo_nome', 'criado_em')
+    search_fields = ('processo__numero', 'titulo', 'arquivo_nome')
+    list_filter = ('tipo_documento_nome', 'criado_em')
+                         
