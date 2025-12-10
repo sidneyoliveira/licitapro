@@ -152,7 +152,6 @@ class ArquivoUserAdmin(admin.ModelAdmin):
 
 @admin.register(DocumentoPNCP)
 class DocumentoPNCPAdmin(admin.ModelAdmin):
-    list_display = ('id', 'processo', 'tipo_documento', 'titulo', 'arquivo_nome', 'criado_em')
+    list_display = ('id', 'processo', 'titulo', 'arquivo_nome', 'criado_em')
     search_fields = ('processo__numero', 'titulo', 'arquivo_nome')
-    list_filter = ('tipo_documento', 'criado_em')
                          
