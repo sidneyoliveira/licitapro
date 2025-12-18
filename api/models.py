@@ -261,40 +261,39 @@ class ProcessoLicitatorio(models.Model):
         raise ValidationError("Parâmetros insuficientes para organização de lotes.")
 
 class DocumentoPNCP(models.Model):
+    STATUS = (
+        ("rascunho", "Rascunho (local)"),
+        ("enviado", "Enviado ao PNCP"),
+        ("erro", "Erro no envio"),
+        ("removido", "Removido"),
+    )
+
     processo = models.ForeignKey(
         ProcessoLicitatorio,
         related_name="docs_pncp",
         on_delete=models.CASCADE
     )
 
-    tipo_documento_id = models.PositiveIntegerField()  # PNCP: Tipo-Documento-Id
+    tipo_documento_id = models.PositiveIntegerField()
     titulo = models.CharField(max_length=255, default="Documento")
     observacao = models.TextField(blank=True, null=True)
 
-    arquivo = models.FileField(upload_to='documentos_pncp/', blank=True, null=True)
-    
+    arquivo = models.FileField(upload_to="documentos_pncp/")
     arquivo_nome = models.CharField(max_length=255, blank=True, null=True)
     arquivo_hash = models.CharField(max_length=80, blank=True, null=True)
 
-    pncp_sequencial_documento = models.PositiveIntegerField(blank=True, null=True)
-    ativo = models.BooleanField(default=True)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS,
+        default="rascunho"
+    )
 
+    pncp_sequencial_documento = models.PositiveIntegerField(blank=True, null=True)
+    pncp_publicado_em = models.DateTimeField(blank=True, null=True)
+
+    ativo = models.BooleanField(default=True)
     criado_em = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        ordering = ["-criado_em"]
-        verbose_name = "Documento PNCP"
-        verbose_name_plural = "Documentos PNCP"
-        # se quiser garantir só 1 doc de cada tipo por processo, descomenta:
-        # constraints = [
-        #     models.UniqueConstraint(
-        #         fields=["processo", "tipo_documento_id"],
-        #         name="uniq_tipo_doc_por_processo"
-        #     ),
-        # ]
-
-    def __str__(self):
-        return f"{self.titulo} (Proc: {self.processo.numero_processo})"
 # ============================================================
 # 📦 LOTE
 # ============================================================
