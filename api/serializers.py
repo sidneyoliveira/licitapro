@@ -326,9 +326,10 @@ class ArquivoUserSerializers(serializers.ModelSerializer):
 # ============================================================
 # 📎 DOCUMENTOS PNCP (Arquivos da Contratação)
 # ============================================================
+
 class DocumentoPNCPSerializer(serializers.ModelSerializer):
     # IMPORTANTE: este campo permite upload (write)
-    arquivo = serializers.FileField(write_only=True, required=False)
+    arquivo = serializers.FileField(required=False)
 
     # Para o frontend abrir/baixar
     arquivo_url = serializers.SerializerMethodField()
@@ -345,7 +346,7 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
             "observacao",
 
             # upload e retorno
-            "arquivo",        # write_only
+            "arquivo",       
             "arquivo_nome",
             "arquivo_url",
 
@@ -357,7 +358,6 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
             "criado_em",
         )
         read_only_fields = (
-            "id",
             "arquivo_nome",
             "arquivo_url",
             "arquivo_hash",
