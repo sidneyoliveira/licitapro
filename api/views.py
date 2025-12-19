@@ -3,8 +3,6 @@
 import logging
 import json
 import re
-import hashlib
-import mimetypes
 import requests
 
 from django.db import transaction
@@ -41,6 +39,8 @@ from .models import (
     Anotacao,
     ArquivoUser
 )
+
+# Imports Locais - Serializers
 from .serializers import (
     UserSerializer,
     EntidadeSerializer,
@@ -52,9 +52,9 @@ from .serializers import (
     FornecedorProcessoSerializer,
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
+    UsuarioSerializer,
     AnotacaoSerializer,
-    ArquivoUserSerializer,
-    DocumentoPNCPSerializer,
+    ArquivoUserSerializers
 )
 
 # Imports Locais - Choices (Atualizado para nova lógica sem Fundamentação)
@@ -156,7 +156,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     """
 
     queryset = User.objects.all().order_by("id")
-    serializer_class = UserSerializer
+    serializer_class = UsuarioSerializer
     permission_classes = [IsAdminUser]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     parser_classes = [
@@ -895,195 +895,6 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
             )
 
     # ----------------------------------------------------------------------
-    
-
-    # ----------------------------------------------------------------------
-    # DOCUMENTOS LOCAIS (RAScunho no banco) - persistência da aba "Arquivo"
-    # ----------------------------------------------------------------------
-    @action(
-        detail=True,
-        methods=["get", "post"],
-        url_path="documentos",
-        parser_classes=[parsers.MultiPartParser, parsers.FormParser],
-    )
-    def documentos(self, request, pk=None):
-        """
-        GET  -> lista documentos locais (rascunhos/enviados) do processo.
-        POST -> salva arquivo localmente (status='rascunho') para não perder no reload.
-        """
-        processo = self.get_object()
-
-        if request.method == "GET":
-            qs = (
-                DocumentoPNCP.objects
-                .filter(processo=processo, ativo=True)
-                .order_by("-criado_em")
-            )
-            return Response(DocumentoPNCPSerializer(qs, many=True).data, status=status.HTTP_200_OK)
-
-        # --- POST: salvar rascunho local
-        arquivo = request.FILES.get("arquivo")
-        if not arquivo:
-            return Response(
-                {"detail": "Envie o arquivo no campo 'arquivo'."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        raw_tipo = (
-            request.data.get("tipo_documento_id")
-            or request.data.get("tipo_documento")
-        )
-        try:
-            tipo_documento_id = int(raw_tipo)
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "tipo_documento_id inválido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        titulo = request.data.get("titulo") or request.data.get("titulo_documento") or "Documento"
-        observacao = request.data.get("observacao") or request.data.get("justificativa") or ""
-
-        # Calcula hash SHA256 do arquivo
-        sha256 = hashlib.sha256()
-        try:
-            for chunk in arquivo.chunks():
-                sha256.update(chunk)
-            if hasattr(arquivo, "seek"):
-                arquivo.seek(0)
-        except Exception:
-            # Se por algum motivo não der para iterar chunks, segue sem hash (não bloqueia)
-            sha256 = None
-            if hasattr(arquivo, "seek"):
-                arquivo.seek(0)
-
-        with transaction.atomic():
-            # Mantém apenas o último documento ativo por tipo (evita acumular lixo e simplifica UI)
-            DocumentoPNCP.objects.filter(
-                processo=processo,
-                tipo_documento_id=tipo_documento_id,
-                ativo=True,
-                status="rascunho",
-            ).update(ativo=False)
-
-            doc = DocumentoPNCP.objects.create(
-                processo=processo,
-                tipo_documento_id=tipo_documento_id,
-                titulo=titulo,
-                observacao=observacao,
-                arquivo=arquivo,
-                arquivo_nome=getattr(arquivo, "name", "") or "",
-                arquivo_hash=(sha256.hexdigest() if sha256 else ""),
-                status="rascunho",
-                ativo=True,
-            )
-
-        return Response(DocumentoPNCPSerializer(doc).data, status=status.HTTP_201_CREATED)
-
-    @action(
-        detail=True,
-        methods=["delete"],
-        url_path=r"documentos/(?P<doc_id>[^/.]+)",
-    )
-    def documentos_delete(self, request, pk=None, doc_id=None):
-        """Remove (desativa) um documento local."""
-        processo = self.get_object()
-
-        try:
-            doc = DocumentoPNCP.objects.get(id=doc_id, processo=processo, ativo=True)
-        except DocumentoPNCP.DoesNotExist:
-            return Response({"detail": "Documento não encontrado."}, status=status.HTTP_404_NOT_FOUND)
-
-        doc.ativo = False
-        doc.status = "removido"
-        doc.save(update_fields=["ativo", "status"])
-
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"documentos/(?P<doc_id>[^/.]+)/publicar",
-    )
-    def documentos_publicar(self, request, pk=None, doc_id=None):
-        """
-        Publica no PNCP usando o arquivo já salvo localmente.
-        Requer que o processo já tenha pncp_ano_compra e pncp_sequencial_compra.
-        """
-        processo = self.get_object()
-
-        try:
-            doc = DocumentoPNCP.objects.get(id=doc_id, processo=processo, ativo=True)
-        except DocumentoPNCP.DoesNotExist:
-            return Response({"detail": "Documento não encontrado."}, status=status.HTTP_404_NOT_FOUND)
-
-        ano_compra = getattr(processo, "pncp_ano_compra", None) or request.data.get("ano_compra")
-        sequencial_compra = getattr(processo, "pncp_sequencial_compra", None) or request.data.get("sequencial_compra")
-
-        if not ano_compra or not sequencial_compra:
-            return Response(
-                {
-                    "detail": (
-                        "Processo ainda não tem referência PNCP (pncp_ano_compra/pncp_sequencial_compra). "
-                        "Publique a compra primeiro."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        cnpj_orgao = re.sub(r"\D", "", getattr(processo, "entidade", None).cnpj or "") if getattr(processo, "entidade", None) else ""
-        if not cnpj_orgao:
-            return Response(
-                {"detail": "CNPJ do órgão/entidade não encontrado no processo."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # content-type baseado na extensão
-        guessed, _ = mimetypes.guess_type(getattr(doc.arquivo, "name", "") or "")
-        content_type = guessed or "application/octet-stream"
-
-        try:
-            with doc.arquivo.open("rb") as fp:
-                result = PNCPService.anexar_documento_compra(
-                    cnpj_orgao=cnpj_orgao,
-                    ano_compra=int(ano_compra),
-                    sequencial_compra=int(sequencial_compra),
-                    arquivo=fp,
-                    titulo_documento=doc.titulo or "Documento",
-                    tipo_documento_id=int(doc.tipo_documento_id),
-                    content_type=content_type,
-                )
-
-            # Atualiza status/local PNCP
-            doc.status = "enviado"
-            doc.pncp_sequencial_documento = result.get("sequencialDocumento") or result.get("sequencial_documento")
-            doc.pncp_publicado_em = timezone.now()
-            doc.save(update_fields=["status", "pncp_sequencial_documento", "pncp_publicado_em"])
-
-            return Response(
-                {
-                    "detail": "Documento publicado no PNCP com sucesso.",
-                    "documento": DocumentoPNCPSerializer(doc).data,
-                    "pncp_result": result,
-                },
-                status=status.HTTP_200_OK,
-            )
-        except ValueError as e:
-            msg = str(e)
-            m = re.search(r"\((\d{3})\)", msg)
-            code = int(m.group(1)) if m else status.HTTP_400_BAD_REQUEST
-            doc.status = "erro"
-            doc.save(update_fields=["status"])
-            return Response({"detail": msg}, status=code)
-        except Exception as e:
-            logger.exception("Erro interno ao publicar documento local no PNCP")
-            doc.status = "erro"
-            doc.save(update_fields=["status"])
-            return Response(
-                {"detail": f"Erro interno ao publicar documento: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
     # EXCLUIR DOCUMENTO DO PNCP (NÃO APAGA LOCAL)
     # ----------------------------------------------------------------------
     @action(
@@ -1735,7 +1546,7 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
 # ============================================================
 
 class ArquivoUserViewSet(viewsets.ModelViewSet):
-    serializer_class = ArquivoUserSerializer
+    serializer_class = ArquivoUserSerializers
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
