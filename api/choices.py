@@ -4,16 +4,16 @@
 
 MODALIDADE_DATA = (
     (6, "pregao_eletronico", "Pregão - Eletrônico"),
-    (7, "pregao_presencial", "Pregão - Presencial"),
+    # (7, "pregao_presencial", "Pregão - Presencial"),
     (4, "concorrencia_eletronica", "Concorrência - Eletrônica"),
-    (5, "concorrencia_presencial", "Concorrência - Presencial"),
+    # (5, "concorrencia_presencial", "Concorrência - Presencial"),
     (8, "dispensa_licitacao", "Dispensa de Licitação"),
     (9, "inexigibilidade", "Inexigibilidade"),
     (11, "pre_qualificacao", "Pré-Qualificação"),
     (12, "credenciamento", "Credenciamento"),
-    (13, "leilao_eletronico", "Leilão - Eletrônico"),
-    (14, "leilao_presencial", "Leilão - Presencial"),
-    (15, "dialogo_competitivo", "Diálogo Competitivo"),
+    # (13, "leilao_eletronico", "Leilão - Eletrônico"),
+    # (14, "leilao_presencial", "Leilão - Presencial"),
+    # (15, "dialogo_competitivo", "Diálogo Competitivo"),
 )
 
 MODO_DISPUTA_DATA = (
@@ -75,31 +75,31 @@ AMPARO_LEGAL_DATA = (
     # ==========================
     # PREGÃO
     # ==========================
-    (1, "lei14133_art28_i", "Lei 14.133/2021, Art. 28, I (Pregão)"),
-    (301, "lei10520_art1", "Lei 10.520/2002, Art. 1º (Pregão - Lei Antiga)"),
+    (1, "lei14133_art28_i", "Lei 14.133/2021, Art. 28, I"),
+    (301, "lei10520_art1", "Lei 10.520/2002, Art. 1º"),
 
     # ==========================
     # CONCORRÊNCIA
     # ==========================
-    (2, "lei14133_art28_ii", "Lei 14.133/2021, Art. 28, II (Concorrência)"),
-    (203, "lei8666_art22_iii", "Lei 8.666/1993, Art. 22, III (Concorrência - Lei Antiga)"),
+    (2, "lei14133_art28_ii", "Lei 14.133/2021, Art. 28, II"),
+    (203, "lei8666_art22_iii", "Lei 8.666/1993, Art. 22, III"),
 
     # ==========================
     # CONCURSO
     # ==========================
-    (3, "lei14133_art28_iii", "Lei 14.133/2021, Art. 28, III (Concurso)"),
-    (205, "lei8666_art22_v", "Lei 8.666/1993, Art. 22, V (Concurso - Lei Antiga)"),
+    (3, "lei14133_art28_iii", "Lei 14.133/2021, Art. 28, III"),
+    (205, "lei8666_art22_v", "Lei 8.666/1993, Art. 22, V"),
 
     # ==========================
     # LEILÃO
     # ==========================
-    (4, "lei14133_art28_iv", "Lei 14.133/2021, Art. 28, IV (Leilão)"),
-    (204, "lei8666_art22_iv", "Lei 8.666/1993, Art. 22, IV (Leilão - Lei Antiga)"),
+    (4, "lei14133_art28_iv", "Lei 14.133/2021, Art. 28, IV"),
+    (204, "lei8666_art22_iv", "Lei 8.666/1993, Art. 22, IV"),
 
     # ==========================
     # DIÁLOGO COMPETITIVO
     # ==========================
-    (5, "lei14133_art28_v", "Lei 14.133/2021, Art. 28, V (Diálogo Competitivo)"),
+    (5, "lei14133_art28_v", "Lei 14.133/2021, Art. 28, V"),
 
     # ==========================
     # DISPENSA DE LICITAÇÃO
