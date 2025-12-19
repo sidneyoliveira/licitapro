@@ -54,7 +54,8 @@ from .serializers import (
     ContratoEmpenhoSerializer,
     UsuarioSerializer,
     AnotacaoSerializer,
-    ArquivoUserSerializers
+    ArquivoUserSerializers,
+    DocumentoPNCPSerializer
 )
 
 # Imports Locais - Choices (Atualizado para nova lógica sem Fundamentação)
@@ -1556,3 +1557,80 @@ class ArquivoUserViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         # Vincula automaticamente o arquivo ao usuário logado
         serializer.save(usuario=self.request.user)
+
+class DocumentoPNCPViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gerenciar os documentos da contratação.
+    Permite salvar o arquivo localmente como rascunho antes de enviar ao PNCP.
+    """
+    queryset = DocumentoPNCP.objects.all()
+    serializer_class = DocumentoPNCPSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["processo"]
+
+    def perform_create(self, serializer):
+        """
+        Ao criar um novo documento via POST, ele é salvo automaticamente 
+        com o status 'rascunho'.
+        """
+        serializer.save(status="rascunho")
+
+    @action(detail=True, methods=["post"], url_path="enviar-ao-pncp")
+    def enviar_ao_pncp(self, request, pk=None):
+        """
+        Action para enviar um documento que já está salvo no banco para o PNCP.
+        Utiliza o arquivo e os metadados já persistidos.
+        """
+        documento = self.get_object()
+        processo = documento.processo
+
+        # Validações básicas de referência do PNCP no processo
+        ano_compra = processo.pncp_ano_compra
+        sequencial_compra = processo.pncp_sequencial_compra
+
+        if not ano_compra or not sequencial_compra:
+            return Response(
+                {"detail": "O processo associado ainda não possui publicação inicial no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Entidade ou CNPJ não configurados no processo."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        cnpj_orgao = re.sub(r"\D", "", processo.entidade.cnpj)
+
+        try:
+            # Chama o serviço de envio usando o arquivo que já está no banco
+            resultado = PNCPService.anexar_documento_compra(
+                cnpj_orgao=cnpj_orgao,
+                ano_compra=int(ano_compra),
+                sequencial_compra=int(sequencial_compra),
+                arquivo=documento.arquivo,
+                titulo_documento=documento.titulo,
+                tipo_documento_id=documento.tipo_documento_id,
+            )
+
+            # Atualiza o status do documento para enviado e salva o retorno
+            documento.status = "enviado"
+            documento.pncp_sequencial_documento = resultado.get("sequencialDocumento")
+            documento.pncp_publicado_em = timezone.now()
+            documento.save()
+
+            return Response({
+                "detail": "Documento enviado ao PNCP com sucesso!",
+                "pncp_data": resultado
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.exception("Erro ao enviar documento rascunho ao PNCP")
+            documento.status = "erro"
+            documento.save()
+            return Response(
+                {"detail": f"Erro na comunicação com PNCP: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

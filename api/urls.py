@@ -24,6 +24,7 @@ from .views import (
     SystemConfigView,
     AnotacaoViewSet,
     ArquivoUserViewSet,
+    DocumentoPNCPViewSet
 )
 
 # ============================================================
@@ -56,6 +57,7 @@ router.register(r'anotacoes', AnotacaoViewSet, basename='anotacao')
 
 router.register(r'arquivos-user', ArquivoUserViewSet, basename='arquivos-user')
 
+router.register(r'documentos-pncp', DocumentoPNCPViewSet)
 # ============================================================
 # 🛣️ URLPATTERNS COMPLETO
 # ============================================================
