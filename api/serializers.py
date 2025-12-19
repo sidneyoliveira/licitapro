@@ -38,47 +38,8 @@ class UserSerializer(serializers.ModelSerializer):
         fields = (
             "id", "username", "first_name", "last_name", "email",
             "cpf", "data_nascimento", "phone", "profile_image",
-            "is_active", "is_staff", "date_joined", "last_login"
+            "is_staff", "is_superuser", "is_active"
         )
-
-# Alias mantido apenas para retrocompatibilidade, caso algum outro arquivo use CustomUserSerializer
-CustomUserSerializer = UserSerializer
-
-class GroupNameField(serializers.StringRelatedField):
-    def to_representation(self, value):
-        return value.name
-
-class UsuarioSerializer(serializers.ModelSerializer):
-    groups = GroupNameField(many=True, read_only=True)
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
-
-    class Meta:
-        model = User
-        fields = [
-            "id", "username", "email", "first_name", "last_name",
-            "cpf", "data_nascimento", "phone", "profile_image",
-            "is_active", "last_login", "date_joined", "groups", "password",
-        ]
-        read_only_fields = ["date_joined", "groups"]
-
-    def create(self, validated_data):
-        password = validated_data.pop("password", None)
-        user = User(**validated_data)
-        if password:
-            user.set_password(password)
-        else:
-            user.set_unusable_password()
-        user.save()
-        return user
-
-    def update(self, instance, validated_data):
-        password = validated_data.pop("password", None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        if password:
-            instance.set_password(password)
-        instance.save()
-        return instance
 
 
 # ============================================================
@@ -88,22 +49,25 @@ class UsuarioSerializer(serializers.ModelSerializer):
 class EntidadeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Entidade
-        fields = ("id", "nome", "cnpj", "ano")
+        fields = "__all__"
+
 
 class OrgaoSerializer(serializers.ModelSerializer):
+    entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
+
     class Meta:
         model = Orgao
-        fields = ("id", "nome", "codigo_unidade", "entidade")
+        fields = "__all__"
 
-class EntidadeMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Entidade
-        fields = ("id", "nome", "cnpj", "ano")
 
-class OrgaoMiniSerializer(serializers.ModelSerializer):
+# ============================================================
+# 🧾 FORNECEDOR
+# ============================================================
+
+class FornecedorSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Orgao
-        fields = ("id", "nome", "codigo_unidade", "entidade")
+        model = Fornecedor
+        fields = "__all__"
 
 
 # ============================================================
@@ -111,75 +75,37 @@ class OrgaoMiniSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
-    entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
     orgao_nome = serializers.CharField(source="orgao.nome", read_only=True)
-    entidade_obj = EntidadeMiniSerializer(source="entidade", read_only=True)
-    orgao_obj = OrgaoMiniSerializer(source="orgao", read_only=True)
+    entidade_nome = serializers.CharField(source="orgao.entidade.nome", read_only=True)
 
-    modalidade = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    modo_disputa = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    instrumento_convocatorio = serializers.CharField(required=False, allow_blank=True, allow_null=True) 
-    amparo_legal = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    
-    # Sem fundamentacao, conforme solicitado
+    modalidade_nome = serializers.SerializerMethodField()
+    modo_disputa_nome = serializers.SerializerMethodField()
+    instrumento_convocatorio_nome = serializers.SerializerMethodField()
+    amparo_legal_nome = serializers.SerializerMethodField()
 
     class Meta:
         model = ProcessoLicitatorio
-        fields = (
-            "id",
-            "numero_processo",
-            "numero_certame",
-            "objeto",
-            "modalidade",       
-            "modo_disputa",     
-            "instrumento_convocatorio", 
-            "amparo_legal",     
-            
-            "classificacao",
-            "tipo_organizacao",
-            "situacao",         
-            "criterio_julgamento",
-            
-            "pncp_publicado_em",
-            "pncp_ano_compra",
-            "pncp_sequencial_compra",
-            "pncp_link",
-            "pncp_ultimo_retorno",
+        fields = "__all__"
 
-            "data_processo",
-            "data_abertura",
-            "valor_referencia",
-            "vigencia_meses",
-            "registro_preco",
-            "entidade",
-            "orgao",
-            "data_criacao_sistema",
+    def get_modalidade_nome(self, obj):
+        if obj.modalidade_id is None:
+            return None
+        return MAP_MODALIDADE_PNCP.get(obj.modalidade_id, str(obj.modalidade_id))
 
-            "entidade_nome", "orgao_nome", "entidade_obj", "orgao_obj",
-        )
-        read_only_fields = ("data_criacao_sistema", "entidade_nome", "orgao_nome")
+    def get_modo_disputa_nome(self, obj):
+        if obj.modo_disputa_id is None:
+            return None
+        return MAP_MODO_DISPUTA_PNCP.get(obj.modo_disputa_id, str(obj.modo_disputa_id))
 
-    def to_internal_value(self, data):
-        data = data.copy()
+    def get_instrumento_convocatorio_nome(self, obj):
+        if obj.instrumento_convocatorio is None:
+            return None
+        return MAP_INSTRUMENTO_CONVOCATORIO_PNCP.get(obj.instrumento_convocatorio, str(obj.instrumento_convocatorio))
 
-        # Conversão de Slugs para IDs (Frontend -> Backend)
-        if 'modalidade' in data and data['modalidade']:
-            slug = data['modalidade']
-            data['modalidade'] = MAP_MODALIDADE_PNCP.get(slug, slug)
-
-        if 'modo_disputa' in data and data['modo_disputa']:
-            slug = data['modo_disputa']
-            data['modo_disputa'] = MAP_MODO_DISPUTA_PNCP.get(slug, slug)
-
-        if 'amparo_legal' in data and data['amparo_legal']:
-            slug = data['amparo_legal']
-            data['amparo_legal'] = MAP_AMPARO_LEGAL_PNCP.get(slug, slug)
-
-        if 'instrumento_convocatorio' in data and data['instrumento_convocatorio']:
-            slug = data['instrumento_convocatorio']
-            data['instrumento_convocatorio'] = MAP_INSTRUMENTO_CONVOCATORIO_PNCP.get(slug, slug)
-        
-        return super().to_internal_value(data)
+    def get_amparo_legal_nome(self, obj):
+        if obj.amparo_legal is None:
+            return None
+        return MAP_AMPARO_LEGAL_PNCP.get(obj.amparo_legal, str(obj.amparo_legal))
 
 
 # ============================================================
@@ -189,147 +115,95 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
 class LoteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lote
-        fields = ("id", "processo", "numero", "descricao")
+        fields = "__all__"
 
 
 # ============================================================
-# 🏭 FORNECEDOR
-# ============================================================
-
-class FornecedorSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Fornecedor
-        fields = (
-            "id", "cnpj", "razao_social", "nome_fantasia", "porte",
-            "telefone", "email", "cep", "logradouro", "numero",
-            "bairro", "complemento", "uf", "municipio", "criado_em"
-        )
-
-
-# ============================================================
-# 📋 ITEM
+# 🧱 ITEM
 # ============================================================
 
 class ItemSerializer(serializers.ModelSerializer):
-    situacao_item = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    tipo_beneficio = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    categoria_item = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    situacao_nome = serializers.SerializerMethodField()
+    tipo_beneficio_nome = serializers.SerializerMethodField()
+    categoria_nome = serializers.SerializerMethodField()
 
     class Meta:
         model = Item
-        fields = (
-            "id",
-            "processo",
-            "lote",
-            "ordem",
-            "descricao",
-            "especificacao",
-            "unidade",
-            "quantidade",
-            "valor_estimado",
-            "natureza",       
-            
-            "situacao_item",  
-            "tipo_beneficio", 
-            "categoria_item", 
-            
-            "fornecedor",     
-        )
+        fields = "__all__"
 
-    def to_internal_value(self, data):
-        data = data.copy()
+    def get_situacao_nome(self, obj):
+        if obj.situacao_item_id is None:
+            return None
+        return MAP_SITUACAO_ITEM_PNCP.get(obj.situacao_item_id, str(obj.situacao_item_id))
 
-        if 'situacao_item' in data:
-            slug = data['situacao_item']
-            data['situacao_item'] = MAP_SITUACAO_ITEM_PNCP.get(slug, slug)
+    def get_tipo_beneficio_nome(self, obj):
+        if obj.tipo_beneficio_id is None:
+            return None
+        return MAP_TIPO_BENEFICIO_PNCP.get(obj.tipo_beneficio_id, str(obj.tipo_beneficio_id))
 
-        if 'tipo_beneficio' in data:
-            slug = data['tipo_beneficio']
-            data['tipo_beneficio'] = MAP_TIPO_BENEFICIO_PNCP.get(slug, slug)
-        
-        if 'categoria_item' in data:
-            slug = data['categoria_item']
-            data['categoria_item'] = MAP_CATEGORIA_ITEM_PNCP.get(slug, slug)
-
-        return super().to_internal_value(data)
+    def get_categoria_nome(self, obj):
+        if obj.categoria_item_id is None:
+            return None
+        return MAP_CATEGORIA_ITEM_PNCP.get(obj.categoria_item_id, str(obj.categoria_item_id))
 
 
 # ============================================================
-# 🔗 FORNECEDOR ↔ PROCESSO
+# 🔗 RELAÇÕES FORNECEDOR x PROCESSO
 # ============================================================
 
 class FornecedorProcessoSerializer(serializers.ModelSerializer):
+    fornecedor_nome = serializers.CharField(source="fornecedor.nome", read_only=True)
+
     class Meta:
         model = FornecedorProcesso
-        fields = ("id", "processo", "fornecedor", "data_participacao", "habilitado")
+        fields = "__all__"
 
-
-# ============================================================
-# 💰 ITEM ↔ FORNECEDOR (Propostas)
-# ============================================================
 
 class ItemFornecedorSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItemFornecedor
-        fields = ("id", "item", "fornecedor", "valor_proposto", "vencedor")
+        fields = "__all__"
 
 
 # ============================================================
-# 📑 CONTRATO / EMPENHO
+# 🧾 CONTRATO / EMPENHO
 # ============================================================
 
 class ContratoEmpenhoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ContratoEmpenho
-        fields = (
-            "id",
-            "processo",
-            "tipo_contrato_id",
-            "numero_contrato_empenho",
-            "ano_contrato",
-            "processo_ref",
-            "categoria_processo_id",
-            "receita",
-            "unidade_codigo",
-            "ni_fornecedor",
-            "tipo_pessoa_fornecedor",
-            "sequencial_publicacao",
-            "criado_em",
-            "atualizado_em",
-        )
+        fields = "__all__"
+
 
 # ============================================================
-# 📝 ANOTAÇÕES
+# 🗒️ ANOTAÇÕES
 # ============================================================
 
 class AnotacaoSerializer(serializers.ModelSerializer):
-    # Mapeando para bater com o frontend (que espera 'text' e 'date')
-    text = serializers.CharField(source='texto')
-    date = serializers.DateTimeField(source='criado_em', read_only=True)
+    usuario_nome = serializers.CharField(source="usuario.username", read_only=True)
 
     class Meta:
         model = Anotacao
-        fields = ("id", "text", "date")
+        fields = "__all__"
 
 
 # ============================================================
-# 📝 ARQUIVOS DO USUARIO
+# 📁 ARQUIVO DO USUÁRIO
 # ============================================================
 
-class ArquivoUserSerializers(serializers.ModelSerializer):
+class ArquivoUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = ArquivoUser
-        fields = ("id", "usuario", "arquivo", "descricao", "enviado_em")
-        read_only_fields = ("usuario", "enviado_em")
+        fields = "__all__"
 
 
 # ============================================================
-# 📎 DOCUMENTOS PNCP (Arquivos da Contratação)
+# 📄 DOCUMENTOS PNCP (RAScunho local / Envio)
 # ============================================================
 
 class DocumentoPNCPSerializer(serializers.ModelSerializer):
-
     tipo_documento_nome = serializers.SerializerMethodField()
+    arquivo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = DocumentoPNCP
@@ -341,10 +215,30 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
             "titulo",
             "observacao",
             "arquivo_nome",
+            "arquivo_url",
+            "arquivo_hash",
+            "status",
             "pncp_sequencial_documento",
+            "pncp_publicado_em",
             "ativo",
             "criado_em",
         )
+        read_only_fields = (
+            "id",
+            "arquivo_url",
+            "arquivo_hash",
+            "pncp_sequencial_documento",
+            "pncp_publicado_em",
+            "ativo",
+            "criado_em",
+        )
+
+    def get_arquivo_url(self, obj):
+        try:
+            return obj.arquivo.url if obj.arquivo else None
+        except Exception:
+            # Evita quebrar o serializer caso o storage/URL não esteja resolvido no ambiente
+            return None
 
     def get_tipo_documento_nome(self, obj):
         mapa = {
