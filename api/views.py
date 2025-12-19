@@ -1566,10 +1566,6 @@ class DocumentoPNCPViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
     def get_queryset(self):
-        """
-        Por padrão, lista tudo. Se quiser que "removidos" nunca apareçam,
-        filtre ativo=True aqui.
-        """
         qs = DocumentoPNCP.objects.all().order_by("-criado_em")
         processo = self.request.query_params.get("processo")
         if processo:
@@ -1578,15 +1574,6 @@ class DocumentoPNCPViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
-        """
-        UPSERT por (processo, tipo_documento_id):
-        - Se já existir um documento ativo para o mesmo tipo (e não removido) e ainda NÃO enviado -> atualiza o arquivo
-        - Se não existir -> cria
-
-        Retornos:
-        - 200 quando atualiza
-        - 201 quando cria
-        """
         processo_id = request.data.get("processo")
         tipo_id = request.data.get("tipo_documento_id")
         arquivo = request.FILES.get("arquivo")
@@ -1594,45 +1581,41 @@ class DocumentoPNCPViewSet(viewsets.ModelViewSet):
         if not processo_id or not tipo_id:
             return Response(
                 {"detail": "Campos 'processo' e 'tipo_documento_id' são obrigatórios."},
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         if not arquivo:
             return Response(
                 {"detail": "Campo 'arquivo' é obrigatório."},
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         titulo = request.data.get("titulo") or "Documento"
         observacao = request.data.get("observacao") or None
 
-        # Busca o documento existente do mesmo tipo para este processo
-        existing = (
-            DocumentoPNCP.objects.filter(
-                processo_id=processo_id,
-                tipo_documento_id=tipo_id,
-                ativo=True,
+        # Calcula hash (sem perder o ponteiro)
+        try:
+            content = arquivo.read()
+            file_hash = hashlib.sha256(content).hexdigest()
+            arquivo.seek(0)
+        except Exception as e:
+            return Response(
+                {"detail": "Falha ao processar o arquivo enviado.", "error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
             )
+
+        # Busca documento ativo existente (mesmo processo+tipo)
+        existing = (
+            DocumentoPNCP.objects
+            .filter(processo_id=processo_id, tipo_documento_id=tipo_id, ativo=True)
             .exclude(status="removido")
             .order_by("-criado_em")
             .first()
         )
 
-        # Calcula hash sem perder o ponteiro do arquivo
-        try:
-            content = arquivo.read()
-            file_hash = hashlib.sha256(content).hexdigest()
-            arquivo.seek(0)
-        except Exception:
-            # Se der erro lendo/seek, não deixa 500 sem mensagem
-            return Response(
-                {"detail": "Falha ao processar o arquivo enviado."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            # Se existe e ainda não foi enviado ao PNCP, atualiza o mesmo registro
-            if existing and existing.status != "enviado":
+        # Se existe e ainda não foi enviado -> atualiza (não cria outro)
+        if existing and existing.status != "enviado":
+            try:
                 existing.titulo = titulo
                 existing.observacao = observacao
                 existing.arquivo = arquivo
@@ -1641,11 +1624,17 @@ class DocumentoPNCPViewSet(viewsets.ModelViewSet):
                 existing.status = "rascunho"
                 existing.ativo = True
                 existing.save()
+            except Exception as e:
+                # Esse erro normalmente denuncia permissão/path no MEDIA_ROOT
+                return Response(
+                    {"detail": "Erro ao salvar arquivo no storage (verifique MEDIA_ROOT/permissões).", "error": str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
-                ser = self.get_serializer(existing)
-                return Response(ser.data, status=status.HTTP_200_OK)
+            return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
 
-            # Caso não exista (ou já esteja enviado), cria um novo
+        # Caso contrário cria novo
+        try:
             doc = DocumentoPNCP.objects.create(
                 processo_id=processo_id,
                 tipo_documento_id=tipo_id,
@@ -1657,45 +1646,34 @@ class DocumentoPNCPViewSet(viewsets.ModelViewSet):
                 status="rascunho",
                 ativo=True,
             )
-            ser = self.get_serializer(doc)
-            return Response(ser.data, status=status.HTTP_201_CREATED)
-
         except Exception as e:
-            # Evita 500 "mudo" e te dá pista do erro
             return Response(
-                {"detail": "Erro ao salvar o arquivo no servidor.", "error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                {"detail": "Erro ao salvar arquivo no storage (verifique MEDIA_ROOT/permissões).", "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+        return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
+
     def destroy(self, request, *args, **kwargs):
-        """
-        HARD DELETE: remove do banco de dados de verdade.
-        Isso resolve seu "204 mas não apaga do banco".
-        """
+        # HARD DELETE: apaga do banco de verdade
         obj = self.get_object()
         obj.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["post"], url_path="enviar-ao-pncp")
     def enviar_ao_pncp(self, request, pk=None):
-        """
-        Agora a rota é /documentos-pncp/{id}/enviar-ao-pncp/ (com hífen),
-        compatível com o frontend.
-        """
         doc = self.get_object()
 
-        # Validação mínima: precisa existir arquivo local antes de enviar ao PNCP
         if not doc.arquivo:
             return Response(
-                {"detail": "Este documento não possui arquivo salvo para envio ao PNCP."},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"detail": "Documento não possui arquivo salvo para envio ao PNCP."},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Aqui você chama seu service real de PNCP.
-        # Exemplo (pseudocódigo):
-        # result = pncp_service.enviar_documento(doc)
+        # Aqui entra sua lógica real de PNCP (service)
+        # Ao concluir:
         # doc.status = "enviado"
-        # doc.pncp_sequencial_documento = result["sequencial"]
+        # doc.pncp_sequencial_documento = ...
         # doc.pncp_publicado_em = timezone.now()
         # doc.save()
 

@@ -4,6 +4,7 @@ from django.db import models, transaction
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 
 # Importação das escolhas (Choices) atualizadas (agora baseadas em IDs inteiros)
 from .choices import (
@@ -260,6 +261,8 @@ class ProcessoLicitatorio(models.Model):
 
         raise ValidationError("Parâmetros insuficientes para organização de lotes.")
 
+
+
 class DocumentoPNCP(models.Model):
     STATUS = (
         ("rascunho", "Rascunho (local)"),
@@ -278,15 +281,12 @@ class DocumentoPNCP(models.Model):
     titulo = models.CharField(max_length=255, default="Documento")
     observacao = models.TextField(blank=True, null=True)
 
+    # Recomendo manter obrigatório (bom para integridade)
     arquivo = models.FileField(upload_to="documentos_pncp/")
     arquivo_nome = models.CharField(max_length=255, blank=True, null=True)
     arquivo_hash = models.CharField(max_length=80, blank=True, null=True)
 
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS,
-        default="rascunho"
-    )
+    status = models.CharField(max_length=20, choices=STATUS, default="rascunho")
 
     pncp_sequencial_documento = models.PositiveIntegerField(blank=True, null=True)
     pncp_publicado_em = models.DateTimeField(blank=True, null=True)
@@ -294,6 +294,17 @@ class DocumentoPNCP(models.Model):
     ativo = models.BooleanField(default=True)
     criado_em = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["processo", "tipo_documento_id"],
+                condition=Q(ativo=True) & ~Q(status="removido"),
+                name="uniq_docpncp_processo_tipo_ativo"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.processo_id} - tipo {self.tipo_documento_id} - {self.status}"
 # ============================================================
 # 📦 LOTE
 # ============================================================

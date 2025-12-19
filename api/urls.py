@@ -49,15 +49,21 @@ router.register(r'fornecedores', FornecedorViewSet, basename='fornecedor')
 router.register(r'fornecedores-processo', FornecedorProcessoViewSet, basename='fornecedor-processo')
 router.register(r'itens-fornecedor', ItemFornecedorViewSet, basename='item-fornecedor')
 
+# CONTRATOS
 router.register(r'contratos', ContratoEmpenhoViewSet, basename='contrato')
 
+# USUÁRIOS
 router.register(r'usuarios', UsuarioViewSet, basename='usuario')
 
+# ANOTAÇÕES
 router.register(r'anotacoes', AnotacaoViewSet, basename='anotacao')
 
+# ARQUIVOS DO USUÁRIO
 router.register(r'arquivos-user', ArquivoUserViewSet, basename='arquivos-user')
 
-router.register(r'documentos-pncp', DocumentoPNCPViewSet)
+# DOCUMENTOS PNCP (IMPORTANTE: definir basename)
+router.register(r'documentos-pncp', DocumentoPNCPViewSet, basename='documento-pncp')
+
 # ============================================================
 # 🛣️ URLPATTERNS COMPLETO
 # ============================================================
@@ -81,10 +87,11 @@ urlpatterns = [
     # Login Google
     path('google/', GoogleLoginView.as_view(), name='google-login'),
 
+    # Constantes / Config
     path('constantes/sistema/', ConstantesSistemaView.as_view(), name='constantes-sistema'),
-
     path('system/config/', SystemConfigView.as_view(), name='system-config'),
 ]
 
+# Servir MEDIA em ambiente de desenvolvimento
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

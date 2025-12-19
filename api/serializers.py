@@ -23,62 +23,21 @@ from .choices import (
     MAP_SITUACAO_ITEM_PNCP,
     MAP_TIPO_BENEFICIO_PNCP,
     MAP_CATEGORIA_ITEM_PNCP,
+    MAP_CRITERIO_JULGAMENTO_PNCP,
+    MAP_INSTRUMENTO_CONVOCATORIO_PNCP,
 )
 
 User = get_user_model()
 
+
 # ============================================================
-# 👤 USUÁRIO
+# 👤 USER
 # ============================================================
 
-# Renomeado de CustomUserSerializer para UserSerializer para evitar erros de importação
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = (
-            "id", "username", "first_name", "last_name", "email",
-            "cpf", "data_nascimento", "phone", "profile_image",
-            "is_active", "is_staff", "date_joined", "last_login"
-        )
-
-# Alias mantido apenas para retrocompatibilidade, caso algum outro arquivo use CustomUserSerializer
-CustomUserSerializer = UserSerializer
-
-class GroupNameField(serializers.StringRelatedField):
-    def to_representation(self, value):
-        return value.name
-
-class UsuarioSerializer(serializers.ModelSerializer):
-    groups = GroupNameField(many=True, read_only=True)
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
-
-    class Meta:
-        model = User
-        fields = [
-            "id", "username", "email", "first_name", "last_name",
-            "cpf", "data_nascimento", "phone", "profile_image",
-            "is_active", "last_login", "date_joined", "groups", "password",
-        ]
-        read_only_fields = ["date_joined", "groups"]
-
-    def create(self, validated_data):
-        password = validated_data.pop("password", None)
-        user = User(**validated_data)
-        if password:
-            user.set_password(password)
-        else:
-            user.set_unusable_password()
-        user.save()
-        return user
-
-    def update(self, instance, validated_data):
-        password = validated_data.pop("password", None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        if password:
-            instance.set_password(password)
-        instance.save()
-        return instance
+        fields = ("id", "username", "first_name", "last_name", "email", "cpf", "phone", "profile_image")
 
 
 # ============================================================
@@ -90,20 +49,13 @@ class EntidadeSerializer(serializers.ModelSerializer):
         model = Entidade
         fields = ("id", "nome", "cnpj", "ano")
 
+
 class OrgaoSerializer(serializers.ModelSerializer):
+    entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
+
     class Meta:
         model = Orgao
-        fields = ("id", "nome", "codigo_unidade", "entidade")
-
-class EntidadeMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Entidade
-        fields = ("id", "nome", "cnpj", "ano")
-
-class OrgaoMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Orgao
-        fields = ("id", "nome", "codigo_unidade", "entidade")
+        fields = ("id", "nome", "codigo_unidade", "entidade", "entidade_nome")
 
 
 # ============================================================
@@ -113,15 +65,12 @@ class OrgaoMiniSerializer(serializers.ModelSerializer):
 class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
     entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
     orgao_nome = serializers.CharField(source="orgao.nome", read_only=True)
-    entidade_obj = EntidadeMiniSerializer(source="entidade", read_only=True)
-    orgao_obj = OrgaoMiniSerializer(source="orgao", read_only=True)
 
-    modalidade = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    modo_disputa = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    instrumento_convocatorio = serializers.CharField(required=False, allow_blank=True, allow_null=True) 
-    amparo_legal = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    
-    # Sem fundamentacao, conforme solicitado
+    modalidade_nome = serializers.SerializerMethodField()
+    instrumento_convocatorio_nome = serializers.SerializerMethodField()
+    amparo_legal_nome = serializers.SerializerMethodField()
+    modo_disputa_nome = serializers.SerializerMethodField()
+    criterio_julgamento_nome = serializers.SerializerMethodField()
 
     class Meta:
         model = ProcessoLicitatorio
@@ -130,56 +79,52 @@ class ProcessoLicitatorioSerializer(serializers.ModelSerializer):
             "numero_processo",
             "numero_certame",
             "objeto",
-            "modalidade",       
-            "modo_disputa",     
-            "instrumento_convocatorio", 
-            "amparo_legal",     
-            
+            "modalidade",
+            "modalidade_nome",
             "classificacao",
             "tipo_organizacao",
-            "situacao",         
-            "criterio_julgamento",
-            
-            "pncp_publicado_em",
-            "pncp_ano_compra",
-            "pncp_sequencial_compra",
-            "pncp_link",
-            "pncp_ultimo_retorno",
-
+            "situacao",
             "data_processo",
             "data_abertura",
             "valor_referencia",
             "vigencia_meses",
             "registro_preco",
+            "registro_precos",
             "entidade",
+            "entidade_nome",
             "orgao",
+            "orgao_nome",
+            "instrumento_convocatorio",
+            "instrumento_convocatorio_nome",
+            "amparo_legal",
+            "amparo_legal_nome",
+            "modo_disputa",
+            "modo_disputa_nome",
+            "criterio_julgamento",
+            "criterio_julgamento_nome",
+            "fundamentacao",
+            "pncp_publicado_em",
+            "pncp_ano_compra",
+            "pncp_sequencial_compra",
+            "pncp_link",
+            "pncp_ultimo_retorno",
             "data_criacao_sistema",
-
-            "entidade_nome", "orgao_nome", "entidade_obj", "orgao_obj",
         )
-        read_only_fields = ("data_criacao_sistema", "entidade_nome", "orgao_nome")
 
-    def to_internal_value(self, data):
-        data = data.copy()
+    def get_modalidade_nome(self, obj):
+        return MAP_MODALIDADE_PNCP.get(obj.modalidade)
 
-        # Conversão de Slugs para IDs (Frontend -> Backend)
-        if 'modalidade' in data and data['modalidade']:
-            slug = data['modalidade']
-            data['modalidade'] = MAP_MODALIDADE_PNCP.get(slug, slug)
+    def get_instrumento_convocatorio_nome(self, obj):
+        return MAP_INSTRUMENTO_CONVOCATORIO_PNCP.get(obj.instrumento_convocatorio)
 
-        if 'modo_disputa' in data and data['modo_disputa']:
-            slug = data['modo_disputa']
-            data['modo_disputa'] = MAP_MODO_DISPUTA_PNCP.get(slug, slug)
+    def get_amparo_legal_nome(self, obj):
+        return MAP_AMPARO_LEGAL_PNCP.get(obj.amparo_legal)
 
-        if 'amparo_legal' in data and data['amparo_legal']:
-            slug = data['amparo_legal']
-            data['amparo_legal'] = MAP_AMPARO_LEGAL_PNCP.get(slug, slug)
+    def get_modo_disputa_nome(self, obj):
+        return MAP_MODO_DISPUTA_PNCP.get(obj.modo_disputa)
 
-        if 'instrumento_convocatorio' in data and data['instrumento_convocatorio']:
-            slug = data['instrumento_convocatorio']
-            data['instrumento_convocatorio'] = MAP_INSTRUMENTO_CONVOCATORIO_PNCP.get(slug, slug)
-        
-        return super().to_internal_value(data)
+    def get_criterio_julgamento_nome(self, obj):
+        return MAP_CRITERIO_JULGAMENTO_PNCP.get(obj.criterio_julgamento)
 
 
 # ============================================================
@@ -200,9 +145,21 @@ class FornecedorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Fornecedor
         fields = (
-            "id", "cnpj", "razao_social", "nome_fantasia", "porte",
-            "telefone", "email", "cep", "logradouro", "numero",
-            "bairro", "complemento", "uf", "municipio", "criado_em"
+            "id",
+            "cnpj",
+            "razao_social",
+            "nome_fantasia",
+            "porte",
+            "telefone",
+            "email",
+            "cep",
+            "logradouro",
+            "numero",
+            "bairro",
+            "complemento",
+            "uf",
+            "municipio",
+            "criado_em",
         )
 
 
@@ -211,47 +168,49 @@ class FornecedorSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ItemSerializer(serializers.ModelSerializer):
-    situacao_item = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    tipo_beneficio = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    categoria_item = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    processo_numero = serializers.CharField(source="processo.numero_processo", read_only=True)
+    lote_numero = serializers.IntegerField(source="lote.numero", read_only=True)
+    fornecedor_nome = serializers.CharField(source="fornecedor.razao_social", read_only=True)
+
+    situacao_item_nome = serializers.SerializerMethodField()
+    tipo_beneficio_nome = serializers.SerializerMethodField()
+    categoria_item_nome = serializers.SerializerMethodField()
 
     class Meta:
         model = Item
         fields = (
             "id",
             "processo",
+            "processo_numero",
             "lote",
-            "ordem",
+            "lote_numero",
+            "fornecedor",
+            "fornecedor_nome",
             "descricao",
             "especificacao",
             "unidade",
             "quantidade",
             "valor_estimado",
-            "natureza",       
-            
-            "situacao_item",  
-            "tipo_beneficio", 
-            "categoria_item", 
-            
-            "fornecedor",     
+            "ordem",
+            "natureza",
+            "situacao_item",
+            "situacao_item_nome",
+            "tipo_beneficio",
+            "tipo_beneficio_nome",
+            "categoria_item",
+            "categoria_item_nome",
+            "pncp_numero_item",
+            "pncp_ultima_atualizacao",
         )
 
-    def to_internal_value(self, data):
-        data = data.copy()
+    def get_situacao_item_nome(self, obj):
+        return MAP_SITUACAO_ITEM_PNCP.get(obj.situacao_item)
 
-        if 'situacao_item' in data:
-            slug = data['situacao_item']
-            data['situacao_item'] = MAP_SITUACAO_ITEM_PNCP.get(slug, slug)
+    def get_tipo_beneficio_nome(self, obj):
+        return MAP_TIPO_BENEFICIO_PNCP.get(obj.tipo_beneficio)
 
-        if 'tipo_beneficio' in data:
-            slug = data['tipo_beneficio']
-            data['tipo_beneficio'] = MAP_TIPO_BENEFICIO_PNCP.get(slug, slug)
-        
-        if 'categoria_item' in data:
-            slug = data['categoria_item']
-            data['categoria_item'] = MAP_CATEGORIA_ITEM_PNCP.get(slug, slug)
-
-        return super().to_internal_value(data)
+    def get_categoria_item_nome(self, obj):
+        return MAP_CATEGORIA_ITEM_PNCP.get(obj.categoria_item)
 
 
 # ============================================================
@@ -259,9 +218,20 @@ class ItemSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class FornecedorProcessoSerializer(serializers.ModelSerializer):
+    fornecedor_razao_social = serializers.CharField(source="fornecedor.razao_social", read_only=True)
+    fornecedor_cnpj = serializers.CharField(source="fornecedor.cnpj", read_only=True)
+
     class Meta:
         model = FornecedorProcesso
-        fields = ("id", "processo", "fornecedor", "data_participacao", "habilitado")
+        fields = (
+            "id",
+            "processo",
+            "fornecedor",
+            "fornecedor_razao_social",
+            "fornecedor_cnpj",
+            "data_participacao",
+            "habilitado",
+        )
 
 
 # ============================================================
@@ -269,9 +239,20 @@ class FornecedorProcessoSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ItemFornecedorSerializer(serializers.ModelSerializer):
+    item_descricao = serializers.CharField(source="item.descricao", read_only=True)
+    fornecedor_razao_social = serializers.CharField(source="fornecedor.razao_social", read_only=True)
+
     class Meta:
         model = ItemFornecedor
-        fields = ("id", "item", "fornecedor", "valor_proposto", "vencedor")
+        fields = (
+            "id",
+            "item",
+            "item_descricao",
+            "fornecedor",
+            "fornecedor_razao_social",
+            "valor_proposto",
+            "vencedor",
+        )
 
 
 # ============================================================
@@ -279,11 +260,14 @@ class ItemFornecedorSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class ContratoEmpenhoSerializer(serializers.ModelSerializer):
+    processo_numero = serializers.CharField(source="processo.numero_processo", read_only=True)
+
     class Meta:
         model = ContratoEmpenho
         fields = (
             "id",
             "processo",
+            "processo_numero",
             "tipo_contrato_id",
             "numero_contrato_empenho",
             "ano_contrato",
@@ -298,40 +282,47 @@ class ContratoEmpenhoSerializer(serializers.ModelSerializer):
             "atualizado_em",
         )
 
+
 # ============================================================
 # 📝 ANOTAÇÕES
 # ============================================================
 
 class AnotacaoSerializer(serializers.ModelSerializer):
-    # Mapeando para bater com o frontend (que espera 'text' e 'date')
-    text = serializers.CharField(source='texto')
-    date = serializers.DateTimeField(source='criado_em', read_only=True)
+    usuario_nome = serializers.CharField(source="usuario.username", read_only=True)
 
     class Meta:
         model = Anotacao
-        fields = ("id", "text", "date")
+        fields = ("id", "usuario", "usuario_nome", "texto", "criado_em", "atualizado_em")
 
 
 # ============================================================
-# 📝 ARQUIVOS DO USUARIO
+# 🗂️ ARQUIVOS DO USUÁRIO
 # ============================================================
 
-class ArquivoUserSerializers(serializers.ModelSerializer):
+class ArquivoUserSerializer(serializers.ModelSerializer):
+    arquivo_url = serializers.SerializerMethodField()
+
     class Meta:
         model = ArquivoUser
-        fields = ("id", "usuario", "arquivo", "descricao", "enviado_em")
-        read_only_fields = ("usuario", "enviado_em")
+        fields = ("id", "usuario", "arquivo", "arquivo_url", "descricao", "enviado_em")
+        read_only_fields = ("arquivo_url", "enviado_em")
+
+    def get_arquivo_url(self, obj):
+        try:
+            return obj.arquivo.url if obj.arquivo else None
+        except Exception:
+            return None
 
 
 # ============================================================
-# 📎 DOCUMENTOS PNCP (Arquivos da Contratação)
+# 🌐 DOCUMENTOS PNCP
 # ============================================================
 
 class DocumentoPNCPSerializer(serializers.ModelSerializer):
-    # IMPORTANTE: este campo permite upload (write)
+    # Permite upload via multipart/form-data
     arquivo = serializers.FileField(required=False)
 
-    # Para o frontend abrir/baixar
+    # Para o frontend abrir/baixar o arquivo
     arquivo_url = serializers.SerializerMethodField()
     tipo_documento_nome = serializers.SerializerMethodField()
 
@@ -344,12 +335,9 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
             "tipo_documento_nome",
             "titulo",
             "observacao",
-
-            # upload e retorno
-            "arquivo",       
+            "arquivo",
             "arquivo_nome",
             "arquivo_url",
-
             "arquivo_hash",
             "status",
             "pncp_sequencial_documento",
