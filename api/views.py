@@ -158,7 +158,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     """
 
     queryset = User.objects.all().order_by("id")
-    serializer_class = UsuarioSerializer
+    serializer_class = UserSerializer
     permission_classes = [IsAdminUser]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     parser_classes = [
