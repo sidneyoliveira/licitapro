@@ -55,9 +55,7 @@ from .serializers import (
     FornecedorProcessoSerializer,
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
-    UsuarioSerializer,
     AnotacaoSerializer,
-    ArquivoUserSerializers,
     DocumentoPNCPSerializer
 )
 
