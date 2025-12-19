@@ -1547,17 +1547,17 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
 # 🗂️ ARQUIVOS USUÁRIO VIEWSET
 # ============================================================
 
-class ArquivoUserViewSet(viewsets.ModelViewSet):
-    serializer_class = ArquivoUserSerializers
-    permission_classes = [IsAuthenticated]
+# class ArquivoUserViewSet(viewsets.ModelViewSet):
+#     serializer_class = ArquivoUserSerializers
+#     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        # Retorna apenas os arquivos do usuário logado
-        return ArquivoUser.objects.filter(usuario=self.request.user).order_by('-criado_em')
+#     def get_queryset(self):
+#         # Retorna apenas os arquivos do usuário logado
+#         return ArquivoUser.objects.filter(usuario=self.request.user).order_by('-criado_em')
 
-    def perform_create(self, serializer):
-        # Vincula automaticamente o arquivo ao usuário logado
-        serializer.save(usuario=self.request.user)
+#     def perform_create(self, serializer):
+#         # Vincula automaticamente o arquivo ao usuário logado
+#         serializer.save(usuario=self.request.user)
 
 class DocumentoPNCPViewSet(viewsets.ModelViewSet):
     serializer_class = DocumentoPNCPSerializer
