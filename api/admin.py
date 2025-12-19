@@ -154,4 +154,4 @@ class ArquivoUserAdmin(admin.ModelAdmin):
 class DocumentoPNCPAdmin(admin.ModelAdmin):
     list_display = ('id', 'processo', 'titulo', 'arquivo_nome', 'criado_em')
     search_fields = ('processo__numero', 'titulo', 'arquivo_nome')
-                         
+    

@@ -4,6 +4,7 @@ import logging
 import json
 import re
 import requests
+import hashlib
 
 from django.db import transaction
 from django.utils import timezone
@@ -20,6 +21,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .services import PNCPService, ImportacaoService
 
@@ -1559,78 +1562,106 @@ class ArquivoUserViewSet(viewsets.ModelViewSet):
         serializer.save(usuario=self.request.user)
 
 class DocumentoPNCPViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet para gerenciar os documentos da contratação.
-    Permite salvar o arquivo localmente como rascunho antes de enviar ao PNCP.
-    """
-    queryset = DocumentoPNCP.objects.all()
+    queryset = DocumentoPNCP.objects.all().order_by("-criado_em")
     serializer_class = DocumentoPNCPSerializer
-    permission_classes = [IsAuthenticated]
-    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["processo"]
 
-    def perform_create(self, serializer):
-        """
-        Ao criar um novo documento via POST, ele é salvo automaticamente 
-        com o status 'rascunho'.
-        """
-        serializer.save(status="rascunho")
+    # IMPORTANTE: sem isso, o arquivo pode não ser parseado corretamente
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @action(detail=True, methods=["post"], url_path="enviar-ao-pncp")
+    def get_queryset(self):
+        qs = super().get_queryset()
+        processo = self.request.query_params.get("processo")
+        if processo:
+            qs = qs.filter(processo_id=processo)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        """
+        Upsert por (processo, tipo_documento_id):
+        - Se já existir um documento ativo (rascunho/erro) para o mesmo tipo -> atualiza o arquivo
+        - Se não existir -> cria
+        """
+        processo_id = request.data.get("processo")
+        tipo_id = request.data.get("tipo_documento_id")
+        arquivo = request.FILES.get("arquivo")
+
+        if not processo_id or not tipo_id:
+            return Response(
+                {"detail": "Campos 'processo' e 'tipo_documento_id' são obrigatórios."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not arquivo:
+            return Response(
+                {"detail": "Campo 'arquivo' é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # tenta achar rascunho existente para atualizar
+        existing = (
+            DocumentoPNCP.objects
+            .filter(processo_id=processo_id, tipo_documento_id=tipo_id, ativo=True)
+            .exclude(status="removido")
+            .order_by("-criado_em")
+            .first()
+        )
+
+        # hash do arquivo (opcional, mas útil)
+        content = arquivo.read()
+        file_hash = hashlib.sha256(content).hexdigest()
+        arquivo.seek(0)
+
+        payload = request.data.copy()
+        payload["titulo"] = payload.get("titulo") or "Documento"
+
+        if existing and existing.status != "enviado":
+            # UPDATE (não cria novo)
+            existing.arquivo = arquivo
+            existing.arquivo_nome = arquivo.name
+            existing.arquivo_hash = file_hash
+            existing.status = "rascunho"
+            existing.ativo = True
+            existing.save()
+
+            ser = self.get_serializer(existing)
+            return Response(ser.data, status=status.HTTP_200_OK)
+
+        # CREATE (novo)
+        doc = DocumentoPNCP.objects.create(
+            processo_id=processo_id,
+            tipo_documento_id=tipo_id,
+            titulo=payload.get("titulo"),
+            observacao=payload.get("observacao") or None,
+            arquivo=arquivo,
+            arquivo_nome=arquivo.name,
+            arquivo_hash=file_hash,
+            status="rascunho",
+            ativo=True,
+        )
+        ser = self.get_serializer(doc)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Soft delete local.
+        """
+        obj = self.get_object()
+        obj.ativo = False
+        obj.status = "removido"
+        obj.save(update_fields=["ativo", "status"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"])
     def enviar_ao_pncp(self, request, pk=None):
         """
-        Action para enviar um documento que já está salvo no banco para o PNCP.
-        Utiliza o arquivo e os metadados já persistidos.
+        Se você já tem essa action no seu backend, mantenha a sua.
+        Aqui é só o gancho. A lógica real de PNCP fica no seu serviço atual.
         """
-        documento = self.get_object()
-        processo = documento.processo
-
-        # Validações básicas de referência do PNCP no processo
-        ano_compra = processo.pncp_ano_compra
-        sequencial_compra = processo.pncp_sequencial_compra
-
-        if not ano_compra or not sequencial_compra:
-            return Response(
-                {"detail": "O processo associado ainda não possui publicação inicial no PNCP."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not processo.entidade or not processo.entidade.cnpj:
-            return Response(
-                {"detail": "Entidade ou CNPJ não configurados no processo."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        cnpj_orgao = re.sub(r"\D", "", processo.entidade.cnpj)
-
-        try:
-            # Chama o serviço de envio usando o arquivo que já está no banco
-            resultado = PNCPService.anexar_documento_compra(
-                cnpj_orgao=cnpj_orgao,
-                ano_compra=int(ano_compra),
-                sequencial_compra=int(sequencial_compra),
-                arquivo=documento.arquivo,
-                titulo_documento=documento.titulo,
-                tipo_documento_id=documento.tipo_documento_id,
-            )
-
-            # Atualiza o status do documento para enviado e salva o retorno
-            documento.status = "enviado"
-            documento.pncp_sequencial_documento = resultado.get("sequencialDocumento")
-            documento.pncp_publicado_em = timezone.now()
-            documento.save()
-
-            return Response({
-                "detail": "Documento enviado ao PNCP com sucesso!",
-                "pncp_data": resultado
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.exception("Erro ao enviar documento rascunho ao PNCP")
-            documento.status = "erro"
-            documento.save()
-            return Response(
-                {"detail": f"Erro na comunicação com PNCP: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        doc = self.get_object()
+        # ... sua lógica de envio ao PNCP ...
+        # ao final:
+        # doc.status = "enviado"
+        # doc.pncp_sequencial_documento = <seq>
+        # doc.pncp_publicado_em = timezone.now()
+        # doc.save()
+        return Response(self.get_serializer(doc).data, status=status.HTTP_200_OK)

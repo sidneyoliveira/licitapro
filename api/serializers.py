@@ -326,9 +326,12 @@ class ArquivoUserSerializers(serializers.ModelSerializer):
 # ============================================================
 # 📎 DOCUMENTOS PNCP (Arquivos da Contratação)
 # ============================================================
-
 class DocumentoPNCPSerializer(serializers.ModelSerializer):
+    # IMPORTANTE: este campo permite upload (write)
+    arquivo = serializers.FileField(write_only=True, required=False)
 
+    # Para o frontend abrir/baixar
+    arquivo_url = serializers.SerializerMethodField()
     tipo_documento_nome = serializers.SerializerMethodField()
 
     class Meta:
@@ -340,11 +343,35 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
             "tipo_documento_nome",
             "titulo",
             "observacao",
+
+            # upload e retorno
+            "arquivo",        # write_only
             "arquivo_nome",
+            "arquivo_url",
+
+            "arquivo_hash",
+            "status",
             "pncp_sequencial_documento",
+            "pncp_publicado_em",
             "ativo",
             "criado_em",
         )
+        read_only_fields = (
+            "id",
+            "arquivo_nome",
+            "arquivo_url",
+            "arquivo_hash",
+            "pncp_sequencial_documento",
+            "pncp_publicado_em",
+            "ativo",
+            "criado_em",
+        )
+
+    def get_arquivo_url(self, obj):
+        try:
+            return obj.arquivo.url if obj.arquivo else None
+        except Exception:
+            return None
 
     def get_tipo_documento_nome(self, obj):
         mapa = {
@@ -355,7 +382,6 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
             5: "Anteprojeto",
             6: "Projeto Básico",
             7: "Estudo Técnico Preliminar",
-            8: "Projeto Executivo",
             9: "Mapa de Riscos",
             10: "DFD",
             19: "Minuta de Ata de Registro de Preços",
