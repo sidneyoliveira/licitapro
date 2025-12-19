@@ -1559,120 +1559,103 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
 #         # Vincula automaticamente o arquivo ao usuário logado
 #         serializer.save(usuario=self.request.user)
 
+
+
+
 class DocumentoPNCPViewSet(viewsets.ModelViewSet):
+    queryset = DocumentoPNCP.objects.all().order_by("-criado_em")
     serializer_class = DocumentoPNCPSerializer
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    def get_queryset(self):
-        qs = DocumentoPNCP.objects.all().order_by("-criado_em")
-        processo = self.request.query_params.get("processo")
-        if processo:
-            qs = qs.filter(processo_id=processo)
-        return qs
-
-    @transaction.atomic
-    def create(self, request, *args, **kwargs):
-        processo_id = request.data.get("processo")
-        tipo_id = request.data.get("tipo_documento_id")
-        arquivo = request.FILES.get("arquivo")
-
-        if not processo_id or not tipo_id:
-            return Response(
-                {"detail": "Campos 'processo' e 'tipo_documento_id' são obrigatórios."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not arquivo:
-            return Response(
-                {"detail": "Campo 'arquivo' é obrigatório."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        titulo = request.data.get("titulo") or "Documento"
-        observacao = request.data.get("observacao") or None
-
-        # Calcula hash (sem perder o ponteiro)
-        try:
-            content = arquivo.read()
-            file_hash = hashlib.sha256(content).hexdigest()
-            arquivo.seek(0)
-        except Exception as e:
-            return Response(
-                {"detail": "Falha ao processar o arquivo enviado.", "error": str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Busca documento ativo existente (mesmo processo+tipo)
-        existing = (
-            DocumentoPNCP.objects
-            .filter(processo_id=processo_id, tipo_documento_id=tipo_id, ativo=True)
-            .exclude(status="removido")
-            .order_by("-criado_em")
-            .first()
-        )
-
-        # Se existe e ainda não foi enviado -> atualiza (não cria outro)
-        if existing and existing.status != "enviado":
-            try:
-                existing.titulo = titulo
-                existing.observacao = observacao
-                existing.arquivo = arquivo
-                existing.arquivo_nome = arquivo.name
-                existing.arquivo_hash = file_hash
-                existing.status = "rascunho"
-                existing.ativo = True
-                existing.save()
-            except Exception as e:
-                # Esse erro normalmente denuncia permissão/path no MEDIA_ROOT
-                return Response(
-                    {"detail": "Erro ao salvar arquivo no storage (verifique MEDIA_ROOT/permissões).", "error": str(e)},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-
-            return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
-
-        # Caso contrário cria novo
-        try:
-            doc = DocumentoPNCP.objects.create(
-                processo_id=processo_id,
-                tipo_documento_id=tipo_id,
-                titulo=titulo,
-                observacao=observacao,
-                arquivo=arquivo,
-                arquivo_nome=arquivo.name,
-                arquivo_hash=file_hash,
-                status="rascunho",
-                ativo=True,
-            )
-        except Exception as e:
-            return Response(
-                {"detail": "Erro ao salvar arquivo no storage (verifique MEDIA_ROOT/permissões).", "error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-        return Response(self.get_serializer(doc).data, status=status.HTTP_201_CREATED)
-
-    def destroy(self, request, *args, **kwargs):
-        # HARD DELETE: apaga do banco de verdade
-        obj = self.get_object()
-        obj.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    def _extrair_sequencial_location(self, location: str):
+        """
+        PNCP normalmente devolve um header Location com o recurso criado.
+        Ex.: .../arquivos/123 -> extrai 123
+        """
+        if not location:
+            return None
+        m = re.search(r"/(\d+)\s*$", str(location).strip())
+        return int(m.group(1)) if m else None
 
     @action(detail=True, methods=["post"], url_path="enviar-ao-pncp")
     def enviar_ao_pncp(self, request, pk=None):
         doc = self.get_object()
+        processo = doc.processo
 
+        # 1) Validar se existe arquivo
         if not doc.arquivo:
             return Response(
-                {"detail": "Documento não possui arquivo salvo para envio ao PNCP."},
-                status=status.HTTP_400_BAD_REQUEST
+                {"detail": "Documento não possui arquivo para envio."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Aqui entra sua lógica real de PNCP (service)
-        # Ao concluir:
-        # doc.status = "enviado"
-        # doc.pncp_sequencial_documento = ...
-        # doc.pncp_publicado_em = timezone.now()
-        # doc.save()
+        # 2) Validar se o processo já existe no PNCP (compra publicada)
+        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+            return Response(
+                {
+                    "detail": (
+                        "Este processo ainda não foi publicado no PNCP. "
+                        "Publique a contratação primeiro (processo.pncp_ano_compra e processo.pncp_sequencial_compra)."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 3) Validar CNPJ
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Entidade/CNPJ não configurado no processo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj_orgao = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        if len(cnpj_orgao) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 4) Se já enviado e tem sequencial, você decide a regra:
+        # aqui eu bloqueio reenvio para evitar duplicidade.
+        if doc.status == "enviado" and doc.pncp_sequencial_documento:
+            return Response(
+                {"detail": "Documento já foi enviado ao PNCP."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # 5) Envio ao PNCP (6.3.6 – Inserir Documento a uma Contratação)
+        try:
+            # garante ponteiro no início
+            with doc.arquivo.open("rb") as f:
+                result = PNCPService.anexar_documento_compra(
+                    cnpj_orgao=cnpj_orgao,
+                    ano_compra=int(processo.pncp_ano_compra),
+                    sequencial_compra=int(processo.pncp_sequencial_compra),
+                    arquivo=f,
+                    titulo_documento=doc.titulo or "Documento",
+                    tipo_documento_id=int(doc.tipo_documento_id),
+                    content_type="application/pdf",  # ajuste se você detectar mimetype real
+                )
+        except Exception as exc:
+            # marca erro local
+            doc.status = "erro"
+            doc.save(update_fields=["status"])
+            return Response(
+                {"detail": f"Falha ao enviar documento ao PNCP: {str(exc)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # 6) Atualiza metadados locais após sucesso
+        location = (result or {}).get("location")
+        sequencial = (
+            (result or {}).get("sequencialDocumento")
+            or (result or {}).get("sequencial_arquivo")
+            or self._extrair_sequencial_location(location)
+        )
+
+        doc.pncp_sequencial_documento = sequencial
+        doc.pncp_publicado_em = timezone.now()
+        doc.status = "enviado"
+        doc.save(update_fields=["pncp_sequencial_documento", "pncp_publicado_em", "status"])
 
         return Response(self.get_serializer(doc).data, status=status.HTTP_200_OK)
