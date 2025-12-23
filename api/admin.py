@@ -115,7 +115,7 @@ class FornecedorAdmin(admin.ModelAdmin):
 class FornecedorProcessoAdmin(admin.ModelAdmin):
     list_display = ('processo', 'fornecedor', 'habilitado', 'data_participacao')
     list_filter = ('habilitado', 'processo')
-    search_fields = ('fornecedor__razaosocial', 'processo__numero')
+    search_fields = ('fornecedor__razao_social', 'processo__numero')
 
 
 # ============================================================
@@ -139,7 +139,7 @@ class ItemAdmin(admin.ModelAdmin):
 class ItemFornecedorAdmin(admin.ModelAdmin):
     list_display = ('item', 'fornecedor', 'valor_proposto', 'vencedor')
     list_filter = ('vencedor', 'fornecedor')
-    search_fields = ('item__descricao', 'fornecedor__razaosocial')
+    search_fields = ('item__descricao', 'fornecedor__razao_social')
 
 
 @admin.register(Anotacao)
@@ -160,7 +160,7 @@ class DocumentoPNCPAdmin(admin.ModelAdmin):
 
 @admin.register(AtaRegistroPrecos)
 class AtaRegistroPrecosAdmin(admin.ModelAdmin):
-    list_display = ('id', 'processo', 'numero_ata', 'data_ata', 'criado_em')
+    list_display = ('id', 'processo', 'numero_ata', 'criado_em')
     search_fields = ('processo__numero', 'numero_ata')
 
 @admin.register(DocumentoAtaRegistroPrecos)
