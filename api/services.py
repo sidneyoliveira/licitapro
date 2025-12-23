@@ -741,6 +741,139 @@ class PNCPService:
 
         cls._handle_error(response)
 
+     # ------------------------------------------------------------------ #
+    # 6.4.1 – Inserir Ata de Registro de Preço                          #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def inserir_ata_registro_preco(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        numero_ata_registro_preco: str,
+        ano_ata: int,
+        data_assinatura: str,
+        data_vigencia_inicio: str,
+        data_vigencia_fim: str,
+    ) -> Dict[str, Any]:
+        """
+        Insere uma Ata de Registro de Preços no PNCP para uma contratação.
+        Endpoint:
+          /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas  (POST)
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/atas"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "application/json",
+        }
+
+        payload = {
+            "numeroAtaRegistroPreco": numero_ata_registro_preco,
+            "anoAta": int(ano_ata),
+            "dataAssinatura": data_assinatura,
+            "dataVigenciaInicio": data_vigencia_inicio,
+            "dataVigenciaFim": data_vigencia_fim,
+        }
+
+        cls._log(f"Inserindo Ata de Registro de Preços no PNCP: {url}")
+
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (inserir Ata): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 201):
+            location = resp.headers.get("location") or resp.headers.get("Location")
+            sequencial_ata = None
+            if location:
+                try:
+                    sequencial_ata = int(location.rstrip("/").split("/")[-1])
+                except (ValueError, TypeError):
+                    sequencial_ata = None
+
+            return {
+                "status_code": resp.status_code,
+                "location": location,
+                "sequencialAta": sequencial_ata,
+            }
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # 6.4.3 – Excluir Ata de Registro de Preço                          #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def excluir_ata_registro_preco(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_ata: int,
+        justificativa: str,
+    ) -> bool:
+        """
+        Exclui/Remove uma Ata de Registro de Preços no PNCP.
+        Endpoint:
+          /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas/{sequencialAta} (DELETE)
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "*/*",
+        }
+
+        payload = {
+            "justificativa": (justificativa or "")[:255],
+        }
+
+        cls._log(f"Excluindo Ata de Registro de Preços no PNCP: {url}")
+
+        try:
+            resp = requests.delete(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (excluir Ata): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 204):
+            cls._log("Ata excluída com sucesso do PNCP.")
+            return True
+
+        cls._handle_error(resp)
+
+
 
 # ====================================================================== #
 # IMPORTAÇÃO DE PLANILHA XLSX                                            #

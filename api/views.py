@@ -1676,7 +1676,6 @@ class DocumentoPNCPViewSet(viewsets.ModelViewSet):
 
         return Response(self.get_serializer(doc).data, status=status.HTTP_200_OK)
     
-
 class AtaRegistroPrecosViewSet(viewsets.ModelViewSet):
     queryset = AtaRegistroPrecos.objects.filter(ativo=True).order_by("-criado_em")
     serializer_class = AtaRegistroPrecosSerializer
@@ -1693,6 +1692,124 @@ class AtaRegistroPrecosViewSet(viewsets.ModelViewSet):
         instance.status = "cancelada"
         instance.save(update_fields=["ativo", "status"])
 
+    @action(detail=True, methods=["post"], url_path="publicar-no-pncp")
+    def publicar_no_pncp(self, request, pk=None):
+        ata = self.get_object()
+        processo = ata.processo
+
+        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+            return Response(
+                {"detail": "Processo ainda não foi publicado no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Entidade/CNPJ da contratação não configurados."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        if len(cnpj) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # valida campos obrigatórios da ata
+        if not ata.numero_ata or not ata.ano_ata:
+            return Response(
+                {"detail": "Número e ano da Ata são obrigatórios."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not ata.data_assinatura or not ata.data_vigencia_inicio or not ata.data_vigencia_fim:
+            return Response(
+                {"detail": "Datas de assinatura, início e fim de vigência são obrigatórias."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = PNCPService.inserir_ata_registro_preco(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                numero_ata_registro_preco=ata.numero_ata,
+                ano_ata=ata.ano_ata,
+                data_assinatura=ata.data_assinatura.isoformat(),
+                data_vigencia_inicio=ata.data_vigencia_inicio.isoformat(),
+                data_vigencia_fim=ata.data_vigencia_fim.isoformat(),
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        ata.pncp_sequencial_ata = result.get("sequencialAta")
+        ata.numero_controle_pncp = result.get("numeroControlePNCP")  # se futuramente você buscar
+        ata.status = "publicada"
+        ata.pncp_publicada_em = timezone.now()
+        ata.save(update_fields=[
+            "pncp_sequencial_ata",
+            "numero_controle_pncp",
+            "status",
+            "pncp_publicada_em",
+        ])
+
+        ser = self.get_serializer(ata)
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="excluir-do-pncp")
+    def excluir_do_pncp(self, request, pk=None):
+        ata = self.get_object()
+        processo = ata.processo
+
+        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+            return Response(
+                {"detail": "Processo ainda não foi publicado no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not ata.pncp_sequencial_ata:
+            return Response(
+                {"detail": "Ata não possui sequencial no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Entidade/CNPJ da contratação não configurados."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        if len(cnpj) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        justificativa = request.data.get(
+            "justificativa",
+            "Exclusão de Ata de Registro de Preços solicitada pelo sistema de origem.",
+        )
+
+        try:
+            PNCPService.excluir_ata_registro_preco(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                sequencial_ata=ata.pncp_sequencial_ata,
+                justificativa=justificativa,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # localmente, marca como cancelada mas mantém registro
+        ata.status = "cancelada"
+        ata.save(update_fields=["status"])
+
+        ser = self.get_serializer(ata)
+        return Response(ser.data, status=status.HTTP_200_OK)
+    
 class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
     queryset = DocumentoAtaRegistroPrecos.objects.filter(ativo=True).order_by("-criado_em")
     serializer_class = DocumentoAtaRegistroPrecosSerializer
@@ -1775,7 +1892,7 @@ class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
         obj.save(update_fields=["ativo", "status"])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], url_path="enviar-ao-pncp")
     def enviar_ao_pncp(self, request, pk=None):
         """
         Envia o DOCUMENTO da Ata ao PNCP (6.3.6 – anexar documento à compra).
@@ -1845,7 +1962,7 @@ class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
         ser = self.get_serializer(doc)
         return Response(ser.data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], url_path="remover-do-pncp")
     def remover_do_pncp(self, request, pk=None):
         """
         Remove o documento da Ata no PNCP (6.3.7 – excluir documento).

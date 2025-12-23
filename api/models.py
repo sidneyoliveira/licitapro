@@ -575,8 +575,13 @@ class AtaRegistroPrecos(models.Model):
 
     numero_ata = models.CharField(max_length=50)
     ano_ata = models.PositiveIntegerField()
+
     data_assinatura = models.DateField(blank=True, null=True)
-    vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
+
+    # alinhado com o PNCP (dataInicioVigencia / dataFimVigencia)
+    data_vigencia_inicio = models.DateField(blank=True, null=True)
+    data_vigencia_fim = models.DateField(blank=True, null=True)
+
     observacao = models.TextField(blank=True, null=True)
 
     status = models.CharField(
@@ -585,8 +590,9 @@ class AtaRegistroPrecos(models.Model):
         default="rascunho",
     )
 
-    # Se o PNCP retornar algum sequencial específico p/ ata, guarde aqui
+    # PNCP
     pncp_sequencial_ata = models.PositiveIntegerField(blank=True, null=True)
+    numero_controle_pncp = models.CharField(max_length=100, blank=True, null=True)
     pncp_publicada_em = models.DateTimeField(blank=True, null=True)
 
     ativo = models.BooleanField(default=True)
