@@ -759,9 +759,9 @@ class PNCPService:
         data_vigencia_fim: str,
     ) -> Dict[str, Any]:
         """
-        Insere uma Ata de Registro de Preços no PNCP para uma contratação.
+        6.4.1 – Inserir Ata de Registro de Preço
         Endpoint:
-          /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas  (POST)
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas  (POST)
         """
         token = cls._get_token()
 
@@ -777,14 +777,14 @@ class PNCPService:
         }
 
         payload = {
-            "numeroAtaRegistroPreco": numero_ata_registro_preco,
+            "numeroAtaRegistroPreco": (numero_ata_registro_preco or "").strip(),
             "anoAta": int(ano_ata),
-            "dataAssinatura": data_assinatura,
+            "dataAssinatura": data_assinatura,       # yyyy-MM-dd
             "dataVigenciaInicio": data_vigencia_inicio,
             "dataVigenciaFim": data_vigencia_fim,
         }
 
-        cls._log(f"Inserindo Ata de Registro de Preços no PNCP: {url}")
+        cls._log(f"Inserindo Ata de RP no PNCP: {url}")
 
         try:
             resp = requests.post(
@@ -795,24 +795,24 @@ class PNCPService:
                 timeout=cls.DEFAULT_TIMEOUT,
             )
         except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (inserir Ata): {exc}"
+            msg = f"Falha de comunicação com PNCP (inserir ata): {exc}"
             cls._log(msg, "error")
             raise ValueError(msg) from exc
 
         if resp.status_code in (200, 201):
-            location = resp.headers.get("location") or resp.headers.get("Location")
-            sequencial_ata = None
-            if location:
-                try:
-                    sequencial_ata = int(location.rstrip("/").split("/")[-1])
-                except (ValueError, TypeError):
-                    sequencial_ata = None
-
-            return {
+            # a API retorna location no header e, em alguns ambientes, um JSON
+            result: Dict[str, Any] = {
                 "status_code": resp.status_code,
-                "location": location,
-                "sequencialAta": sequencial_ata,
+                "location": resp.headers.get("location") or resp.headers.get("Location"),
             }
+            try:
+                body = resp.json()
+                if isinstance(body, dict):
+                    result.update(body)
+            except ValueError:
+                result["raw_response"] = resp.text
+            cls._log(f"Ata inserida com sucesso. Location: {result.get('location')}")
+            return result
 
         cls._handle_error(resp)
 
@@ -870,6 +870,193 @@ class PNCPService:
         if resp.status_code in (200, 204):
             cls._log("Ata excluída com sucesso do PNCP.")
             return True
+
+        cls._handle_error(resp)
+    @classmethod
+    def anexar_documento_ata(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_ata: int,
+        arquivo: IO[bytes],
+        titulo_documento: str,
+        tipo_documento_id: int,
+        content_type: str = "application/pdf",
+    ) -> Dict[str, Any]:
+        """
+        6.4.6 – Inserir Documento de uma Ata
+        Endpoint:
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas/{sequencialAta}/arquivos  (POST)
+        """
+        token = cls._get_token()
+
+        if hasattr(arquivo, "seek"):
+            arquivo.seek(0)
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}/arquivos"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Titulo-Documento": (titulo_documento or "Documento")[:50],
+            "Tipo-Documento": str(int(tipo_documento_id)),
+            "accept": "*/*",
+        }
+
+        files = {
+            "arquivo": (
+                getattr(arquivo, "name", "documento.pdf"),
+                arquivo,
+                content_type,
+            )
+        }
+
+        cls._log(f"Anexando documento à Ata no PNCP: {url}")
+
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                files=files,
+                verify=cls.VERIFY_SSL,
+                timeout=90,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (anexar documento à ata): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 201):
+            location = resp.headers.get("location") or resp.headers.get("Location")
+            result: Dict[str, Any] = {
+                "location": location,
+                "status_code": resp.status_code,
+            }
+            try:
+                body = resp.json()
+                if isinstance(body, dict):
+                    result.update(body)
+            except ValueError:
+                result["raw_response"] = resp.text
+
+            cls._log(f"Documento de Ata anexado com sucesso. Location: {location}")
+            return result
+
+        cls._handle_error(resp)
+
+    @classmethod
+    def excluir_documento_ata(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_ata: int,
+        sequencial_documento: int,
+        justificativa: str,
+    ) -> bool:
+        """
+        6.4.7 – Excluir Documento de uma Ata
+        Endpoint:
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas/{sequencialAta}/arquivos/{sequencialDocumento} (DELETE)
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}/arquivos/{int(sequencial_documento)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "*/*",
+        }
+
+        payload = {
+            "justificativa": (justificativa or "")[:255],
+        }
+
+        cls._log(
+            f"Excluindo documento {sequencial_documento} da Ata {sequencial_ata} no PNCP: {url}"
+        )
+
+        try:
+            resp = requests.delete(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (excluir documento de ata): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 204):
+            cls._log("Documento de Ata excluído com sucesso no PNCP.")
+            return True
+
+        cls._handle_error(resp)
+
+    @classmethod
+    def listar_documentos_ata(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_ata: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        6.4.8 – Consultar Todos os Documentos de uma Ata
+        Endpoint:
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas/{sequencialAta}/arquivos (GET)
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}/arquivos"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "accept": "*/*",
+        }
+
+        cls._log(f"Listando documentos da Ata {sequencial_ata} no PNCP: {url}")
+
+        try:
+            resp = requests.get(
+                url,
+                headers=headers,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (listar documentos de ata): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+            except ValueError:
+                return [{"raw_response": resp.text}]
+
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                docs = data.get("documentos") or data.get("Documentos")
+                if isinstance(docs, list):
+                    return docs
+            return [data]
 
         cls._handle_error(resp)
 
