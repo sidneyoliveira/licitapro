@@ -26,6 +26,17 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .services import PNCPService, ImportacaoService
 
+import hashlib
+import re
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.response import Response
+
+
+
 # Imports Locais - Models
 from .models import (
     CustomUser,
@@ -38,13 +49,16 @@ from .models import (
     FornecedorProcesso,
     ItemFornecedor,
     ContratoEmpenho,
-    DocumentoPNCP, # <--- Import Adicionado
+    DocumentoPNCP, 
     Anotacao,
-    ArquivoUser
+    ArquivoUser,
+    AtaRegistroPrecos,
+    DocumentoAtaRegistroPrecos
 )
 
 # Imports Locais - Serializers
 from .serializers import (
+    TIPO_DOC_MAPA,
     UserSerializer,
     EntidadeSerializer,
     OrgaoSerializer,
@@ -56,7 +70,9 @@ from .serializers import (
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
     AnotacaoSerializer,
-    DocumentoPNCPSerializer
+    DocumentoPNCPSerializer,
+    AtaRegistroPrecosSerializer,
+    DocumentoAtaRegistroPrecosSerializer
 )
 
 # Imports Locais - Choices (Atualizado para nova lógica sem Fundamentação)
@@ -1659,3 +1675,232 @@ class DocumentoPNCPViewSet(viewsets.ModelViewSet):
         doc.save(update_fields=["pncp_sequencial_documento", "pncp_publicado_em", "status"])
 
         return Response(self.get_serializer(doc).data, status=status.HTTP_200_OK)
+    
+
+class AtaRegistroPrecosViewSet(viewsets.ModelViewSet):
+    queryset = AtaRegistroPrecos.objects.filter(ativo=True).order_by("-criado_em")
+    serializer_class = AtaRegistroPrecosSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        processo_id = self.request.query_params.get("processo")
+        if processo_id:
+            qs = qs.filter(processo_id=processo_id)
+        return qs
+
+    def perform_destroy(self, instance):
+        instance.ativo = False
+        instance.status = "cancelada"
+        instance.save(update_fields=["ativo", "status"])
+
+class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
+    queryset = DocumentoAtaRegistroPrecos.objects.filter(ativo=True).order_by("-criado_em")
+    serializer_class = DocumentoAtaRegistroPrecosSerializer
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        ata_id = self.request.query_params.get("ata")
+        if ata_id:
+            qs = qs.filter(ata_id=ata_id)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        ata_id = request.data.get("ata")
+        tipo_id = request.data.get("tipo_documento_id")
+        arquivo = request.FILES.get("arquivo")
+
+        if not ata_id or not tipo_id:
+            return Response(
+                {"detail": "Campos 'ata' e 'tipo_documento_id' são obrigatórios."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not arquivo:
+            return Response(
+                {"detail": "Campo 'arquivo' é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ata = get_object_or_404(AtaRegistroPrecos, pk=ata_id, ativo=True)
+
+        # hash do arquivo
+        content = arquivo.read()
+        file_hash = hashlib.sha256(content).hexdigest()
+        arquivo.seek(0)
+
+        # upsert por (ata, tipo_documento_id)
+        existing = (
+            DocumentoAtaRegistroPrecos.objects.filter(
+                ata=ata,
+                tipo_documento_id=tipo_id,
+                ativo=True,
+            )
+            .exclude(status="removido")
+            .order_by("-criado_em")
+            .first()
+        )
+
+        titulo = request.data.get("titulo") or TIPO_DOC_MAPA.get(int(tipo_id), "Documento")
+
+        if existing and existing.status != "enviado":
+            existing.arquivo = arquivo
+            existing.arquivo_nome = arquivo.name
+            existing.arquivo_hash = file_hash
+            existing.titulo = titulo
+            existing.status = "rascunho"
+            existing.ativo = True
+            existing.save()
+            ser = self.get_serializer(existing)
+            return Response(ser.data, status=status.HTTP_200_OK)
+
+        doc = DocumentoAtaRegistroPrecos.objects.create(
+            ata=ata,
+            tipo_documento_id=tipo_id,
+            titulo=titulo,
+            observacao=request.data.get("observacao") or None,
+            arquivo=arquivo,
+            arquivo_nome=arquivo.name,
+            arquivo_hash=file_hash,
+            status="rascunho",
+            ativo=True,
+        )
+        ser = self.get_serializer(doc)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        obj = self.get_object()
+        obj.ativo = False
+        obj.status = "removido"
+        obj.save(update_fields=["ativo", "status"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"])
+    def enviar_ao_pncp(self, request, pk=None):
+        """
+        Envia o DOCUMENTO da Ata ao PNCP (6.3.6 – anexar documento à compra).
+        Usa os dados de publicação da COMPRA já existentes no processo.
+        """
+        doc = self.get_object()
+        ata = doc.ata
+        processo = ata.processo
+
+        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+            return Response(
+                {"detail": "Processo ainda não publicado no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Entidade/CNPJ da contratação não configurados."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        if len(cnpj) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not doc.arquivo:
+            return Response(
+                {"detail": "Documento sem arquivo para envio."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content_type = getattr(getattr(doc.arquivo, "file", None), "content_type", "application/pdf")
+
+        try:
+            result = PNCPService.anexar_documento_compra(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                arquivo=doc.arquivo,
+                titulo_documento=doc.titulo,
+                tipo_documento_id=doc.tipo_documento_id,
+                content_type=content_type,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        seq = (
+            result.get("sequencialDocumento")
+            or result.get("sequencialArquivo")
+            or result.get("sequencial")
+        )
+
+        doc.status = "enviado"
+        doc.pncp_sequencial_documento = seq
+        doc.pncp_publicado_em = timezone.now()
+        doc.save(update_fields=["status", "pncp_sequencial_documento", "pncp_publicado_em"])
+
+        # podemos marcar a ata como publicada, se desejar
+        if ata.status != "publicada":
+            ata.status = "publicada"
+            ata.pncp_publicada_em = ata.pncp_publicada_em or timezone.now()
+            ata.save(update_fields=["status", "pncp_publicada_em"])
+
+        ser = self.get_serializer(doc)
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def remover_do_pncp(self, request, pk=None):
+        """
+        Remove o documento da Ata no PNCP (6.3.7 – excluir documento).
+        E volta o status local para rascunho.
+        """
+        doc = self.get_object()
+        ata = doc.ata
+        processo = ata.processo
+
+        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+            return Response(
+                {"detail": "Processo ainda não publicado no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not doc.pncp_sequencial_documento:
+            return Response(
+                {"detail": "Documento não possui sequencial no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Entidade/CNPJ da contratação não configurados."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        if len(cnpj) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        justificativa = request.data.get(
+            "justificativa",
+            "Exclusão de documento de Ata solicitada pelo sistema de origem.",
+        )
+
+        try:
+            PNCPService.excluir_documento_compra(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                sequencial_arquivo=doc.pncp_sequencial_documento,
+                justificativa=justificativa,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # volta a ser rascunho local
+        doc.status = "rascunho"
+        doc.pncp_sequencial_documento = None
+        doc.pncp_publicado_em = None
+        doc.save(update_fields=["status", "pncp_sequencial_documento", "pncp_publicado_em"])
+
+        ser = self.get_serializer(doc)
+        return Response(ser.data, status=status.HTTP_200_OK)

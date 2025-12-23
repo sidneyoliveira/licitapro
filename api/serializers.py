@@ -13,7 +13,9 @@ from .models import (
     ContratoEmpenho,
     Anotacao,
     ArquivoUser,
-    DocumentoPNCP
+    DocumentoPNCP,
+    AtaRegistroPrecos,
+    DocumentoAtaRegistroPrecos,
 )
 from .choices import (
     MAP_MODALIDADE_PNCP,
@@ -29,6 +31,21 @@ from .choices import (
 
 User = get_user_model()
 
+
+# Reutiliza o mesmo mapa de tipos que você já usa
+TIPO_DOC_MAPA = {
+    1: "Aviso de Contratação Direta",
+    2: "Edital",
+    3: "Minuta do Contrato",
+    4: "Termo de Referência",
+    5: "Anteprojeto",
+    6: "Projeto Básico",
+    7: "Estudo Técnico Preliminar",
+    9: "Mapa de Riscos",
+    10: "DFD",
+    19: "Minuta de Ata de Registro de Preços",
+    20: "Ato que autoriza a Contratação Direta",
+}
 
 # ============================================================
 # 👤 USER
@@ -376,3 +393,89 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
             20: "Ato que autoriza a Contratação Direta",
         }
         return mapa.get(obj.tipo_documento_id, f"Tipo {obj.tipo_documento_id}")
+
+
+
+
+class AtaRegistroPrecosSerializer(serializers.ModelSerializer):
+    processo_numero = serializers.CharField(
+        source="processo.numero_processo",
+        read_only=True,
+    )
+
+    class Meta:
+        model = AtaRegistroPrecos
+        fields = (
+            "id",
+            "processo",
+            "processo_numero",
+            "numero_ata",
+            "ano_ata",
+            "data_assinatura",
+            "vigencia_meses",
+            "observacao",
+            "status",
+            "pncp_sequencial_ata",
+            "pncp_publicada_em",
+            "ativo",
+            "criado_em",
+        )
+        read_only_fields = (
+            "status",
+            "pncp_sequencial_ata",
+            "pncp_publicada_em",
+            "ativo",
+            "criado_em",
+        )
+
+
+class DocumentoAtaRegistroPrecosSerializer(serializers.ModelSerializer):
+    arquivo = serializers.FileField(required=False)
+    arquivo_url = serializers.SerializerMethodField()
+    tipo_documento_nome = serializers.SerializerMethodField()
+    ata_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DocumentoAtaRegistroPrecos
+        fields = (
+            "id",
+            "ata",
+            "ata_display",
+            "tipo_documento_id",
+            "tipo_documento_nome",
+            "titulo",
+            "observacao",
+            "arquivo",
+            "arquivo_nome",
+            "arquivo_url",
+            "arquivo_hash",
+            "status",
+            "pncp_sequencial_documento",
+            "pncp_publicado_em",
+            "ativo",
+            "criado_em",
+        )
+        read_only_fields = (
+            "arquivo_nome",
+            "arquivo_url",
+            "arquivo_hash",
+            "status",
+            "pncp_sequencial_documento",
+            "pncp_publicado_em",
+            "ativo",
+            "criado_em",
+        )
+
+    def get_arquivo_url(self, obj):
+        try:
+            return obj.arquivo.url if obj.arquivo else None
+        except Exception:
+            return None
+
+    def get_tipo_documento_nome(self, obj):
+        return TIPO_DOC_MAPA.get(obj.tipo_documento_id, f"Tipo {obj.tipo_documento_id}")
+
+    def get_ata_display(self, obj):
+        if not obj.ata:
+            return None
+        return f"Ata {obj.ata.numero_ata}/{obj.ata.ano_ata}"

@@ -555,3 +555,88 @@ class ArquivoUser(models.Model):
 
     def __str__(self):
         return f"Arquivo de {self.usuario.username} - {self.descricao or self.arquivo.name}"
+
+# ============================================================
+# 📜 ATA DE REGISTRO DE PREÇOS
+# ============================================================
+
+class AtaRegistroPrecos(models.Model):
+    STATUS_CHOICES = (
+        ("rascunho", "Rascunho (local)"),
+        ("publicada", "Publicada no PNCP"),
+        ("cancelada", "Cancelada"),
+    )
+
+    processo = models.ForeignKey(
+        ProcessoLicitatorio,
+        related_name="atas_registro",
+        on_delete=models.CASCADE,
+    )
+
+    numero_ata = models.CharField(max_length=50)
+    ano_ata = models.PositiveIntegerField()
+    data_assinatura = models.DateField(blank=True, null=True)
+    vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
+    observacao = models.TextField(blank=True, null=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="rascunho",
+    )
+
+    # Se o PNCP retornar algum sequencial específico p/ ata, guarde aqui
+    pncp_sequencial_ata = models.PositiveIntegerField(blank=True, null=True)
+    pncp_publicada_em = models.DateTimeField(blank=True, null=True)
+
+    ativo = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-criado_em"]
+        verbose_name = "Ata de Registro de Preços"
+        verbose_name_plural = "Atas de Registro de Preços"
+
+    def __str__(self):
+        return f"Ata {self.numero_ata}/{self.ano_ata} - {self.processo}"
+
+
+class DocumentoAtaRegistroPrecos(models.Model):
+    STATUS = (
+        ("rascunho", "Rascunho (local)"),
+        ("enviado", "Enviado ao PNCP"),
+        ("erro", "Erro no envio"),
+        ("removido", "Removido"),
+    )
+
+    ata = models.ForeignKey(
+        AtaRegistroPrecos,
+        related_name="documentos",
+        on_delete=models.CASCADE,
+    )
+
+    tipo_documento_id = models.PositiveIntegerField()
+    titulo = models.CharField(max_length=255, default="Documento da Ata")
+    observacao = models.TextField(blank=True, null=True)
+
+    arquivo = models.FileField(upload_to="atas_registro_pncp/")
+    arquivo_nome = models.CharField(max_length=255, blank=True, null=True)
+    arquivo_hash = models.CharField(max_length=80, blank=True, null=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS,
+        default="rascunho",
+    )
+
+    pncp_sequencial_documento = models.PositiveIntegerField(blank=True, null=True)
+    pncp_publicado_em = models.DateTimeField(blank=True, null=True)
+
+    ativo = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-criado_em"]
+
+    def __str__(self):
+        return f"Doc Ata {self.titulo} ({self.ata})"
