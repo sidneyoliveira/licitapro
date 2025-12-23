@@ -65,7 +65,7 @@ router.register(r'anotacoes', AnotacaoViewSet, basename='anotacao')
 
 # DOCUMENTOS PNCP (IMPORTANTE: definir basename)
 router.register(r'documentos-pncp', DocumentoPNCPViewSet, basename='documento-pncp')
-router.register(r'atas-registro-precos', AtaRegistroPrecosViewSet, basename='ata-registro-precos')
+router.register(r'atas-registro-precos', AtaRegistroPrecosViewSet, basename='atas-registro-precos')
 router.register(r'documentos-atas', DocumentoAtaRegistroPrecosViewSet, basename='documento-ata')
 
 # ============================================================
