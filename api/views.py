@@ -1895,16 +1895,24 @@ class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="enviar-ao-pncp")
     def enviar_ao_pncp(self, request, pk=None):
         """
-        Envia o DOCUMENTO da Ata ao PNCP (6.3.6 – anexar documento à compra).
-        Usa os dados de publicação da COMPRA já existentes no processo.
+        Envia o DOCUMENTO da Ata ao PNCP (6.4.6 – inserir documento de uma Ata).
+        Usa os dados de publicação da COMPRA (processo) + sequencial da ATA.
         """
         doc = self.get_object()
         ata = doc.ata
         processo = ata.processo
 
+        # Compra precisa estar publicada
         if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
             return Response(
-                {"detail": "Processo ainda não publicado no PNCP."},
+                {"detail": "Processo ainda não publicado no PNCP (ano/seq)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Ata precisa ter sido inserida no PNCP (sequencialAta)
+        if not ata.pncp_sequencial_ata:
+            return Response(
+                {"detail": "Ata ainda não publicada no PNCP (sequencialAta ausente)."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1927,19 +1935,25 @@ class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # tenta pegar o content_type, mas se não vier, assume PDF
         content_type = getattr(getattr(doc.arquivo, "file", None), "content_type", "application/pdf")
 
         try:
-            result = PNCPService.anexar_documento_compra(
+            # 6.4.6 – Inserir Documento de uma Ata
+            result = PNCPService.anexar_documento_ata(
                 cnpj_orgao=cnpj,
                 ano_compra=processo.pncp_ano_compra,
                 sequencial_compra=processo.pncp_sequencial_compra,
+                sequencial_ata=ata.pncp_sequencial_ata,
                 arquivo=doc.arquivo,
                 titulo_documento=doc.titulo,
                 tipo_documento_id=doc.tipo_documento_id,
                 content_type=content_type,
             )
         except ValueError as exc:
+            # marca como erro se der falha de integração
+            doc.status = "erro"
+            doc.save(update_fields=["status"])
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         seq = (
@@ -1953,7 +1967,7 @@ class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
         doc.pncp_publicado_em = timezone.now()
         doc.save(update_fields=["status", "pncp_sequencial_documento", "pncp_publicado_em"])
 
-        # podemos marcar a ata como publicada, se desejar
+        # se quiser, pode marcar a ata como publicada (ainda que já esteja)
         if ata.status != "publicada":
             ata.status = "publicada"
             ata.pncp_publicada_em = ata.pncp_publicada_em or timezone.now()
@@ -1962,11 +1976,11 @@ class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
         ser = self.get_serializer(doc)
         return Response(ser.data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["post"], url_path="remover-do-pncp")
-    def remover_do_pncp(self, request, pk=None):
+    @action(detail=True, methods=["post"], url_path="excluir-do-pncp")
+    def excluir_do_pncp(self, request, pk=None):
         """
-        Remove o documento da Ata no PNCP (6.3.7 – excluir documento).
-        E volta o status local para rascunho.
+        Remove o DOCUMENTO da Ata no PNCP (6.4.7 – excluir documento de uma Ata)
+        e volta o status local para rascunho.
         """
         doc = self.get_object()
         ata = doc.ata
@@ -1974,13 +1988,19 @@ class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
 
         if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
             return Response(
-                {"detail": "Processo ainda não publicado no PNCP."},
+                {"detail": "Processo ainda não publicado no PNCP (ano/seq)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not ata.pncp_sequencial_ata:
+            return Response(
+                {"detail": "Ata ainda não publicada no PNCP (sequencialAta ausente)."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if not doc.pncp_sequencial_documento:
             return Response(
-                {"detail": "Documento não possui sequencial no PNCP."},
+                {"detail": "Documento não possui sequencial no PNCP para exclusão."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2003,11 +2023,13 @@ class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
         )
 
         try:
-            PNCPService.excluir_documento_compra(
+            # 6.4.7 – Excluir Documento de uma Ata
+            PNCPService.excluir_documento_ata(
                 cnpj_orgao=cnpj,
                 ano_compra=processo.pncp_ano_compra,
                 sequencial_compra=processo.pncp_sequencial_compra,
-                sequencial_arquivo=doc.pncp_sequencial_documento,
+                sequencial_ata=ata.pncp_sequencial_ata,
+                sequencial_documento=doc.pncp_sequencial_documento,
                 justificativa=justificativa,
             )
         except ValueError as exc:
