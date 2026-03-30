@@ -52,9 +52,38 @@ TIPO_DOC_MAPA = {
 # ============================================================
 
 class UserSerializer(serializers.ModelSerializer):
+    entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
+    password = serializers.CharField(write_only=True, required=False, min_length=6)
+
     class Meta:
         model = CustomUser
-        fields = ("id", "username", "first_name", "last_name", "email", "cpf", "phone", "profile_image")
+        fields = (
+            "id", "username", "first_name", "last_name", "email",
+            "cpf", "phone", "profile_image", "data_nascimento",
+            "entidade", "entidade_nome", "password",
+            "is_active", "is_staff", "is_superuser",
+            "date_joined", "last_login",
+        )
+        read_only_fields = ("date_joined", "last_login", "entidade_nome")
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+        user = CustomUser(**validated_data)
+        if password:
+            user.set_password(password)
+        else:
+            user.set_unusable_password()
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("password", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
 
 
 # ============================================================
@@ -306,10 +335,14 @@ class ContratoEmpenhoSerializer(serializers.ModelSerializer):
 
 class AnotacaoSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(source="usuario.username", read_only=True)
+    # Aliases para o frontend (envia "text", lê "text"/"date")
+    text = serializers.CharField(source="texto")
+    date = serializers.DateTimeField(source="criado_em", read_only=True)
 
     class Meta:
         model = Anotacao
-        fields = ("id", "usuario", "usuario_nome", "texto", "criado_em", "atualizado_em")
+        fields = ("id", "usuario", "usuario_nome", "texto", "text", "date", "criado_em", "atualizado_em")
+        read_only_fields = ("usuario", "criado_em", "atualizado_em", "date")
 
 
 # ============================================================
@@ -322,7 +355,7 @@ class ArquivoUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = ArquivoUser
         fields = ("id", "usuario", "arquivo", "arquivo_url", "descricao", "enviado_em")
-        read_only_fields = ("arquivo_url", "enviado_em")
+        read_only_fields = ("usuario", "arquivo_url", "enviado_em")
 
     def get_arquivo_url(self, obj):
         try:
@@ -412,10 +445,12 @@ class AtaRegistroPrecosSerializer(serializers.ModelSerializer):
             "numero_ata",
             "ano_ata",
             "data_assinatura",
-            "vigencia_meses",
+            "data_vigencia_inicio",
+            "data_vigencia_fim",
             "observacao",
             "status",
             "pncp_sequencial_ata",
+            "numero_controle_pncp",
             "pncp_publicada_em",
             "ativo",
             "criado_em",
@@ -423,6 +458,7 @@ class AtaRegistroPrecosSerializer(serializers.ModelSerializer):
         read_only_fields = (
             "status",
             "pncp_sequencial_ata",
+            "numero_controle_pncp",
             "pncp_publicada_em",
             "ativo",
             "criado_em",

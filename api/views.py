@@ -26,14 +26,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .services import PNCPService, ImportacaoService
 
-import hashlib
-import re
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from rest_framework.response import Response
 
 
 
@@ -70,6 +63,7 @@ from .serializers import (
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
     AnotacaoSerializer,
+    ArquivoUserSerializer,
     DocumentoPNCPSerializer,
     AtaRegistroPrecosSerializer,
     DocumentoAtaRegistroPrecosSerializer
@@ -96,6 +90,35 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 GOOGLE_CLIENT_ID = getattr(settings, "GOOGLE_CLIENT_ID", "") or ""
+
+
+# ============================================================
+# 🔒 MIXIN DE ISOLAMENTO POR ENTIDADE (MULTI-TENANT)
+# ============================================================
+
+class EntidadeFilterMixin:
+    """
+    Mixin que filtra automaticamente querysets pela entidade do usuário logado.
+    Superusers veem tudo. Usuários sem entidade vinculada veem apenas registros
+    sem entidade (para permitir configuração inicial).
+    """
+    entidade_field = 'entidade'  # Override em subclasses se o campo FK tiver outro nome
+
+    def get_user_entidade(self):
+        user = self.request.user
+        if user.is_superuser:
+            return None  # Superuser vê tudo
+        return getattr(user, 'entidade_id', None)
+
+    def filter_by_entidade(self, qs):
+        entidade_id = self.get_user_entidade()
+        if entidade_id is None and self.request.user.is_superuser:
+            return qs  # Superuser: sem filtro
+        if entidade_id:
+            return qs.filter(**{self.entidade_field: entidade_id})
+        # Usuário sem entidade vinculada: não vê nada com entidade
+        return qs.filter(**{f'{self.entidade_field}__isnull': True})
+
 
 def parse_pncp_id(raw, slug_map, field_name="campo"):
     if raw is None or str(raw).strip() == "":
@@ -173,16 +196,16 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     Acesso restrito a staff/admin.
     """
 
-    queryset = User.objects.all().order_by("id")
     serializer_class = UserSerializer
     permission_classes = [IsAdminUser]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
     parser_classes = [
         parsers.MultiPartParser,
         parsers.FormParser,
         parsers.JSONParser,
     ]
     search_fields = ["username", "email", "first_name", "last_name"]
+    filterset_fields = ["entidade", "is_active", "is_staff"]
     ordering_fields = [
         "id",
         "username",
@@ -194,6 +217,9 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     ]
     ordering = ["username"]
 
+    def get_queryset(self):
+        return User.objects.select_related("entidade").all().order_by("id")
+
 
 class CreateUserView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
@@ -203,15 +229,16 @@ class CreateUserView(generics.CreateAPIView):
 
 class ManageUserView(generics.RetrieveUpdateAPIView):
     """
-    GET /me/  -> retorna usuário autenticado
+    GET /me/  -> retorna usuário autenticado (com entidade)
     PUT/PATCH -> atualiza parcialmente
     """
 
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_object(self):
-        return self.request.user
+        return CustomUser.objects.select_related("entidade").get(pk=self.request.user.pk)
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -224,13 +251,19 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
 # ============================================================
 
 
-class EntidadeViewSet(viewsets.ModelViewSet):
-    queryset = Entidade.objects.all().order_by("nome")
+class EntidadeViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = EntidadeSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        qs = Entidade.objects.all().order_by("nome")
+        entidade_id = self.get_user_entidade()
+        if entidade_id is not None:
+            qs = qs.filter(id=entidade_id)
+        return qs
 
-class OrgaoViewSet(viewsets.ModelViewSet):
+
+class OrgaoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = OrgaoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
@@ -239,9 +272,14 @@ class OrgaoViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Orgao.objects.select_related("entidade").order_by("nome")
-        entidade_id = self.request.query_params.get("entidade")
-        if entidade_id:
+        # Multi-tenant: filtra pela entidade do usuário
+        entidade_id = self.get_user_entidade()
+        if entidade_id is not None:
             qs = qs.filter(entidade_id=entidade_id)
+        # Filtro adicional por query param
+        entidade_param = self.request.query_params.get("entidade")
+        if entidade_param:
+            qs = qs.filter(entidade_id=entidade_param)
         return qs
 
     @action(detail=False, methods=["post"], url_path="importar-pncp")
@@ -406,17 +444,20 @@ class FornecedorViewSet(viewsets.ModelViewSet):
 # ============================================================
 
 
-class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
-    queryset = (
-        ProcessoLicitatorio.objects.select_related("entidade", "orgao")
-        .all()
-        .order_by("-data_abertura")
-    )
+class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = ProcessoLicitatorioSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     search_fields = ["numero_processo", "numero_certame", "objeto"]
     filterset_fields = ["modalidade", "situacao", "entidade", "orgao"]
+
+    def get_queryset(self):
+        qs = (
+            ProcessoLicitatorio.objects.select_related("entidade", "orgao")
+            .all()
+            .order_by("-data_abertura")
+        )
+        return self.filter_by_entidade(qs)
 
     # ----------------------------------------------------------------------
     # IMPORTAÇÃO XLSX
@@ -1271,18 +1312,113 @@ class ProcessoLicitatorioViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+    # ----------------------------------------------------------------------
+    # PUBLICAR RESULTADO DA COMPRA NO PNCP (6.3.9)
+    # Envia os resultados (fornecedores vencedores por item)
+    # ----------------------------------------------------------------------
+    @action(detail=True, methods=["post"], url_path="pncp/resultado")
+    def publicar_resultado_pncp(self, request, pk=None):
+        """
+        Publica os resultados da compra no PNCP.
+        Monta automaticamente o payload a partir dos ItemFornecedor com vencedor=True.
+        """
+        processo = self.get_object()
+
+        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+            return Response(
+                {"detail": "Processo não publicado no PNCP ainda."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Processo sem Entidade/CNPJ."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj = re.sub(r"\D", "", processo.entidade.cnpj or "")
+
+        # Busca propostas vencedoras
+        vencedores = ItemFornecedor.objects.filter(
+            item__processo=processo,
+            vencedor=True
+        ).select_related("item", "fornecedor")
+
+        if not vencedores.exists():
+            return Response(
+                {"detail": "Nenhum item possui fornecedor vencedor definido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resultados = []
+        for v in vencedores:
+            cnpj_forn = re.sub(r"\D", "", v.fornecedor.cnpj or "")
+            resultados.append({
+                "numeroItem": v.item.pncp_numero_item or v.item.ordem,
+                "niFornecedor": cnpj_forn,
+                "tipoPessoaFornecedor": "PJ" if len(cnpj_forn) == 14 else "PF",
+                "valorUnitario": float(v.valor_proposto or 0),
+                "quantidadeHomologada": float(v.item.quantidade or 0),
+            })
+
+        try:
+            token = PNCPService._get_token()
+            url = (
+                f"{PNCPService.BASE_URL}/orgaos/{cnpj}/compras/"
+                f"{processo.pncp_ano_compra}/{processo.pncp_sequencial_compra}/resultados"
+            )
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            }
+            payload = {"resultadosCompraItem": resultados}
+
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                verify=PNCPService.VERIFY_SSL,
+                timeout=60,
+            )
+
+            if resp.status_code in (200, 201):
+                return Response(
+                    {"detail": "Resultado publicado no PNCP com sucesso!", "itens": len(resultados)},
+                    status=status.HTTP_200_OK,
+                )
+            else:
+                try:
+                    err = resp.json()
+                except Exception:
+                    err = resp.text
+                return Response(
+                    {"detail": f"PNCP retornou {resp.status_code}", "pncp_error": err},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Exception as e:
+            logger.exception("Erro ao publicar resultado no PNCP")
+            return Response(
+                {"detail": f"Erro: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 # ============================================================
 # 4️⃣ LOTE
 # ============================================================
 
 
-class LoteViewSet(viewsets.ModelViewSet):
-    queryset = Lote.objects.select_related("processo").all()
+class LoteViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = LoteSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["processo"]
     search_fields = ["descricao"]
+    entidade_field = 'processo__entidade'
+
+    def get_queryset(self):
+        qs = Lote.objects.select_related("processo", "processo__entidade").all()
+        return self.filter_by_entidade(qs)
 
     @action(detail=False, methods=["post"], url_path="bulk-delete")
     def bulk_delete(self, request):
@@ -1301,13 +1437,17 @@ class LoteViewSet(viewsets.ModelViewSet):
 # ============================================================
 
 
-class ItemViewSet(viewsets.ModelViewSet):
-    queryset = Item.objects.select_related("processo", "lote", "fornecedor").all()
+class ItemViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = ItemSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["processo", "lote", "fornecedor"]
     search_fields = ["descricao", "unidade", "especificacao"]
+    entidade_field = 'processo__entidade'
+
+    def get_queryset(self):
+        qs = Item.objects.select_related("processo", "lote", "fornecedor", "processo__entidade").all()
+        return self.filter_by_entidade(qs)
 
     @action(detail=False, methods=["post"], url_path="bulk-delete")
     def bulk_delete(self, request):
@@ -1353,15 +1493,19 @@ class ItemViewSet(viewsets.ModelViewSet):
 # ============================================================
 
 
-class FornecedorProcessoViewSet(viewsets.ModelViewSet):
-    queryset = FornecedorProcesso.objects.select_related(
-        "processo", "fornecedor"
-    ).all()
+class FornecedorProcessoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = FornecedorProcessoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["processo", "fornecedor"]
     search_fields = ["fornecedor__razao_social", "fornecedor__cnpj"]
+    entidade_field = 'processo__entidade'
+
+    def get_queryset(self):
+        qs = FornecedorProcesso.objects.select_related(
+            "processo", "fornecedor", "processo__entidade"
+        ).all()
+        return self.filter_by_entidade(qs)
 
     @action(detail=False, methods=["post"], url_path="bulk-delete")
     def bulk_delete(self, request):
@@ -1377,13 +1521,19 @@ class FornecedorProcessoViewSet(viewsets.ModelViewSet):
         return Response({"deleted": deleted}, status=status.HTTP_200_OK)
 
 
-class ItemFornecedorViewSet(viewsets.ModelViewSet):
-    queryset = ItemFornecedor.objects.select_related("item", "fornecedor").all()
+class ItemFornecedorViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = ItemFornecedorSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["item", "fornecedor", "vencedor"]
     search_fields = ["item__descricao", "fornecedor__razao_social"]
+    entidade_field = 'item__processo__entidade'
+
+    def get_queryset(self):
+        qs = ItemFornecedor.objects.select_related(
+            "item", "fornecedor", "item__processo"
+        ).all()
+        return self.filter_by_entidade(qs)
 
 
 # ============================================================
@@ -1415,15 +1565,27 @@ class ReorderItensView(APIView):
 class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, _request):
+    def get(self, request):
+        user = request.user
+        entidade_id = getattr(user, 'entidade_id', None)
+
+        # Superuser vê tudo; usuário normal vê apenas da sua entidade
+        if user.is_superuser or not entidade_id:
+            processos_qs = ProcessoLicitatorio.objects.all()
+            itens_qs = Item.objects.all()
+            orgaos_qs = Orgao.objects.all()
+        else:
+            processos_qs = ProcessoLicitatorio.objects.filter(entidade_id=entidade_id)
+            itens_qs = Item.objects.filter(processo__entidade_id=entidade_id)
+            orgaos_qs = Orgao.objects.filter(entidade_id=entidade_id)
+
         data = {
-            "total_processos": ProcessoLicitatorio.objects.count(),
-            "processos_em_andamento": ProcessoLicitatorio.objects.filter(
-                situacao="em_contratacao"
-            ).count(),
+            "total_processos": processos_qs.count(),
+            "processos_em_andamento": processos_qs.filter(situacao="em_contratacao").count(),
+            "processos_publicados": processos_qs.filter(situacao="publicado").count(),
             "total_fornecedores": Fornecedor.objects.count(),
-            "total_orgaos": Orgao.objects.count(),
-            "total_itens": Item.objects.count(),
+            "total_orgaos": orgaos_qs.count(),
+            "total_itens": itens_qs.count(),
         }
         return Response(data)
 
@@ -1544,12 +1706,7 @@ class GoogleLoginView(APIView):
 # ============================================================
 
 
-class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
-    queryset = (
-        ContratoEmpenho.objects.select_related("processo")
-        .all()
-        .order_by("-criado_em", "id")
-    )
+class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = ContratoEmpenhoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
@@ -1559,6 +1716,15 @@ class ContratoEmpenhoViewSet(viewsets.ModelViewSet):
         "processo__numero_processo",
         "ni_fornecedor",
     ]
+    entidade_field = 'processo__entidade'
+
+    def get_queryset(self):
+        qs = (
+            ContratoEmpenho.objects.select_related("processo", "processo__entidade")
+            .all()
+            .order_by("-criado_em", "id")
+        )
+        return self.filter_by_entidade(qs)
 
 class SystemConfigView(APIView):
     
@@ -1596,25 +1762,31 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
 # 🗂️ ARQUIVOS USUÁRIO VIEWSET
 # ============================================================
 
-# class ArquivoUserViewSet(viewsets.ModelViewSet):
-#     serializer_class = ArquivoUserSerializers
-#     permission_classes = [IsAuthenticated]
+class ArquivoUserViewSet(viewsets.ModelViewSet):
+    serializer_class = ArquivoUserSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
-#     def get_queryset(self):
-#         # Retorna apenas os arquivos do usuário logado
-#         return ArquivoUser.objects.filter(usuario=self.request.user).order_by('-criado_em')
+    def get_queryset(self):
+        # Retorna apenas os arquivos do usuário logado
+        return ArquivoUser.objects.filter(usuario=self.request.user).order_by('-enviado_em')
 
-#     def perform_create(self, serializer):
-#         # Vincula automaticamente o arquivo ao usuário logado
-#         serializer.save(usuario=self.request.user)
-
-
+    def perform_create(self, serializer):
+        # Vincula automaticamente o arquivo ao usuário logado
+        serializer.save(usuario=self.request.user)
 
 
-class DocumentoPNCPViewSet(viewsets.ModelViewSet):
-    queryset = DocumentoPNCP.objects.all().order_by("-criado_em")
+
+
+class DocumentoPNCPViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = DocumentoPNCPSerializer
+    permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
+    entidade_field = 'processo__entidade'
+
+    def get_queryset(self):
+        qs = DocumentoPNCP.objects.select_related("processo", "processo__entidade").all().order_by("-criado_em")
+        return self.filter_by_entidade(qs)
 
     def _extrair_sequencial_location(self, location: str):
         """
@@ -1709,12 +1881,16 @@ class DocumentoPNCPViewSet(viewsets.ModelViewSet):
 
         return Response(self.get_serializer(doc).data, status=status.HTTP_200_OK)
     
-class AtaRegistroPrecosViewSet(viewsets.ModelViewSet):
-    queryset = AtaRegistroPrecos.objects.filter(ativo=True).order_by("-criado_em")
+class AtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = AtaRegistroPrecosSerializer
+    permission_classes = [IsAuthenticated]
+    entidade_field = 'processo__entidade'
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = AtaRegistroPrecos.objects.select_related(
+            "processo", "processo__entidade"
+        ).filter(ativo=True).order_by("-criado_em")
+        qs = self.filter_by_entidade(qs)
         processo_id = self.request.query_params.get("processo")
         if processo_id:
             qs = qs.filter(processo_id=processo_id)
@@ -1852,13 +2028,17 @@ class AtaRegistroPrecosViewSet(viewsets.ModelViewSet):
         ser = self.get_serializer(ata)
         return Response(ser.data, status=status.HTTP_200_OK)
     
-class DocumentoAtaRegistroPrecosViewSet(viewsets.ModelViewSet):
-    queryset = DocumentoAtaRegistroPrecos.objects.filter(ativo=True).order_by("-criado_em")
+class DocumentoAtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = DocumentoAtaRegistroPrecosSerializer
+    permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
+    entidade_field = 'ata__processo__entidade'
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = DocumentoAtaRegistroPrecos.objects.select_related(
+            "ata", "ata__processo", "ata__processo__entidade"
+        ).filter(ativo=True).order_by("-criado_em")
+        qs = self.filter_by_entidade(qs)
         ata_id = self.request.query_params.get("ata")
         if ata_id:
             qs = qs.filter(ata_id=ata_id)

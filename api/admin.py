@@ -22,9 +22,9 @@ from .models import (
 
 @admin.register(CustomUser)
 class CustomUserAdmin(admin.ModelAdmin):
-    list_display = ('username', 'email', 'cpf', 'is_staff', 'is_superuser')
+    list_display = ('username', 'email', 'cpf', 'entidade', 'is_staff', 'is_superuser')
     search_fields = ('username', 'email', 'cpf')
-    list_filter = ('is_staff', 'is_superuser', 'is_active')
+    list_filter = ('is_staff', 'is_superuser', 'is_active', 'entidade')
 
 
 # ============================================================

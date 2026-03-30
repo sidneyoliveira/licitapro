@@ -23,7 +23,7 @@ from .views import (
     ConstantesSistemaView,
     SystemConfigView,
     AnotacaoViewSet,
-    # ArquivoUserViewSet,
+    ArquivoUserViewSet,
     DocumentoPNCPViewSet,
     AtaRegistroPrecosViewSet,
     DocumentoAtaRegistroPrecosViewSet,
@@ -61,7 +61,7 @@ router.register(r'usuarios', UsuarioViewSet, basename='usuario')
 router.register(r'anotacoes', AnotacaoViewSet, basename='anotacao')
 
 # ARQUIVOS DO USUÁRIO
-# router.register(r'arquivos-user', ArquivoUserViewSet, basename='arquivos-user')
+router.register(r'arquivos-user', ArquivoUserViewSet, basename='arquivos-user')
 
 # DOCUMENTOS PNCP (IMPORTANTE: definir basename)
 router.register(r'documentos-pncp', DocumentoPNCPViewSet, basename='documento-pncp')
