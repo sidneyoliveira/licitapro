@@ -1284,6 +1284,17 @@ class LoteViewSet(viewsets.ModelViewSet):
     filterset_fields = ["processo"]
     search_fields = ["descricao"]
 
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        """Exclui múltiplos lotes de uma vez. Itens vinculados ficam sem lote."""
+        ids = request.data.get("ids", [])
+        if not ids or not isinstance(ids, list):
+            return Response({"error": "Envie uma lista de IDs."}, status=status.HTTP_400_BAD_REQUEST)
+        # desvincula itens antes de deletar
+        Item.objects.filter(lote_id__in=ids).update(lote=None)
+        deleted, _ = Lote.objects.filter(id__in=ids).delete()
+        return Response({"deleted": deleted}, status=status.HTTP_200_OK)
+
 
 # ============================================================
 # 5️⃣ ITEM
@@ -1297,6 +1308,15 @@ class ItemViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["processo", "lote", "fornecedor"]
     search_fields = ["descricao", "unidade", "especificacao"]
+
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        """Exclui múltiplos itens de uma vez."""
+        ids = request.data.get("ids", [])
+        if not ids or not isinstance(ids, list):
+            return Response({"error": "Envie uma lista de IDs."}, status=status.HTTP_400_BAD_REQUEST)
+        deleted, _ = Item.objects.filter(id__in=ids).delete()
+        return Response({"deleted": deleted}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="definir-fornecedor")
     def definir_fornecedor(self, request, pk=None):
@@ -1342,6 +1362,19 @@ class FornecedorProcessoViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["processo", "fornecedor"]
     search_fields = ["fornecedor__razao_social", "fornecedor__cnpj"]
+
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        """Remove múltiplos fornecedores de um processo de uma vez."""
+        ids = request.data.get("ids", [])
+        processo_id = request.data.get("processo_id")
+        if not ids or not isinstance(ids, list):
+            return Response({"error": "Envie uma lista de IDs de fornecedores."}, status=status.HTTP_400_BAD_REQUEST)
+        if processo_id:
+            deleted, _ = FornecedorProcesso.objects.filter(processo_id=processo_id, fornecedor_id__in=ids).delete()
+        else:
+            deleted, _ = FornecedorProcesso.objects.filter(fornecedor_id__in=ids).delete()
+        return Response({"deleted": deleted}, status=status.HTTP_200_OK)
 
 
 class ItemFornecedorViewSet(viewsets.ModelViewSet):
@@ -1691,6 +1724,15 @@ class AtaRegistroPrecosViewSet(viewsets.ModelViewSet):
         instance.ativo = False
         instance.status = "cancelada"
         instance.save(update_fields=["ativo", "status"])
+
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        """Cancela (soft-delete) múltiplas atas de uma vez."""
+        ids = request.data.get("ids", [])
+        if not ids or not isinstance(ids, list):
+            return Response({"error": "Envie uma lista de IDs."}, status=status.HTTP_400_BAD_REQUEST)
+        updated = AtaRegistroPrecos.objects.filter(id__in=ids, ativo=True).update(ativo=False, status="cancelada")
+        return Response({"deleted": updated}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="publicar-no-pncp")
     def publicar_no_pncp(self, request, pk=None):
