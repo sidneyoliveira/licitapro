@@ -415,6 +415,13 @@ class Item(models.Model):
     unidade = models.CharField(max_length=20)
     quantidade = models.DecimalField(max_digits=12, decimal_places=4) # Aumentei decimais para precisão
     valor_estimado = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+    valor_homologado = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="Valor unitário homologado após definição do fornecedor vencedor."
+    )
     
     ordem = models.PositiveIntegerField(default=1)
     

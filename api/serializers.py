@@ -313,6 +313,7 @@ class ItemSerializer(serializers.ModelSerializer):
             "unidade",
             "quantidade",
             "valor_estimado",
+            "valor_homologado",
             "ordem",
             "natureza",
             "situacao_item",

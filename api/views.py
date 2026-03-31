@@ -631,6 +631,12 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                             f"Item {numero_item or item.id}: fornecedor '{fornecedor.razao_social}' sem CNPJ/CPF."
                         )
 
+                    if item.valor_homologado is None:
+                        avisos.append(
+                            f"Item {numero_item or item.id} sem valor homologado; "
+                            "a sincronização usará o valor estimado como fallback."
+                        )
+
         return {
             "ok": len(erros) == 0,
             "erros": erros,
@@ -1795,11 +1801,16 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         resultados = []
         for v in vencedores:
             cnpj_forn = re.sub(r"\D", "", v.fornecedor.cnpj or "")
+            valor_unitario_homologado = (
+                float(v.item.valor_homologado)
+                if v.item.valor_homologado is not None
+                else float(v.valor_proposto or 0)
+            )
             resultados.append({
                 "numeroItem": v.item.pncp_numero_item or v.item.ordem,
                 "niFornecedor": cnpj_forn,
                 "tipoPessoaFornecedor": "PJ" if len(cnpj_forn) == 14 else "PF",
-                "valorUnitario": float(v.valor_proposto or 0),
+                "valorUnitario": valor_unitario_homologado,
                 "quantidadeHomologada": float(v.item.quantidade or 0),
             })
 

@@ -1365,11 +1365,19 @@ class PNCPService:
             # Fallback: fornecedor direto do item
             if not proposta_vencedora and item.fornecedor:
                 fornecedor = item.fornecedor
-                valor_unit = float(item.valor_estimado or 0)
+                valor_unit = float(
+                    item.valor_homologado
+                    if item.valor_homologado is not None
+                    else (item.valor_estimado or 0)
+                )
                 qtd = float(item.quantidade or 1)
             elif proposta_vencedora:
                 fornecedor = proposta_vencedora.fornecedor
-                valor_unit = float(proposta_vencedora.valor_proposto or 0)
+                valor_unit = float(
+                    getattr(proposta_vencedora, "valor_homologado", None)
+                    if getattr(proposta_vencedora, "valor_homologado", None) is not None
+                    else (proposta_vencedora.valor_proposto or 0)
+                )
                 qtd = float(item.quantidade or 1)
             else:
                 logger.info("[PNCP] Item %s '%s' sem fornecedor vencedor, pulando.",
@@ -1416,6 +1424,7 @@ class PNCPService:
             cat_id_val = int(cat_id_raw) if cat_id_raw else None
             tipo_ms = "S" if (cat_id_val and cat_id_val in service_cats) else "M"
             crit_id = int(processo.criterio_julgamento or 1)
+            valor_unitario_estimado_item = float(item.valor_estimado or 0)
             item_pncp_payload = {
                 "numeroItem": numero_item,
                 "materialOuServico": tipo_ms,
@@ -1427,8 +1436,8 @@ class PNCPService:
                 "descricao": (item.descricao or "Item")[:255],
                 "quantidade": qtd,
                 "unidadeMedida": (item.unidade or "UN")[:20],
-                "valorUnitarioEstimado": valor_unit,
-                "valorTotal": round(valor_unit * qtd, 4),
+                "valorUnitarioEstimado": valor_unitario_estimado_item,
+                "valorTotal": round(valor_unitario_estimado_item * qtd, 4),
                 "criterioJulgamentoId": crit_id,
                 "justificativa": "Retificação automática via integração L3Solutions",
             }

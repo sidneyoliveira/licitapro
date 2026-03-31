@@ -131,7 +131,7 @@ class ItemFornecedorInline(admin.TabularInline):
 
 @admin.register(Item)
 class ItemAdmin(admin.ModelAdmin):
-    list_display = ('descricao', 'processo', 'lote', 'quantidade', 'unidade', 'ordem')
+    list_display = ('descricao', 'processo', 'lote', 'quantidade', 'valor_estimado', 'valor_homologado', 'unidade', 'ordem')
     search_fields = ('descricao', 'processo__numero')
     list_filter = ('processo', 'lote')
     inlines = [ItemFornecedorInline]
