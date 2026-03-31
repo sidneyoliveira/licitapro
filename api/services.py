@@ -200,7 +200,7 @@ class PNCPService:
             msg = (response.text or "").strip()[:500]
 
         full_msg = f"PNCP recusou a operação ({response.status_code}): {msg}"
-        logger.error(full_msg)
+        logger.error("[PNCP ERROR] Status=%s | Body=%s", response.status_code, (response.text or "")[:2000])
         raise ValueError(full_msg)
 
     # ------------------------------------------------------------------ #
@@ -635,6 +635,25 @@ class PNCPService:
                 "devem ser números inteiros."
             ) from exc
 
+        # ===== LOG DIAGNÓSTICO: DADOS BRUTOS DO PROCESSO =====
+        print("=" * 80)
+        print("[PNCP DEBUG] ======= DADOS DO PROCESSO =======")
+        print(f"  Processo ID: {processo.id}")
+        print(f"  Número: {processo.numero_processo}")
+        print(f"  Modalidade (raw): {processo.modalidade!r} -> mod_id={mod_id}")
+        print(f"  Modo Disputa (raw): {processo.modo_disputa!r} -> disp_id={disp_id}")
+        print(f"  Amparo Legal (raw): {processo.amparo_legal!r} -> amp_id={amp_id}")
+        print(f"  Instrumento Conv. (raw): {processo.instrumento_convocatorio!r} -> inst_id={inst_id}")
+        print(f"  Critério Julg. (raw): {processo.criterio_julgamento!r} -> crit_id={crit_id}")
+        print(f"  CNPJ Orgão: {cnpj_orgao}")
+        print(f"  Unidade Compradora: {processo.orgao.codigo_unidade if processo.orgao else 'N/A'}")
+        print(f"  MAP_MODALIDADE_CATEGORIA_ITEM[{mod_id}] = {MAP_MODALIDADE_CATEGORIA_ITEM.get(mod_id, 'NÃO ENCONTRADO')}")
+        print(f"  MAP_MODALIDADE_MODO_DISPUTA[{mod_id}] = {MAP_MODALIDADE_MODO_DISPUTA.get(mod_id, 'NÃO ENCONTRADO')}")
+        print(f"  MAP_MODALIDADE_INSTRUMENTO[{mod_id}] = {MAP_MODALIDADE_INSTRUMENTO.get(mod_id, 'NÃO ENCONTRADO')}")
+        print(f"  MAP_MODALIDADE_CRITERIO_JULGAMENTO[{mod_id}] = {MAP_MODALIDADE_CRITERIO_JULGAMENTO.get(mod_id, 'NÃO ENCONTRADO')}")
+        print(f"  MAP_MODALIDADE_AMPARO[{mod_id}] = {MAP_MODALIDADE_AMPARO.get(mod_id, 'NÃO ENCONTRADO')}")
+        print("=" * 80)
+
         # --- Validação cruzada de domínios PNCP -------------------------
         # Modo de Disputa x Modalidade
         modos_validos = MAP_MODALIDADE_MODO_DISPUTA.get(mod_id)
@@ -718,6 +737,13 @@ class PNCPService:
             # Categoria do item
             cat_id = int(item.categoria_item or 1)
 
+            # ===== LOG DIAGNÓSTICO: DADOS DE CADA ITEM =====
+            print(f"[PNCP DEBUG] Item #{idx}:")
+            print(f"  DB id={item.id}, ordem={item.ordem}, descricao={item.descricao!r}")
+            print(f"  categoria_item (raw do DB): {item.categoria_item!r} -> cat_id={cat_id}")
+            print(f"  tipo_beneficio (raw do DB): {item.tipo_beneficio!r}")
+            print(f"  cat_id {cat_id} está em categorias_validas {categorias_validas}? {cat_id in categorias_validas}")
+
             if cat_id not in categorias_validas:
                 numero_item = item.ordem or idx
                 # Normaliza: se parece serviço, usa Serviço (2), senão Material (1)
@@ -773,6 +799,12 @@ class PNCPService:
             [i["itemCategoriaId"] for i in payload["itensCompra"]],
         )
 
+        # ===== LOG DIAGNÓSTICO: PAYLOAD JSON COMPLETO =====
+        print("=" * 80)
+        print("[PNCP DEBUG] ======= PAYLOAD JSON COMPLETO =======")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print("=" * 80)
+
         files = {
             "documento": (
                 getattr(arquivo, "name", "edital.pdf"),
@@ -814,6 +846,14 @@ class PNCPService:
             cls._log(msg, "error")
             raise ValueError(msg) from exc
 
+        # ===== LOG DIAGNÓSTICO: RESPOSTA DO PNCP =====
+        print("=" * 80)
+        print(f"[PNCP DEBUG] ======= RESPOSTA DO PNCP =======")
+        print(f"  Status Code: {response.status_code}")
+        print(f"  Response Headers: {dict(response.headers)}")
+        print(f"  Response Body: {(response.text or '')[:3000]}")
+        print("=" * 80)
+
         # Retry único para erro conhecido de compatibilidade modalidade x categoria
         if response.status_code == 422:
             response_text = (response.text or "")
@@ -846,12 +886,20 @@ class PNCPService:
                     mod_id,
                 )
 
+                # ===== LOG DIAGNÓSTICO: PAYLOAD DO RETRY =====
+                print("[PNCP DEBUG] ======= RETRY PAYLOAD =======")
+                print(json.dumps(retry_payload, ensure_ascii=False, indent=2))
+
                 try:
                     response = _send_compra(retry_files)
                 except requests.exceptions.RequestException as exc:
                     msg = f"Falha de comunicação com PNCP (retentativa publicar compra): {exc}"
                     cls._log(msg, "error")
                     raise ValueError(msg) from exc
+
+                # ===== LOG DIAGNÓSTICO: RESPOSTA DO RETRY =====
+                print(f"[PNCP DEBUG] RETRY Response Status: {response.status_code}")
+                print(f"[PNCP DEBUG] RETRY Response Body: {(response.text or '')[:3000]}")
 
         if response.status_code in (200, 201):
             cls._log("Compra publicada com sucesso no PNCP.")
