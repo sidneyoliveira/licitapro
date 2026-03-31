@@ -1931,7 +1931,29 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
         processo = instance.processo
         titulo_note = instance.titulo or (instance.texto[:40] if instance.texto else "anotação")
 
-        response = super().destroy(request, *args, **kwargs)
+        try:
+            response = super().destroy(request, *args, **kwargs)
+        except (ProgrammingError, OperationalError):
+            logger.exception(
+                "Falha ao excluir anotação %s via collector; tentando exclusão direta (possível migração pendente)",
+                instance.id,
+            )
+            try:
+                using = instance._state.db or "default"
+                deleted = Anotacao.objects.using(using).filter(pk=instance.pk)._raw_delete(using)
+                if deleted:
+                    return Response(status=status.HTTP_204_NO_CONTENT)
+            except Exception:
+                logger.exception("Fallback de exclusão direta falhou para anotação %s", instance.id)
+            return Response(
+                {
+                    "detail": (
+                        "Não foi possível excluir a anotação por inconsistência de banco. "
+                        "Execute as migrações do backend e tente novamente."
+                    )
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         if recipients:
             self._notify_users(
