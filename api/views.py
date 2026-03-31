@@ -8,6 +8,7 @@ import hashlib
 
 from django.db import transaction
 from django.db.models import Q
+from django.db.utils import ProgrammingError, OperationalError
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import update_last_login
@@ -1762,26 +1763,38 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
     serializer_class = AnotacaoSerializer
     permission_classes = [IsAuthenticated]
 
+    def _safe_get_recipients(self, anotacao):
+        try:
+            return list(anotacao.compartilhada_com.all())
+        except Exception:
+            logger.exception("Falha ao obter destinatários da anotação %s", getattr(anotacao, "id", None))
+            return []
+
     def _notify_users(self, recipients, actor, tipo_acao, titulo, mensagem, anotacao=None, processo=None):
-        rows = []
-        for u in recipients:
-            if not u or not getattr(u, "id", None):
-                continue
-            if actor and u.id == actor.id:
-                continue
-            rows.append(
-                Notificacao(
-                    usuario=u,
-                    ator=actor,
-                    tipo_acao=tipo_acao,
-                    titulo=titulo,
-                    mensagem=mensagem,
-                    anotacao=anotacao,
-                    processo=processo,
+        try:
+            rows = []
+            for u in recipients:
+                if not u or not getattr(u, "id", None):
+                    continue
+                if actor and u.id == actor.id:
+                    continue
+                rows.append(
+                    Notificacao(
+                        usuario=u,
+                        ator=actor,
+                        tipo_acao=tipo_acao,
+                        titulo=titulo,
+                        mensagem=mensagem,
+                        anotacao=anotacao,
+                        processo=processo,
+                    )
                 )
-            )
-        if rows:
-            Notificacao.objects.bulk_create(rows)
+            if rows:
+                Notificacao.objects.bulk_create(rows)
+        except (ProgrammingError, OperationalError):
+            logger.exception("Falha de banco ao criar notificações de anotação; ignorando para não quebrar fluxo")
+        except Exception:
+            logger.exception("Falha inesperada ao criar notificações de anotação; ignorando para não quebrar fluxo")
 
     def _allowed_process_ids(self):
         user = self.request.user
@@ -1832,7 +1845,7 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
         self._assert_processo_permitido(processo_id)
         anotacao = serializer.save(usuario=self.request.user)
 
-        recipients = list(anotacao.compartilhada_com.all())
+        recipients = self._safe_get_recipients(anotacao)
         if recipients:
             titulo = "Nova anotação compartilhada"
             mensagem = f"@{self.request.user.username} compartilhou uma anotação com você."
@@ -1849,7 +1862,7 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
         before_done = instance.concluida
-        recipients_before = list(instance.compartilhada_com.all())
+        recipients_before = self._safe_get_recipients(instance)
 
         # Quem recebeu a anotação pode apenas marcar/desmarcar concluída
         if instance.usuario_id != request.user.id:
@@ -1868,16 +1881,17 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
         response = super().update(request, *args, **kwargs)
 
         instance.refresh_from_db()
-        recipients_after = list(instance.compartilhada_com.all())
+        recipients_after = self._safe_get_recipients(instance)
 
         # CHECK: quando muda concluída
         if before_done != instance.concluida:
-            check_targets = set(recipients_before + recipients_after)
-            check_targets.add(instance.usuario)
+            check_targets = {u.id: u for u in (recipients_before + recipients_after)}
+            if instance.usuario:
+                check_targets[instance.usuario.id] = instance.usuario
             titulo = "Status da anotação alterado"
             mensagem = f"@{request.user.username} marcou a anotação como {'concluída' if instance.concluida else 'pendente'}."
             self._notify_users(
-                recipients=list(check_targets),
+                recipients=list(check_targets.values()),
                 actor=request.user,
                 tipo_acao="check",
                 titulo=titulo,
@@ -1887,14 +1901,14 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
             )
         else:
             # EDIÇÃO de conteúdo/compartilhamento
-            targets = set(recipients_before + recipients_after)
+            targets = {u.id: u for u in (recipients_before + recipients_after)}
             if instance.usuario_id != request.user.id:
-                targets.add(instance.usuario)
+                targets[instance.usuario.id] = instance.usuario
             if targets:
                 titulo = "Anotação atualizada"
                 mensagem = f"@{request.user.username} atualizou uma anotação compartilhada."
                 self._notify_users(
-                    recipients=list(targets),
+                    recipients=list(targets.values()),
                     actor=request.user,
                     tipo_acao="update",
                     titulo=titulo,
@@ -1913,7 +1927,7 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        recipients = list(instance.compartilhada_com.all())
+        recipients = self._safe_get_recipients(instance)
         processo = instance.processo
         titulo_note = instance.titulo or (instance.texto[:40] if instance.texto else "anotação")
 
