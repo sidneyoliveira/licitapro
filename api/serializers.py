@@ -335,13 +335,13 @@ class ContratoEmpenhoSerializer(serializers.ModelSerializer):
 
 class AnotacaoSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(source="usuario.username", read_only=True)
-    # Aliases para o frontend (envia "text", lê "text"/"date")
+    # Aliases: o frontend envia/lê "text" e "date"
     text = serializers.CharField(source="texto")
     date = serializers.DateTimeField(source="criado_em", read_only=True)
 
     class Meta:
         model = Anotacao
-        fields = ("id", "usuario", "usuario_nome", "texto", "text", "date", "criado_em", "atualizado_em")
+        fields = ("id", "usuario", "usuario_nome", "text", "date", "criado_em", "atualizado_em")
         read_only_fields = ("usuario", "criado_em", "atualizado_em", "date")
 
 
