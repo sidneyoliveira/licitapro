@@ -13,6 +13,8 @@ class Migration(migrations.Migration):
     esperada para que as próximas migrações (ex.: 0003_notificacao) sejam aplicadas.
     """
 
-    dependencies = []
+    dependencies = [
+        ("api", "0001_initial"),
+    ]
 
     operations = []
