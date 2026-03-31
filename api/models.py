@@ -40,6 +40,21 @@ class CustomUser(AbstractUser):
         help_text="Entidades às quais o usuário pertence. Define o escopo de dados visíveis."
     )
 
+    receber_anotacoes_compartilhadas = models.BooleanField(
+        default=True,
+        verbose_name="Receber anotações compartilhadas",
+        help_text="Permite que outros usuários compartilhem anotações com este usuário."
+    )
+
+    usuarios_bloqueados = models.ManyToManyField(
+        'self',
+        symmetrical=False,
+        blank=True,
+        related_name='bloqueado_por',
+        verbose_name="Usuários bloqueados",
+        help_text="Usuários bloqueados não podem compartilhar anotações com este usuário."
+    )
+
     # Ajustes para compatibilidade com o admin do Django
     groups = models.ManyToManyField(
         'auth.Group', 
@@ -530,7 +545,21 @@ class Anotacao(models.Model):
         on_delete=models.CASCADE, 
         related_name='anotacoes'
     )
+    processo = models.ForeignKey(
+        'ProcessoLicitatorio',
+        on_delete=models.CASCADE,
+        related_name='anotacoes',
+        null=True,
+        blank=True
+    )
+    titulo = models.CharField(max_length=160, blank=True, null=True)
     texto = models.TextField()
+    concluida = models.BooleanField(default=False)
+    compartilhada_com = models.ManyToManyField(
+        CustomUser,
+        blank=True,
+        related_name='anotacoes_compartilhadas'
+    )
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
@@ -540,7 +569,8 @@ class Anotacao(models.Model):
         verbose_name_plural = "Anotações"
 
     def __str__(self):
-        return f"Nota de {self.usuario.username} em {self.criado_em.strftime('%d/%m/%Y')}"
+        base = self.titulo or (self.texto[:30] if self.texto else "Anotação")
+        return f"{base} - {self.usuario.username}"
     
 
 # ============================================================

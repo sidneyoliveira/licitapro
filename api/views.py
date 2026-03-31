@@ -7,6 +7,7 @@ import requests
 import hashlib
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import update_last_login
@@ -17,6 +18,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
@@ -1758,13 +1760,116 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
     serializer_class = AnotacaoSerializer
     permission_classes = [IsAuthenticated]
 
+    def _allowed_process_ids(self):
+        user = self.request.user
+        if user.is_superuser or user.is_staff:
+            return None
+        entidade_ids = list(user.entidades.values_list("id", flat=True))
+        if not entidade_ids:
+            return []
+        return list(
+            ProcessoLicitatorio.objects.filter(entidade_id__in=entidade_ids).values_list("id", flat=True)
+        )
+
     def get_queryset(self):
-        # Retorna apenas as anotações do usuário logado
-        return Anotacao.objects.filter(usuario=self.request.user).order_by('-criado_em')
+        user = self.request.user
+        qs = (
+            Anotacao.objects.select_related("usuario", "processo")
+            .prefetch_related("compartilhada_com")
+            .filter(Q(usuario=user) | Q(compartilhada_com=user))
+            .distinct()
+            .order_by('-criado_em')
+        )
+
+        processo_id = self.request.query_params.get("processo")
+        if processo_id:
+            qs = qs.filter(processo_id=processo_id)
+
+        allowed_process_ids = self._allowed_process_ids()
+        if allowed_process_ids is not None:
+            qs = qs.filter(Q(processo__isnull=True) | Q(processo_id__in=allowed_process_ids))
+
+        return qs
+
+    def _assert_processo_permitido(self, processo_id):
+        if not processo_id:
+            return
+        allowed_process_ids = self._allowed_process_ids()
+        if allowed_process_ids is None:
+            return
+        try:
+            processo_id = int(processo_id)
+        except (TypeError, ValueError):
+            raise PermissionDenied("Processo inválido.")
+        if processo_id not in set(allowed_process_ids):
+            raise PermissionDenied("Você não tem acesso a este processo.")
 
     def perform_create(self, serializer):
-        # Vincula automaticamente a nota ao usuário logado
+        processo_id = self.request.data.get("processo")
+        self._assert_processo_permitido(processo_id)
         serializer.save(usuario=self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        # Quem recebeu a anotação pode apenas marcar/desmarcar concluída
+        if instance.usuario_id != request.user.id:
+            allowed_keys = {"concluida"}
+            incoming_keys = set(request.data.keys())
+            if not incoming_keys.issubset(allowed_keys):
+                return Response(
+                    {"detail": "Você só pode marcar/desmarcar a tarefa compartilhada."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        processo_id = request.data.get("processo")
+        if processo_id is not None:
+            self._assert_processo_permitido(processo_id)
+
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.usuario_id != request.user.id:
+            return Response(
+                {"detail": "Somente o autor pode excluir a anotação."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
+class UsuarioLookupView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        term = (request.query_params.get("q") or "").strip()
+        qs = User.objects.all().order_by("username")
+
+        if request.user.is_superuser or request.user.is_staff:
+            pass
+        else:
+            entidade_ids = list(request.user.entidades.values_list("id", flat=True))
+            if entidade_ids:
+                qs = qs.filter(entidades__id__in=entidade_ids).distinct()
+            else:
+                qs = qs.filter(id=request.user.id)
+
+        if term:
+            qs = qs.filter(
+                Q(username__icontains=term)
+                | Q(first_name__icontains=term)
+                | Q(last_name__icontains=term)
+            )
+
+        data = [
+            {
+                "id": u.id,
+                "username": u.username,
+                "nome": u.get_full_name() or u.username,
+            }
+            for u in qs[:20]
+        ]
+        return Response(data)
 
 # ============================================================
 # 🗂️ ARQUIVOS USUÁRIO VIEWSET

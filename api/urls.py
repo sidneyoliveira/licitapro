@@ -23,6 +23,7 @@ from .views import (
     ConstantesSistemaView,
     SystemConfigView,
     AnotacaoViewSet,
+    UsuarioLookupView,
     ArquivoUserViewSet,
     DocumentoPNCPViewSet,
     AtaRegistroPrecosViewSet,
@@ -83,6 +84,7 @@ urlpatterns = [
     # Autenticação e gerenciamento de usuários
     path('register/', CreateUserView.as_view(), name='register'),
     path('me/', ManageUserView.as_view(), name="user-manage"),
+    path('usuarios-lookup/', UsuarioLookupView.as_view(), name='usuarios-lookup'),
 
     # JWT Auth endpoints
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),

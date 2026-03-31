@@ -59,6 +59,12 @@ class UserSerializer(serializers.ModelSerializer):
         queryset=Entidade.objects.all(),
         required=False,
     )
+    usuarios_bloqueados = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=CustomUser.objects.all(),
+        required=False,
+    )
+    usuarios_bloqueados_nomes = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
@@ -66,15 +72,22 @@ class UserSerializer(serializers.ModelSerializer):
             "id", "username", "first_name", "last_name", "email",
             "cpf", "phone", "profile_image", "data_nascimento",
             "entidades", "entidades_nomes", "password",
+            "receber_anotacoes_compartilhadas", "usuarios_bloqueados", "usuarios_bloqueados_nomes",
             "is_active", "is_staff", "is_superuser",
             "date_joined", "last_login",
         )
-        read_only_fields = ("date_joined", "last_login", "entidades_nomes")
+        read_only_fields = ("date_joined", "last_login", "entidades_nomes", "usuarios_bloqueados_nomes")
 
     def get_entidades_nomes(self, obj):
         return [
             {"id": e.id, "nome": e.nome}
             for e in obj.entidades.all()
+        ]
+
+    def get_usuarios_bloqueados_nomes(self, obj):
+        return [
+            {"id": u.id, "username": u.username, "nome": (u.get_full_name() or u.username)}
+            for u in obj.usuarios_bloqueados.all()
         ]
 
     def _is_admin_request(self):
@@ -84,6 +97,7 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         password = validated_data.pop("password", None)
         entidades = validated_data.pop("entidades", [])
+        usuarios_bloqueados = validated_data.pop("usuarios_bloqueados", [])
 
         # Campos administrativos só podem ser definidos por admin
         if not self._is_admin_request():
@@ -100,16 +114,20 @@ class UserSerializer(serializers.ModelSerializer):
         user.save()
         if entidades:
             user.entidades.set(entidades)
+        if usuarios_bloqueados:
+            user.usuarios_bloqueados.set([u for u in usuarios_bloqueados if u.id != user.id])
         return user
 
     def update(self, instance, validated_data):
         password = validated_data.pop("password", None)
         entidades = validated_data.pop("entidades", None)
+        usuarios_bloqueados = validated_data.pop("usuarios_bloqueados", None)
 
         # Se NÃO é admin, remove campos administrativos
         if not self._is_admin_request():
             for field in ("is_active", "is_staff", "is_superuser"):
                 validated_data.pop(field, None)
+            validated_data.pop("username", None)
             entidades = None  # Não-admin não pode alterar entidades
 
         for attr, value in validated_data.items():
@@ -120,6 +138,8 @@ class UserSerializer(serializers.ModelSerializer):
 
         if entidades is not None:
             instance.entidades.set(entidades)
+        if usuarios_bloqueados is not None:
+            instance.usuarios_bloqueados.set([u for u in usuarios_bloqueados if u.id != instance.id])
 
         return instance
 
@@ -393,11 +413,71 @@ class AnotacaoSerializer(serializers.ModelSerializer):
     # Aliases: o frontend envia/lê "text" e "date"
     text = serializers.CharField(source="texto")
     date = serializers.DateTimeField(source="criado_em", read_only=True)
+    processo_numero = serializers.CharField(source="processo.numero_processo", read_only=True)
+    compartilhada_com = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=CustomUser.objects.all(),
+        required=False,
+    )
+    compartilhada_com_nomes = serializers.SerializerMethodField()
+    shared_usernames = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        write_only=True,
+    )
 
     class Meta:
         model = Anotacao
-        fields = ("id", "usuario", "usuario_nome", "text", "date", "criado_em", "atualizado_em")
+        fields = (
+            "id", "usuario", "usuario_nome", "titulo", "text", "concluida",
+            "processo", "processo_numero", "compartilhada_com", "compartilhada_com_nomes", "shared_usernames",
+            "date", "criado_em", "atualizado_em"
+        )
         read_only_fields = ("usuario", "criado_em", "atualizado_em", "date")
+
+    def get_compartilhada_com_nomes(self, obj):
+        return [
+            {"id": u.id, "username": u.username, "nome": (u.get_full_name() or u.username)}
+            for u in obj.compartilhada_com.all()
+        ]
+
+    def _resolve_shared_users(self, validated_data):
+        request = self.context.get("request")
+        actor = getattr(request, "user", None)
+        shared_usernames = validated_data.pop("shared_usernames", None)
+        recipients = validated_data.pop("compartilhada_com", None)
+
+        if shared_usernames is not None:
+            usernames = [u.strip() for u in shared_usernames if str(u).strip()]
+            recipients = list(CustomUser.objects.filter(username__in=usernames))
+
+        if recipients is None:
+            return None
+
+        filtered = []
+        for user in recipients:
+            if actor and user.id == actor.id:
+                continue
+            if not user.receber_anotacoes_compartilhadas:
+                continue
+            if actor and user.usuarios_bloqueados.filter(id=actor.id).exists():
+                continue
+            filtered.append(user)
+        return filtered
+
+    def create(self, validated_data):
+        recipients = self._resolve_shared_users(validated_data)
+        anotacao = super().create(validated_data)
+        if recipients is not None:
+            anotacao.compartilhada_com.set(recipients)
+        return anotacao
+
+    def update(self, instance, validated_data):
+        recipients = self._resolve_shared_users(validated_data)
+        anotacao = super().update(instance, validated_data)
+        if recipients is not None:
+            anotacao.compartilhada_com.set(recipients)
+        return anotacao
 
 
 # ============================================================
