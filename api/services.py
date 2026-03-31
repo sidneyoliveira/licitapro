@@ -661,6 +661,7 @@ class PNCPService:
             # Pregão: PNCP aceita Material (1) ou Serviço (2)
             6: {1, 2},
         }
+        service_like_categories = {2, 4, 8, 9}
 
         for idx, item in enumerate(itens_qs.all(), start=1):
             vl_unit = float(item.valor_estimado or 0)
@@ -672,16 +673,18 @@ class PNCPService:
             categorias_validas = categorias_validas_por_modalidade.get(mod_id)
             if categorias_validas and cat_id not in categorias_validas:
                 numero_item = item.ordem or idx
-                raise ValueError(
-                    (
-                        f"Categoria de item inválida para a modalidade selecionada. "
-                        f"Item {numero_item}: categoria {cat_id}; modalidade {mod_id}. "
-                        f"Para Pregão, use categoria 1 (Material) ou 2 (Serviço)."
-                    )
+                normalized_cat = 2 if cat_id in service_like_categories else 1
+                logger.warning(
+                    "[PNCP SEND] Categoria inválida para modalidade %s no item %s (cat=%s). Normalizando para %s.",
+                    mod_id,
+                    numero_item,
+                    cat_id,
+                    normalized_cat,
                 )
+                cat_id = normalized_cat
 
             # Material (M) ou Serviço (S) – regra simplificada
-            tipo_ms = "S" if cat_id in [2, 4, 8, 9] else "M"
+            tipo_ms = "S" if cat_id in service_like_categories else "M"
 
             payload["itensCompra"].append(
                 {
@@ -733,18 +736,48 @@ class PNCPService:
 
         cls._log(f"Enviando requisição de publicação de compra para: {url}")
 
-        try:
-            response = requests.post(
+        def _send_compra(current_files: Dict[str, Any]) -> requests.Response:
+            return requests.post(
                 url,
                 headers=headers,
-                files=files,
+                files=current_files,
                 verify=cls.VERIFY_SSL,
                 timeout=90,
             )
+
+        try:
+            response = _send_compra(files)
         except requests.exceptions.RequestException as exc:
             msg = f"Falha de comunicação com PNCP (publicar compra): {exc}"
             cls._log(msg, "error")
             raise ValueError(msg) from exc
+
+        # Retry único para erro conhecido de compatibilidade modalidade x categoria
+        if response.status_code == 422:
+            response_text = (response.text or "")
+            if "Categoria de compra de item inválida para a modalidade de compra" in response_text:
+                retry_payload = json.loads(json.dumps(payload))
+                for item_payload in retry_payload.get("itensCompra", []):
+                    cat = int(item_payload.get("itemCategoriaId") or 1)
+                    if mod_id == 6 and cat not in {1, 2}:
+                        item_payload["itemCategoriaId"] = 2 if cat in service_like_categories else 1
+
+                retry_files = {
+                    "documento": files["documento"],
+                    "compra": (None, json.dumps(retry_payload), "application/json"),
+                }
+
+                logger.warning(
+                    "[PNCP SEND] Retentando publicação com categorias saneadas para modalidade %s.",
+                    mod_id,
+                )
+
+                try:
+                    response = _send_compra(retry_files)
+                except requests.exceptions.RequestException as exc:
+                    msg = f"Falha de comunicação com PNCP (retentativa publicar compra): {exc}"
+                    cls._log(msg, "error")
+                    raise ValueError(msg) from exc
 
         if response.status_code in (200, 201):
             cls._log("Compra publicada com sucesso no PNCP.")
