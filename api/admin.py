@@ -14,6 +14,7 @@ from .models import (
     DocumentoPNCP,
     AtaRegistroPrecos,
     DocumentoAtaRegistroPrecos,
+    Notificacao,
 )
 
 # ============================================================
@@ -170,3 +171,10 @@ class AtaRegistroPrecosAdmin(admin.ModelAdmin):
 class DocumentoAtaRegistroPrecosAdmin(admin.ModelAdmin):
     list_display = ('id', 'ata', 'titulo', 'arquivo_nome', 'criado_em')
     search_fields = ('ata__numero_ata', 'titulo', 'arquivo_nome')
+
+
+@admin.register(Notificacao)
+class NotificacaoAdmin(admin.ModelAdmin):
+    list_display = ('id', 'usuario', 'ator', 'tipo_acao', 'titulo', 'lida', 'criado_em')
+    list_filter = ('tipo_acao', 'lida', 'criado_em')
+    search_fields = ('usuario__username', 'ator__username', 'titulo', 'mensagem')

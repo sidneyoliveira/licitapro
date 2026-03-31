@@ -571,6 +571,57 @@ class Anotacao(models.Model):
     def __str__(self):
         base = self.titulo or (self.texto[:30] if self.texto else "Anotação")
         return f"{base} - {self.usuario.username}"
+
+
+class Notificacao(models.Model):
+    TIPO_ACAO_CHOICES = (
+        ("create", "Criação"),
+        ("update", "Edição"),
+        ("delete", "Exclusão"),
+        ("check", "Marcação"),
+    )
+
+    usuario = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name="notificacoes",
+        help_text="Usuário que recebe a notificação",
+    )
+    ator = models.ForeignKey(
+        CustomUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notificacoes_emitidas",
+        help_text="Usuário que realizou a ação",
+    )
+    anotacao = models.ForeignKey(
+        Anotacao,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notificacoes",
+    )
+    processo = models.ForeignKey(
+        "ProcessoLicitatorio",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notificacoes",
+    )
+    tipo_acao = models.CharField(max_length=16, choices=TIPO_ACAO_CHOICES)
+    titulo = models.CharField(max_length=180)
+    mensagem = models.TextField(blank=True, null=True)
+    lida = models.BooleanField(default=False)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-criado_em"]
+        verbose_name = "Notificação"
+        verbose_name_plural = "Notificações"
+
+    def __str__(self):
+        return f"{self.titulo} -> {self.usuario.username}"
     
 
 # ============================================================

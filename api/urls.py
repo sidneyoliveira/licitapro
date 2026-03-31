@@ -23,6 +23,7 @@ from .views import (
     ConstantesSistemaView,
     SystemConfigView,
     AnotacaoViewSet,
+    NotificacaoViewSet,
     UsuarioLookupView,
     ArquivoUserViewSet,
     DocumentoPNCPViewSet,
@@ -60,6 +61,7 @@ router.register(r'usuarios', UsuarioViewSet, basename='usuario')
 
 # ANOTAÇÕES
 router.register(r'anotacoes', AnotacaoViewSet, basename='anotacao')
+router.register(r'notificacoes', NotificacaoViewSet, basename='notificacao')
 
 # ARQUIVOS DO USUÁRIO
 router.register(r'arquivos-user', ArquivoUserViewSet, basename='arquivos-user')

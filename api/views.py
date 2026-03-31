@@ -46,6 +46,7 @@ from .models import (
     ContratoEmpenho,
     DocumentoPNCP, 
     Anotacao,
+    Notificacao,
     ArquivoUser,
     AtaRegistroPrecos,
     DocumentoAtaRegistroPrecos
@@ -65,6 +66,7 @@ from .serializers import (
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
     AnotacaoSerializer,
+    NotificacaoSerializer,
     ArquivoUserSerializer,
     DocumentoPNCPSerializer,
     AtaRegistroPrecosSerializer,
@@ -1760,6 +1762,27 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
     serializer_class = AnotacaoSerializer
     permission_classes = [IsAuthenticated]
 
+    def _notify_users(self, recipients, actor, tipo_acao, titulo, mensagem, anotacao=None, processo=None):
+        rows = []
+        for u in recipients:
+            if not u or not getattr(u, "id", None):
+                continue
+            if actor and u.id == actor.id:
+                continue
+            rows.append(
+                Notificacao(
+                    usuario=u,
+                    ator=actor,
+                    tipo_acao=tipo_acao,
+                    titulo=titulo,
+                    mensagem=mensagem,
+                    anotacao=anotacao,
+                    processo=processo,
+                )
+            )
+        if rows:
+            Notificacao.objects.bulk_create(rows)
+
     def _allowed_process_ids(self):
         user = self.request.user
         if user.is_superuser or user.is_staff:
@@ -1807,10 +1830,26 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         processo_id = self.request.data.get("processo")
         self._assert_processo_permitido(processo_id)
-        serializer.save(usuario=self.request.user)
+        anotacao = serializer.save(usuario=self.request.user)
+
+        recipients = list(anotacao.compartilhada_com.all())
+        if recipients:
+            titulo = "Nova anotação compartilhada"
+            mensagem = f"@{self.request.user.username} compartilhou uma anotação com você."
+            self._notify_users(
+                recipients=recipients,
+                actor=self.request.user,
+                tipo_acao="create",
+                titulo=titulo,
+                mensagem=mensagem,
+                anotacao=anotacao,
+                processo=anotacao.processo,
+            )
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
+        before_done = instance.concluida
+        recipients_before = list(instance.compartilhada_com.all())
 
         # Quem recebeu a anotação pode apenas marcar/desmarcar concluída
         if instance.usuario_id != request.user.id:
@@ -1826,7 +1865,45 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
         if processo_id is not None:
             self._assert_processo_permitido(processo_id)
 
-        return super().update(request, *args, **kwargs)
+        response = super().update(request, *args, **kwargs)
+
+        instance.refresh_from_db()
+        recipients_after = list(instance.compartilhada_com.all())
+
+        # CHECK: quando muda concluída
+        if before_done != instance.concluida:
+            check_targets = set(recipients_before + recipients_after)
+            check_targets.add(instance.usuario)
+            titulo = "Status da anotação alterado"
+            mensagem = f"@{request.user.username} marcou a anotação como {'concluída' if instance.concluida else 'pendente'}."
+            self._notify_users(
+                recipients=list(check_targets),
+                actor=request.user,
+                tipo_acao="check",
+                titulo=titulo,
+                mensagem=mensagem,
+                anotacao=instance,
+                processo=instance.processo,
+            )
+        else:
+            # EDIÇÃO de conteúdo/compartilhamento
+            targets = set(recipients_before + recipients_after)
+            if instance.usuario_id != request.user.id:
+                targets.add(instance.usuario)
+            if targets:
+                titulo = "Anotação atualizada"
+                mensagem = f"@{request.user.username} atualizou uma anotação compartilhada."
+                self._notify_users(
+                    recipients=list(targets),
+                    actor=request.user,
+                    tipo_acao="update",
+                    titulo=titulo,
+                    mensagem=mensagem,
+                    anotacao=instance,
+                    processo=instance.processo,
+                )
+
+        return response
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -1835,7 +1912,25 @@ class AnotacaoViewSet(viewsets.ModelViewSet):
                 {"detail": "Somente o autor pode excluir a anotação."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        return super().destroy(request, *args, **kwargs)
+
+        recipients = list(instance.compartilhada_com.all())
+        processo = instance.processo
+        titulo_note = instance.titulo or (instance.texto[:40] if instance.texto else "anotação")
+
+        response = super().destroy(request, *args, **kwargs)
+
+        if recipients:
+            self._notify_users(
+                recipients=recipients,
+                actor=request.user,
+                tipo_acao="delete",
+                titulo="Anotação excluída",
+                mensagem=f"@{request.user.username} excluiu a anotação: {titulo_note}",
+                anotacao=None,
+                processo=processo,
+            )
+
+        return response
 
 
 class UsuarioLookupView(APIView):
@@ -1843,16 +1938,27 @@ class UsuarioLookupView(APIView):
 
     def get(self, request):
         term = (request.query_params.get("q") or "").strip()
+        processo_id = (request.query_params.get("processo") or "").strip()
         qs = User.objects.all().order_by("username")
 
         if request.user.is_superuser or request.user.is_staff:
             pass
         else:
             entidade_ids = list(request.user.entidades.values_list("id", flat=True))
-            if entidade_ids:
-                qs = qs.filter(entidades__id__in=entidade_ids).distinct()
+            if processo_id:
+                try:
+                    processo = ProcessoLicitatorio.objects.get(pk=int(processo_id))
+                    if not entidade_ids or processo.entidade_id not in entidade_ids:
+                        qs = qs.none()
+                    else:
+                        qs = qs.filter(entidades__id=processo.entidade_id).distinct()
+                except Exception:
+                    qs = qs.none()
             else:
-                qs = qs.filter(id=request.user.id)
+                if entidade_ids:
+                    qs = qs.filter(entidades__id__in=entidade_ids).distinct()
+                else:
+                    qs = qs.filter(id=request.user.id)
 
         if term:
             qs = qs.filter(
@@ -1870,6 +1976,15 @@ class UsuarioLookupView(APIView):
             for u in qs[:20]
         ]
         return Response(data)
+
+
+class NotificacaoViewSet(viewsets.ModelViewSet):
+    serializer_class = NotificacaoSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self):
+        return Notificacao.objects.filter(usuario=self.request.user).order_by("-criado_em")
 
 # ============================================================
 # 🗂️ ARQUIVOS USUÁRIO VIEWSET

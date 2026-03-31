@@ -12,6 +12,7 @@ from .models import (
     ItemFornecedor,
     ContratoEmpenho,
     Anotacao,
+    Notificacao,
     ArquivoUser,
     DocumentoPNCP,
     AtaRegistroPrecos,
@@ -446,6 +447,7 @@ class AnotacaoSerializer(serializers.ModelSerializer):
         actor = getattr(request, "user", None)
         shared_usernames = validated_data.pop("shared_usernames", None)
         recipients = validated_data.pop("compartilhada_com", None)
+        processo = validated_data.get("processo") or getattr(self.instance, "processo", None)
 
         if shared_usernames is not None:
             usernames = [u.strip() for u in shared_usernames if str(u).strip()]
@@ -453,6 +455,8 @@ class AnotacaoSerializer(serializers.ModelSerializer):
 
         if recipients is None:
             return None
+
+        actor_entidade_ids = set(actor.entidades.values_list("id", flat=True)) if actor else set()
 
         filtered = []
         for user in recipients:
@@ -462,6 +466,18 @@ class AnotacaoSerializer(serializers.ModelSerializer):
                 continue
             if actor and user.usuarios_bloqueados.filter(id=actor.id).exists():
                 continue
+
+            # Regra de privacidade por entidade
+            if processo and processo.entidade_id:
+                if not user.entidades.filter(id=processo.entidade_id).exists():
+                    continue
+            else:
+                # Sem processo: só compartilha com quem intersecta entidade do ator
+                if not actor_entidade_ids:
+                    continue
+                if not user.entidades.filter(id__in=actor_entidade_ids).exists():
+                    continue
+
             filtered.append(user)
         return filtered
 
@@ -478,6 +494,45 @@ class AnotacaoSerializer(serializers.ModelSerializer):
         if recipients is not None:
             anotacao.compartilhada_com.set(recipients)
         return anotacao
+
+
+class NotificacaoSerializer(serializers.ModelSerializer):
+    ator_nome = serializers.CharField(source="ator.username", read_only=True)
+    anotacao_titulo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notificacao
+        fields = (
+            "id",
+            "usuario",
+            "ator",
+            "ator_nome",
+            "anotacao",
+            "anotacao_titulo",
+            "processo",
+            "tipo_acao",
+            "titulo",
+            "mensagem",
+            "lida",
+            "criado_em",
+        )
+        read_only_fields = (
+            "usuario",
+            "ator",
+            "ator_nome",
+            "anotacao",
+            "anotacao_titulo",
+            "processo",
+            "tipo_acao",
+            "titulo",
+            "mensagem",
+            "criado_em",
+        )
+
+    def get_anotacao_titulo(self, obj):
+        if obj.anotacao and obj.anotacao.titulo:
+            return obj.anotacao.titulo
+        return None
 
 
 # ============================================================
