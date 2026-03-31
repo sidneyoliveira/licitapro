@@ -611,6 +611,15 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 or resultado.get("sequencial_compra")
                 or resultado.get("sequencialCompraPNCP")
             )
+
+            # Extrair da compraUri se não veio em chaves diretas
+            if (not ano_compra or not sequencial_compra) and resultado.get("compraUri"):
+                import re as _re
+                m = _re.search(r"/compras/(\d+)/(\d+)", resultado["compraUri"])
+                if m:
+                    ano_compra = ano_compra or int(m.group(1))
+                    sequencial_compra = sequencial_compra or int(m.group(2))
+
             numero_controle = (
                 resultado.get("numeroControlePNCP")
                 or resultado.get("numero_controle_pncp")
@@ -634,6 +643,9 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
             if hasattr(processo, "pncp_url") and link_processo:
                 processo.pncp_url = link_processo
+                updated_fields.append("pncp_url")
+            elif hasattr(processo, "pncp_url") and not link_processo and resultado.get("compraUri"):
+                processo.pncp_url = resultado["compraUri"]
                 updated_fields.append("pncp_url")
 
             if hasattr(processo, "pncp_ultimo_retorno"):
@@ -709,12 +721,20 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         if (not ano or not seq) and processo.pncp_ultimo_retorno:
             retorno = processo.pncp_ultimo_retorno
             if isinstance(retorno, dict):
+                # 2a. Tentar chaves diretas
                 ano = ano or retorno.get("anoCompra") or retorno.get("ano_compra")
                 seq = seq or (
                     retorno.get("sequencialCompra")
                     or retorno.get("sequencial_compra")
                     or retorno.get("sequencialCompraPNCP")
                 )
+                # 2b. Extrair da compraUri (ex: .../compras/2026/8)
+                if (not ano or not seq) and retorno.get("compraUri"):
+                    import re as _re
+                    m = _re.search(r"/compras/(\d+)/(\d+)", retorno["compraUri"])
+                    if m:
+                        ano = ano or int(m.group(1))
+                        seq = seq or int(m.group(2))
 
         # 3. Se ainda não tiver, aceitar do body do request
         if not ano or not seq:
@@ -843,6 +863,16 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
             or request.data.get("sequencial_compra")
             or request.data.get("sequencial")
         )
+
+        # Fallback: extrair da compraUri salva em pncp_ultimo_retorno
+        if (not ano_compra or not sequencial_compra) and getattr(processo, "pncp_ultimo_retorno", None):
+            retorno = processo.pncp_ultimo_retorno
+            if isinstance(retorno, dict) and retorno.get("compraUri"):
+                import re as _re
+                m = _re.search(r"/compras/(\d+)/(\d+)", retorno["compraUri"])
+                if m:
+                    ano_compra = ano_compra or int(m.group(1))
+                    sequencial_compra = sequencial_compra or int(m.group(2))
 
         if not ano_compra or not sequencial_compra:
             return Response(
