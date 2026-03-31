@@ -17,7 +17,6 @@ from django.utils import timezone
 # Importação do Model para tipagem e uso no ImportacaoService
 from .models import ProcessoLicitatorio
 from .choices import (
-    MAP_MODALIDADE_CATEGORIA_ITEM,
     MAP_MODALIDADE_MODO_DISPUTA,
     MAP_MODALIDADE_INSTRUMENTO,
     MAP_MODALIDADE_CRITERIO_JULGAMENTO,
@@ -636,23 +635,18 @@ class PNCPService:
             ) from exc
 
         # ===== LOG DIAGNÓSTICO: DADOS BRUTOS DO PROCESSO =====
-        print("=" * 80)
-        print("[PNCP DEBUG] ======= DADOS DO PROCESSO =======")
-        print(f"  Processo ID: {processo.id}")
-        print(f"  Número: {processo.numero_processo}")
-        print(f"  Modalidade (raw): {processo.modalidade!r} -> mod_id={mod_id}")
-        print(f"  Modo Disputa (raw): {processo.modo_disputa!r} -> disp_id={disp_id}")
-        print(f"  Amparo Legal (raw): {processo.amparo_legal!r} -> amp_id={amp_id}")
-        print(f"  Instrumento Conv. (raw): {processo.instrumento_convocatorio!r} -> inst_id={inst_id}")
-        print(f"  Critério Julg. (raw): {processo.criterio_julgamento!r} -> crit_id={crit_id}")
-        print(f"  CNPJ Orgão: {cnpj_orgao}")
-        print(f"  Unidade Compradora: {processo.orgao.codigo_unidade if processo.orgao else 'N/A'}")
-        print(f"  MAP_MODALIDADE_CATEGORIA_ITEM[{mod_id}] = {MAP_MODALIDADE_CATEGORIA_ITEM.get(mod_id, 'NÃO ENCONTRADO')}")
-        print(f"  MAP_MODALIDADE_MODO_DISPUTA[{mod_id}] = {MAP_MODALIDADE_MODO_DISPUTA.get(mod_id, 'NÃO ENCONTRADO')}")
-        print(f"  MAP_MODALIDADE_INSTRUMENTO[{mod_id}] = {MAP_MODALIDADE_INSTRUMENTO.get(mod_id, 'NÃO ENCONTRADO')}")
-        print(f"  MAP_MODALIDADE_CRITERIO_JULGAMENTO[{mod_id}] = {MAP_MODALIDADE_CRITERIO_JULGAMENTO.get(mod_id, 'NÃO ENCONTRADO')}")
-        print(f"  MAP_MODALIDADE_AMPARO[{mod_id}] = {MAP_MODALIDADE_AMPARO.get(mod_id, 'NÃO ENCONTRADO')}")
-        print("=" * 80)
+        logger.warning("=" * 80)
+        logger.warning("[PNCP DEBUG] ======= DADOS DO PROCESSO =======")
+        logger.warning("  Processo ID: %s", processo.id)
+        logger.warning("  Número: %s", processo.numero_processo)
+        logger.warning("  Modalidade (raw): %r -> mod_id=%s", processo.modalidade, mod_id)
+        logger.warning("  Modo Disputa (raw): %r -> disp_id=%s", processo.modo_disputa, disp_id)
+        logger.warning("  Amparo Legal (raw): %r -> amp_id=%s", processo.amparo_legal, amp_id)
+        logger.warning("  Instrumento Conv. (raw): %r -> inst_id=%s", processo.instrumento_convocatorio, inst_id)
+        logger.warning("  Critério Julg. (raw): %r -> crit_id=%s", processo.criterio_julgamento, crit_id)
+        logger.warning("  CNPJ Orgão: %s", cnpj_orgao)
+        logger.warning("  Unidade Compradora: %s", processo.orgao.codigo_unidade if processo.orgao else 'N/A')
+        logger.warning("=" * 80)
 
         # --- Validação cruzada de domínios PNCP -------------------------
         # Modo de Disputa x Modalidade
@@ -724,8 +718,6 @@ class PNCPService:
         if not itens_qs or not itens_qs.exists():
             raise ValueError("A contratação deve possuir ao menos um item para ser publicada no PNCP.")
 
-        # Categorias válidas para a modalidade selecionada (mapa centralizado)
-        categorias_validas = set(MAP_MODALIDADE_CATEGORIA_ITEM.get(mod_id, [1, 2, 3, 4, 5, 6, 7, 8]))
         # Categorias que se comportam como Serviço no PNCP (materialOuServico = "S")
         # Serviço(2), Obra(3), Serv.Eng(4), TIC(5), Locação(6), Obras+Eng(8)
         service_like_categories = {2, 3, 4, 5, 6, 8}
@@ -734,57 +726,43 @@ class PNCPService:
             vl_unit = float(item.valor_estimado or 0)
             qtd = float(item.quantidade or 1)
 
-            # Categoria do item
-            cat_id = int(item.categoria_item or 1)
+            # Categoria do item (do banco)
+            cat_id_raw = item.categoria_item
+            cat_id = int(cat_id_raw) if cat_id_raw else None
 
             # ===== LOG DIAGNÓSTICO: DADOS DE CADA ITEM =====
-            print(f"[PNCP DEBUG] Item #{idx}:")
-            print(f"  DB id={item.id}, ordem={item.ordem}, descricao={item.descricao!r}")
-            print(f"  categoria_item (raw do DB): {item.categoria_item!r} -> cat_id={cat_id}")
-            print(f"  tipo_beneficio (raw do DB): {item.tipo_beneficio!r}")
-            print(f"  cat_id {cat_id} está em categorias_validas {categorias_validas}? {cat_id in categorias_validas}")
-
-            if cat_id not in categorias_validas:
-                numero_item = item.ordem or idx
-                # Normaliza: se parece serviço, usa Serviço (2), senão Material (1)
-                # Se a modalidade aceita Serviço, prioriza; senão, primeiro da lista
-                if cat_id in service_like_categories and 2 in categorias_validas:
-                    normalized_cat = 2
-                elif 1 in categorias_validas:
-                    normalized_cat = 1
-                else:
-                    normalized_cat = list(categorias_validas)[0]
-                logger.warning(
-                    "[PNCP SEND] Categoria %s inválida para modalidade %s no item %s. "
-                    "Categorias válidas: %s. Normalizando para %s.",
-                    cat_id, mod_id, numero_item, categorias_validas, normalized_cat,
-                )
-                cat_id = normalized_cat
-
-            # Material (M) ou Serviço (S) – regra do PNCP
-            tipo_ms = "S" if cat_id in service_like_categories else "M"
-
-            payload["itensCompra"].append(
-                {
-                    "numeroItem": item.ordem or idx,
-                    "materialOuServico": tipo_ms,
-                    "tipoBeneficioId": int(item.tipo_beneficio or 1),
-                    "incentivoProdutivoBasico": False,
-                    "orcamentoSigiloso": False,
-                    "aplicabilidadeMargemPreferenciaNormal": False,
-                    "aplicabilidadeMargemPreferenciaAdicional": False,
-                    "codigoTipoMargemPreferencia": 1,
-                    "inConteudoNacional": True,
-                    "descricao": (item.descricao or "Item")[:255],
-                    "quantidade": qtd,
-                    "unidadeMedida": (item.unidade or "UN")[:20],
-                    "valorUnitarioEstimado": vl_unit,
-                    "valorTotal": round(vl_unit * qtd, 4),
-                    "criterioJulgamentoId": crit_id,
-                    "itemCategoriaId": cat_id,
-                    "catalogoId": 2,
-                }
+            logger.warning(
+                "[PNCP DEBUG] Item #%s: id=%s, ordem=%s, desc=%r, "
+                "cat_raw=%r, cat_id=%s, tipo_beneficio=%r",
+                idx, item.id, item.ordem, item.descricao,
+                cat_id_raw, cat_id, item.tipo_beneficio,
             )
+
+            # Material (M) ou Serviço (S) – baseado na categoria do item
+            if cat_id and cat_id in service_like_categories:
+                tipo_ms = "S"
+            else:
+                tipo_ms = "M"
+
+            # Montagem do payload do item – campos OBRIGATÓRIOS apenas
+            # NOTA: itemCategoriaId NÃO é obrigatório na API PNCP e quando
+            # enviado com valor incompatível com a modalidade causa 422.
+            # Solução: omitir itemCategoriaId (o PNCP aceita sem ele).
+            item_payload = {
+                "numeroItem": item.ordem or idx,
+                "materialOuServico": tipo_ms,
+                "tipoBeneficioId": int(item.tipo_beneficio or 1),
+                "incentivoProdutivoBasico": False,
+                "orcamentoSigiloso": False,
+                "descricao": (item.descricao or "Item")[:255],
+                "quantidade": qtd,
+                "unidadeMedida": (item.unidade or "UN")[:20],
+                "valorUnitarioEstimado": vl_unit,
+                "valorTotal": round(vl_unit * qtd, 4),
+                "criterioJulgamentoId": crit_id,
+            }
+
+            payload["itensCompra"].append(item_payload)
 
         if hasattr(arquivo, "seek"):
             arquivo.seek(0)
@@ -792,18 +770,14 @@ class PNCPService:
         # Log de validação cruzada completa
         logger.info(
             "[PNCP PRE-SEND] Validação: modalidade=%s, modo_disputa=%s, "
-            "amparo=%s, instrumento=%s, criterio=%s, itens=%d, "
-            "categorias_itens=%s",
+            "amparo=%s, instrumento=%s, criterio=%s, itens=%d",
             mod_id, disp_id, amp_id, inst_id, crit_id,
             len(payload["itensCompra"]),
-            [i["itemCategoriaId"] for i in payload["itensCompra"]],
         )
 
         # ===== LOG DIAGNÓSTICO: PAYLOAD JSON COMPLETO =====
-        print("=" * 80)
-        print("[PNCP DEBUG] ======= PAYLOAD JSON COMPLETO =======")
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        print("=" * 80)
+        logger.warning("[PNCP DEBUG] ======= PAYLOAD JSON COMPLETO =======")
+        logger.warning("%s", json.dumps(payload, ensure_ascii=False, indent=2))
 
         files = {
             "documento": (
@@ -847,34 +821,19 @@ class PNCPService:
             raise ValueError(msg) from exc
 
         # ===== LOG DIAGNÓSTICO: RESPOSTA DO PNCP =====
-        print("=" * 80)
-        print(f"[PNCP DEBUG] ======= RESPOSTA DO PNCP =======")
-        print(f"  Status Code: {response.status_code}")
-        print(f"  Response Headers: {dict(response.headers)}")
-        print(f"  Response Body: {(response.text or '')[:3000]}")
-        print("=" * 80)
+        logger.warning("[PNCP DEBUG] ======= RESPOSTA DO PNCP =======")
+        logger.warning("  Status Code: %s", response.status_code)
+        logger.warning("  Response Body: %s", (response.text or '')[:3000])
 
-        # Retry único para erro conhecido de compatibilidade modalidade x categoria
+        # Retry: se 422 por categoria inválida, remover itemCategoriaId e reenviar
         if response.status_code == 422:
             response_text = (response.text or "")
-            if "Categoria de compra de item inválida" in response_text or "modalidade de compra" in response_text:
+            if "Categoria de compra de item" in response_text or "modalidade de compra" in response_text:
                 retry_payload = json.loads(json.dumps(payload))
-                categorias_validas_retry = set(MAP_MODALIDADE_CATEGORIA_ITEM.get(mod_id, [1, 2]))
-                
-                for item_payload in retry_payload.get("itensCompra", []):
-                    cat = int(item_payload.get("itemCategoriaId") or 1)
-                    if cat not in categorias_validas_retry:
-                        # Forçar para a primeira categoria válida da modalidade
-                        if cat in service_like_categories and 2 in categorias_validas_retry:
-                            item_payload["itemCategoriaId"] = 2
-                        elif 1 in categorias_validas_retry:
-                            item_payload["itemCategoriaId"] = 1
-                        else:
-                            item_payload["itemCategoriaId"] = list(categorias_validas_retry)[0]
-                        
-                        item_payload["materialOuServico"] = (
-                            "S" if item_payload["itemCategoriaId"] in service_like_categories else "M"
-                        )
+
+                # Remover itemCategoriaId de todos os itens (campo não obrigatório)
+                for item_p in retry_payload.get("itensCompra", []):
+                    item_p.pop("itemCategoriaId", None)
 
                 retry_files = {
                     "documento": files["documento"],
@@ -882,24 +841,21 @@ class PNCPService:
                 }
 
                 logger.warning(
-                    "[PNCP SEND] Retentando publicação com categorias saneadas para modalidade %s.",
+                    "[PNCP SEND] Retentando publicação SEM itemCategoriaId para modalidade %s.",
                     mod_id,
                 )
 
-                # ===== LOG DIAGNÓSTICO: PAYLOAD DO RETRY =====
-                print("[PNCP DEBUG] ======= RETRY PAYLOAD =======")
-                print(json.dumps(retry_payload, ensure_ascii=False, indent=2))
-
                 try:
+                    if hasattr(arquivo, "seek"):
+                        arquivo.seek(0)
                     response = _send_compra(retry_files)
                 except requests.exceptions.RequestException as exc:
                     msg = f"Falha de comunicação com PNCP (retentativa publicar compra): {exc}"
                     cls._log(msg, "error")
                     raise ValueError(msg) from exc
 
-                # ===== LOG DIAGNÓSTICO: RESPOSTA DO RETRY =====
-                print(f"[PNCP DEBUG] RETRY Response Status: {response.status_code}")
-                print(f"[PNCP DEBUG] RETRY Response Body: {(response.text or '')[:3000]}")
+                logger.warning("[PNCP DEBUG] RETRY Response: %s %s",
+                               response.status_code, (response.text or '')[:3000])
 
         if response.status_code in (200, 201):
             cls._log("Compra publicada com sucesso no PNCP.")
