@@ -686,12 +686,60 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         """
         Sincroniza os resultados dos itens (fornecedores vencedores)
         com o PNCP, sem necessidade de enviar arquivo.
+
+        Aceita opcionalmente no body:
+          - ano_compra: int
+          - sequencial_compra: int
+        para processos cujos campos pncp_ano_compra / pncp_sequencial_compra
+        não tenham sido preenchidos automaticamente.
         """
         processo = self.get_object()
 
-        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+        # 1. Tentar pegar dos campos do modelo
+        ano = processo.pncp_ano_compra
+        seq = processo.pncp_sequencial_compra
+
+        # 2. Se não tiver, tentar extrair do pncp_ultimo_retorno (JSONField)
+        if (not ano or not seq) and processo.pncp_ultimo_retorno:
+            retorno = processo.pncp_ultimo_retorno
+            if isinstance(retorno, dict):
+                ano = ano or retorno.get("anoCompra") or retorno.get("ano_compra")
+                seq = seq or (
+                    retorno.get("sequencialCompra")
+                    or retorno.get("sequencial_compra")
+                    or retorno.get("sequencialCompraPNCP")
+                )
+
+        # 3. Se ainda não tiver, aceitar do body do request
+        if not ano or not seq:
+            body_ano = request.data.get("ano_compra")
+            body_seq = request.data.get("sequencial_compra")
+            if body_ano:
+                ano = int(body_ano)
+            if body_seq:
+                seq = int(body_seq)
+
+        # 4. Se conseguiu resolver, salvar no modelo para próximas vezes
+        if ano and seq:
+            save_fields = []
+            if not processo.pncp_ano_compra:
+                processo.pncp_ano_compra = int(ano)
+                save_fields.append("pncp_ano_compra")
+            if not processo.pncp_sequencial_compra:
+                processo.pncp_sequencial_compra = int(seq)
+                save_fields.append("pncp_sequencial_compra")
+            if save_fields:
+                processo.save(update_fields=save_fields)
+                processo.refresh_from_db()
+        else:
             return Response(
-                {"detail": "Processo ainda não publicado no PNCP. Publique primeiro."},
+                {
+                    "detail": (
+                        "Processo ainda não publicado no PNCP (campos pncp_ano_compra "
+                        "e pncp_sequencial_compra vazios). Publique primeiro ou informe "
+                        "ano_compra e sequencial_compra no body da requisição."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
