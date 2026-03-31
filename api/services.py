@@ -932,6 +932,117 @@ class PNCPService:
         cls._handle_error(resp)
 
     # ------------------------------------------------------------------ #
+    # CONSULTAR RESULTADOS EXISTENTES DE UM ITEM                         #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def consultar_resultados_item(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        numero_item: int,
+    ) -> list:
+        """
+        Consulta os resultados já cadastrados de um item no PNCP.
+        Endpoint:
+          GET /orgaos/{cnpj}/compras/{ano}/{seq}/itens/{numeroItem}/resultados
+        Retorna lista de resultados (cada um com sequencialResultado).
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/itens/"
+            f"{int(numero_item)}/resultados"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "accept": "application/json",
+        }
+
+        try:
+            resp = requests.get(
+                url,
+                headers=headers,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            logger.warning("[PNCP] Falha ao consultar resultados item %s: %s",
+                           numero_item, exc)
+            return []
+
+        if resp.status_code == 200:
+            try:
+                body = resp.json()
+                if isinstance(body, list):
+                    return body
+                # Algumas respostas vêm como objeto com lista interna
+                if isinstance(body, dict):
+                    return body.get("resultados", body.get("data", [body]))
+            except ValueError:
+                pass
+        return []
+
+    # ------------------------------------------------------------------ #
+    # DELETAR RESULTADO DE UM ITEM                                       #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def deletar_resultado_item(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        numero_item: int,
+        sequencial_resultado: int,
+    ) -> bool:
+        """
+        Remove um resultado específico de um item no PNCP.
+        Endpoint:
+          DELETE /orgaos/{cnpj}/compras/{ano}/{seq}/itens/{numeroItem}/resultados/{seqResultado}
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/itens/"
+            f"{int(numero_item)}/resultados/{int(sequencial_resultado)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "accept": "application/json",
+        }
+
+        cls._log(f"Deletando resultado {sequencial_resultado} do item {numero_item}: {url}")
+
+        try:
+            resp = requests.delete(
+                url,
+                headers=headers,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            logger.warning("[PNCP] Falha ao deletar resultado %s do item %s: %s",
+                           sequencial_resultado, numero_item, exc)
+            return False
+
+        if resp.status_code in (200, 204):
+            cls._log(f"Resultado {sequencial_resultado} do item {numero_item} deletado.")
+            return True
+
+        logger.warning("[PNCP] DELETE resultado %s item %s retornou %s: %s",
+                       sequencial_resultado, numero_item,
+                       resp.status_code, (resp.text or "")[:500])
+        return False
+
+    # ------------------------------------------------------------------ #
     # ATUALIZAR ITEM DE CONTRATAÇÃO (PATCH parcial)                      #
     # ------------------------------------------------------------------ #
 
@@ -1092,6 +1203,30 @@ class PNCPService:
             }
 
             try:
+                # ---- LIMPAR resultados anteriores do item ----
+                # Evita duplicação quando o fornecedor muda e sincroniza de novo
+                resultados_existentes = cls.consultar_resultados_item(
+                    cnpj_orgao=cnpj_orgao,
+                    ano_compra=ano,
+                    sequencial_compra=seq,
+                    numero_item=numero_item,
+                )
+                for res_antigo in resultados_existentes:
+                    seq_resultado = (
+                        res_antigo.get("sequencialResultado")
+                        or res_antigo.get("sequencial")
+                    )
+                    if seq_resultado is not None:
+                        cls.deletar_resultado_item(
+                            cnpj_orgao=cnpj_orgao,
+                            ano_compra=ano,
+                            sequencial_compra=seq,
+                            numero_item=numero_item,
+                            sequencial_resultado=int(seq_resultado),
+                        )
+                        time.sleep(0.3)
+
+                # ---- Inserir novo resultado ----
                 result = cls.inserir_resultado_item(
                     cnpj_orgao=cnpj_orgao,
                     ano_compra=ano,
