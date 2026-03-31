@@ -646,7 +646,7 @@ class PNCPService:
             "amparoLegalId": amp_id,
             "srp": bool(getattr(processo, "registro_preco", False)),
             "objetoCompra": (processo.objeto or "Objeto não informado")[:5000],
-            "informacaoComplementar": "Integrado via API Licitapro",
+            "informacaoComplementar": "Integrado via API L3Solutions",
             "fontesOrcamentarias": [2],
             "dataAberturaProposta": data_abertura_str,
             "dataEncerramentoProposta": data_encerramento_str,
