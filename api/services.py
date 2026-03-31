@@ -202,6 +202,15 @@ class PNCPService:
         logger.error("[PNCP ERROR] Status=%s | Body=%s", response.status_code, (response.text or "")[:2000])
         raise ValueError(full_msg)
 
+    @classmethod
+    def _candidate_base_urls(cls) -> List[str]:
+        """Retorna bases possíveis (escrita + consulta) sem duplicação."""
+        bases = [cls.BASE_URL]
+        consulta_url = cls.BASE_URL.replace("/api/pncp/", "/api/consulta/")
+        if consulta_url not in bases:
+            bases.append(consulta_url)
+        return bases
+
     # ------------------------------------------------------------------ #
     # 6.3.5 – Consultar uma Contratação                                  #
     # ------------------------------------------------------------------ #
@@ -942,11 +951,7 @@ class PNCPService:
         numero_item: int,
         resultado_payload: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Insere o resultado (fornecedor vencedor) de um item da contratação.
-        Se o PNCP retornar 422 "já existe resultado com o fornecedor",
-        tenta atualizar via PUT nos sequenciais 1..5.
-        """
+        """Insere o resultado (fornecedor vencedor) de um item da contratação."""
         token = cls._get_token()
 
         url = (
@@ -989,48 +994,89 @@ class PNCPService:
             cls._log(f"Resultado do item {numero_item} inserido com sucesso.")
             return result
 
-        # Se 422 com "já existe resultado", tentar PUT para atualizar
-        if resp.status_code == 422:
-            resp_text = resp.text or ""
-            if "resultado" in resp_text.lower() and "fornecedor" in resp_text.lower():
-                logger.warning(
-                    "[PNCP] POST resultado item %s deu 422 (já existe). "
-                    "Tentando PUT para atualizar...", numero_item
-                )
-                # Tentar PUT nos sequenciais 1..5
-                for seq_r in range(1, 6):
-                    put_url = f"{url}/{seq_r}"
-                    try:
-                        put_resp = requests.put(
-                            put_url,
-                            headers=headers,
-                            json=resultado_payload,
-                            verify=cls.VERIFY_SSL,
-                            timeout=cls.DEFAULT_TIMEOUT,
-                        )
-                    except requests.exceptions.RequestException:
-                        continue
-
-                    logger.warning(
-                        "[PNCP] PUT resultado item %s seq %s -> %s: %s",
-                        numero_item, seq_r, put_resp.status_code,
-                        (put_resp.text or "")[:500]
-                    )
-
-                    if put_resp.status_code in (200, 204):
-                        cls._log(
-                            f"Resultado do item {numero_item} atualizado "
-                            f"via PUT (seq={seq_r})."
-                        )
-                        return {"status_code": put_resp.status_code, "method": "PUT"}
-
-                # Se PUT não funcionou, log e continua para _handle_error
-                logger.warning(
-                    "[PNCP] PUT também falhou para item %s. Resposta original: %s",
-                    numero_item, resp_text[:500]
-                )
-
         cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # RETIFICAR RESULTADO DE ITEM                                        #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def retificar_resultado_item(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        numero_item: int,
+        sequencial_resultado: int,
+        resultado_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Retifica um resultado existente de item via sequencial do resultado.
+        Tenta PUT e, se necessário, PATCH no mesmo recurso.
+        """
+        token = cls._get_token()
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/itens/"
+            f"{int(numero_item)}/resultados/{int(sequencial_resultado)}"
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "application/json",
+        }
+
+        for method in ("put", "patch"):
+            try:
+                resp = getattr(requests, method)(
+                    url,
+                    headers=headers,
+                    json=resultado_payload,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = (
+                    f"Falha de comunicação com PNCP (retificar resultado item "
+                    f"{numero_item}): {exc}"
+                )
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
+
+            logger.warning(
+                "[PNCP] %s resultado item=%s seqResultado=%s -> %s: %s",
+                method.upper(),
+                numero_item,
+                sequencial_resultado,
+                resp.status_code,
+                (resp.text or "")[:500],
+            )
+
+            if resp.status_code in (200, 204):
+                return {"status_code": resp.status_code, "method": method.upper()}
+
+            # Se o método não for permitido/inexistente, tenta o próximo.
+            if resp.status_code in (404, 405):
+                continue
+
+            cls._handle_error(resp)
+
+        raise ValueError(
+            "PNCP recusou a operação (404): Resultado do item não localizado para retificação."
+        )
+
+    @staticmethod
+    def _extract_resultados_list(body: Any) -> List[Dict[str, Any]]:
+        if isinstance(body, list):
+            return [x for x in body if isinstance(x, dict)]
+        if isinstance(body, dict):
+            for key in ("resultados", "data", "content", "items"):
+                value = body.get(key)
+                if isinstance(value, list):
+                    return [x for x in value if isinstance(x, dict)]
+            return [body]
+        return []
 
     # ------------------------------------------------------------------ #
     # CONSULTAR RESULTADOS EXISTENTES DE UM ITEM                         #
@@ -1052,14 +1098,7 @@ class PNCPService:
         """
         token = cls._get_token()
 
-        # Tentar nos dois endpoints possíveis
-        base_urls = [cls.BASE_URL]
-        # Adicionar endpoint de consulta como fallback
-        consulta_url = cls.BASE_URL.replace("/api/pncp/", "/api/consulta/")
-        if consulta_url != cls.BASE_URL:
-            base_urls.append(consulta_url)
-
-        for base in base_urls:
+        for base in cls._candidate_base_urls():
             url = (
                 f"{base}/orgaos/{cnpj_orgao}/compras/"
                 f"{int(ano_compra)}/{int(sequencial_compra)}/itens/"
@@ -1089,14 +1128,64 @@ class PNCPService:
             if resp.status_code == 200:
                 try:
                     body = resp.json()
-                    if isinstance(body, list):
-                        return body
-                    if isinstance(body, dict):
-                        return body.get("resultados", body.get("data", [body]))
+                    return cls._extract_resultados_list(body)
                 except ValueError:
                     pass
 
+            if resp.status_code == 404:
+                continue
+
         return []
+
+    # ------------------------------------------------------------------ #
+    # CONSULTAR ITEM DE UMA CONTRATAÇÃO                                  #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def consultar_item_compra(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        numero_item: int,
+    ) -> Optional[Dict[str, Any]]:
+        token = cls._get_token()
+
+        for base in cls._candidate_base_urls():
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/itens/{int(numero_item)}"
+            )
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "accept": "application/json",
+            }
+
+            try:
+                resp = requests.get(
+                    url,
+                    headers=headers,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException:
+                continue
+
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    if isinstance(data, dict):
+                        return data
+                except ValueError:
+                    return {"raw_response": resp.text}
+
+            if resp.status_code == 404:
+                continue
+
+            cls._handle_error(resp)
+
+        return None
 
     # ------------------------------------------------------------------ #
     # DELETAR RESULTADO DE UM ITEM                                       #
@@ -1252,6 +1341,15 @@ class PNCPService:
             "propostas__fornecedor"
         ).order_by("ordem")
 
+        def _normalize_doc(value: Any) -> str:
+            return re.sub(r"\D", "", str(value or ""))
+
+        def _to_float(value: Any) -> Optional[float]:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
         for item in itens:
             numero_item = item.ordem or item.pncp_numero_item
 
@@ -1313,9 +1411,54 @@ class PNCPService:
                 "dataResultado": data_resultado,
             }
 
+            service_cats = {2, 3, 4, 5, 6, 8}
+            cat_id_raw = item.categoria_item
+            cat_id_val = int(cat_id_raw) if cat_id_raw else None
+            tipo_ms = "S" if (cat_id_val and cat_id_val in service_cats) else "M"
+            crit_id = int(processo.criterio_julgamento or 1)
+            item_pncp_payload = {
+                "numeroItem": numero_item,
+                "materialOuServico": tipo_ms,
+                "tipoBeneficioId": int(item.tipo_beneficio or 1),
+                "incentivoProdutivoBasico": False,
+                "orcamentoSigiloso": False,
+                "aplicabilidadeMargemPreferenciaNormal": False,
+                "aplicabilidadeMargemPreferenciaAdicional": False,
+                "descricao": (item.descricao or "Item")[:255],
+                "quantidade": qtd,
+                "unidadeMedida": (item.unidade or "UN")[:20],
+                "valorUnitarioEstimado": valor_unit,
+                "valorTotal": round(valor_unit * qtd, 4),
+                "criterioJulgamentoId": crit_id,
+                "justificativa": "Retificação automática via integração L3Solutions",
+            }
+
             try:
-                # ---- LIMPAR resultados anteriores do item ----
-                # Evita duplicação quando o fornecedor muda e sincroniza de novo
+                # 1) Sincronizar o item (inserir se não existir; retificar se existir)
+                item_existente = cls.consultar_item_compra(
+                    cnpj_orgao=cnpj_orgao,
+                    ano_compra=ano,
+                    sequencial_compra=seq,
+                    numero_item=numero_item,
+                )
+
+                if item_existente is None:
+                    cls.inserir_itens_compra(
+                        cnpj_orgao=cnpj_orgao,
+                        ano_compra=ano,
+                        sequencial_compra=seq,
+                        itens_payload=[item_pncp_payload],
+                    )
+                else:
+                    cls.atualizar_item_compra(
+                        cnpj_orgao=cnpj_orgao,
+                        ano_compra=ano,
+                        sequencial_compra=seq,
+                        numero_item=numero_item,
+                        item_payload=item_pncp_payload,
+                    )
+
+                # 2) Sincronizar resultado de forma idempotente
                 resultados_existentes = cls.consultar_resultados_item(
                     cnpj_orgao=cnpj_orgao,
                     ano_compra=ano,
@@ -1323,106 +1466,85 @@ class PNCPService:
                     numero_item=numero_item,
                 )
 
-                deletados = 0
-                if resultados_existentes:
-                    for res_antigo in resultados_existentes:
-                        seq_resultado = (
-                            res_antigo.get("sequencialResultado")
-                            or res_antigo.get("sequencial")
-                        )
-                        if seq_resultado is not None:
-                            ok = cls.deletar_resultado_item(
-                                cnpj_orgao=cnpj_orgao,
-                                ano_compra=ano,
-                                sequencial_compra=seq,
-                                numero_item=numero_item,
-                                sequencial_resultado=int(seq_resultado),
-                            )
-                            if ok:
-                                deletados += 1
-                            time.sleep(0.3)
+                ni_limpo = _normalize_doc(ni_fornecedor)
+                existente_mesmo_fornecedor = None
+                resultado_primario = None
 
-                # Se a consulta não retornou nada, tentar deletar por
-                # força bruta os sequenciais 1..5
-                if not resultados_existentes:
-                    for seq_r in range(1, 6):
-                        ok = cls.deletar_resultado_item(
+                for r in resultados_existentes:
+                    seq_res = r.get("sequencialResultado") or r.get("sequencial")
+                    if seq_res is not None and resultado_primario is None:
+                        resultado_primario = r
+
+                    ni_r = _normalize_doc(
+                        r.get("niFornecedor") or r.get("cnpjCpfFornecedor")
+                    )
+                    if ni_r and ni_r == ni_limpo:
+                        existente_mesmo_fornecedor = r
+
+                if existente_mesmo_fornecedor:
+                    qtd_atual = _to_float(
+                        existente_mesmo_fornecedor.get("quantidadeHomologada")
+                    )
+                    vu_atual = _to_float(
+                        existente_mesmo_fornecedor.get("valorUnitarioHomologado")
+                    )
+                    vt_atual = _to_float(
+                        existente_mesmo_fornecedor.get("valorTotalHomologado")
+                    )
+
+                    ja_sincronizado = (
+                        qtd_atual is not None
+                        and vu_atual is not None
+                        and vt_atual is not None
+                        and abs(qtd_atual - qtd) < 1e-6
+                        and abs(vu_atual - valor_unit) < 1e-6
+                        and abs(vt_atual - round(valor_unit * qtd, 2)) < 1e-6
+                    )
+
+                    if not ja_sincronizado:
+                        seq_res = (
+                            existente_mesmo_fornecedor.get("sequencialResultado")
+                            or existente_mesmo_fornecedor.get("sequencial")
+                        )
+                        if seq_res is None:
+                            raise ValueError(
+                                "Resultado existente sem sequencialResultado para retificação."
+                            )
+                        cls.retificar_resultado_item(
                             cnpj_orgao=cnpj_orgao,
                             ano_compra=ano,
                             sequencial_compra=seq,
                             numero_item=numero_item,
-                            sequencial_resultado=seq_r,
+                            sequencial_resultado=int(seq_res),
+                            resultado_payload=resultado_payload,
                         )
-                        if ok:
-                            deletados += 1
-                            time.sleep(0.3)
-
-                logger.info("[PNCP] Item %s: %d resultados antigos deletados.",
-                            numero_item, deletados)
-
-                if deletados > 0:
-                    time.sleep(0.5)
-
-                # ---- Inserir novo resultado ----
-                try:
-                    result = cls.inserir_resultado_item(
+                elif resultados_existentes:
+                    # Há resultado para outro fornecedor: retificar o resultado primário.
+                    seq_res = (
+                        (resultado_primario or {}).get("sequencialResultado")
+                        or (resultado_primario or {}).get("sequencial")
+                    )
+                    if seq_res is None:
+                        raise ValueError(
+                            "Resultado existente para outro fornecedor, mas sem "
+                            "sequencialResultado para retificação."
+                        )
+                    cls.retificar_resultado_item(
+                        cnpj_orgao=cnpj_orgao,
+                        ano_compra=ano,
+                        sequencial_compra=seq,
+                        numero_item=numero_item,
+                        sequencial_resultado=int(seq_res),
+                        resultado_payload=resultado_payload,
+                    )
+                else:
+                    cls.inserir_resultado_item(
                         cnpj_orgao=cnpj_orgao,
                         ano_compra=ano,
                         sequencial_compra=seq,
                         numero_item=numero_item,
                         resultado_payload=resultado_payload,
                     )
-                except ValueError as ve:
-                    ve_str = str(ve)
-                    # Se 404 "Item não cadastrado", inserir o item no PNCP primeiro
-                    if "404" in ve_str and ("não cadastrado" in ve_str.lower()
-                                            or "not found" in ve_str.lower()):
-                        logger.warning(
-                            "[PNCP] Item %s não existe no PNCP. Inserindo...",
-                            numero_item
-                        )
-                        # Determinar material/serviço
-                        service_cats = {2, 3, 4, 5, 6, 8}
-                        cat_id_raw = item.categoria_item
-                        cat_id_val = int(cat_id_raw) if cat_id_raw else None
-                        tipo_ms = "S" if (cat_id_val and cat_id_val in service_cats) else "M"
-
-                        crit_id = int(processo.criterio_julgamento or 1)
-
-                        item_pncp_payload = [{
-                            "numeroItem": numero_item,
-                            "materialOuServico": tipo_ms,
-                            "tipoBeneficioId": int(item.tipo_beneficio or 1),
-                            "incentivoProdutivoBasico": False,
-                            "orcamentoSigiloso": False,
-                            "aplicabilidadeMargemPreferenciaNormal": False,
-                            "aplicabilidadeMargemPreferenciaAdicional": False,
-                            "descricao": (item.descricao or "Item")[:255],
-                            "quantidade": qtd,
-                            "unidadeMedida": (item.unidade or "UN")[:20],
-                            "valorUnitarioEstimado": valor_unit,
-                            "valorTotal": round(valor_unit * qtd, 4),
-                            "criterioJulgamentoId": crit_id,
-                        }]
-
-                        cls.inserir_itens_compra(
-                            cnpj_orgao=cnpj_orgao,
-                            ano_compra=ano,
-                            sequencial_compra=seq,
-                            itens_payload=item_pncp_payload,
-                        )
-                        time.sleep(1)
-
-                        # Tentar inserir resultado de novo
-                        result = cls.inserir_resultado_item(
-                            cnpj_orgao=cnpj_orgao,
-                            ano_compra=ano,
-                            sequencial_compra=seq,
-                            numero_item=numero_item,
-                            resultado_payload=resultado_payload,
-                        )
-                    else:
-                        raise
 
                 resultados_ok.append({
                     "item": numero_item,
