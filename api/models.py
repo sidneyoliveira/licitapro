@@ -31,15 +31,13 @@ class CustomUser(AbstractUser):
     phone = models.CharField(max_length=20, null=True, blank=True)
     profile_image = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
 
-    # Vínculo com Entidade para isolamento multi-tenant
-    entidade = models.ForeignKey(
+    # Vínculo M2M com Entidades para isolamento multi-tenant
+    entidades = models.ManyToManyField(
         'Entidade',
-        on_delete=models.SET_NULL,
-        null=True,
         blank=True,
         related_name='usuarios',
-        verbose_name="Entidade vinculada",
-        help_text="Entidade à qual o usuário pertence. Define o escopo de dados visíveis."
+        verbose_name="Entidades vinculadas",
+        help_text="Entidades às quais o usuário pertence. Define o escopo de dados visíveis."
     )
 
     # Ajustes para compatibilidade com o admin do Django

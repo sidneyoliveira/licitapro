@@ -98,26 +98,25 @@ GOOGLE_CLIENT_ID = getattr(settings, "GOOGLE_CLIENT_ID", "") or ""
 
 class EntidadeFilterMixin:
     """
-    Mixin que filtra automaticamente querysets pela entidade do usuário logado.
-    Superusers veem tudo. Usuários sem entidade vinculada veem apenas registros
-    sem entidade (para permitir configuração inicial).
+    Mixin que filtra automaticamente querysets pelas entidades do usuário logado.
+    Superusers veem tudo. Usuários sem entidades vinculadas não veem nada.
     """
     entidade_field = 'entidade'  # Override em subclasses se o campo FK tiver outro nome
 
-    def get_user_entidade(self):
+    def get_user_entidades_ids(self):
         user = self.request.user
         if user.is_superuser:
             return None  # Superuser vê tudo
-        return getattr(user, 'entidade_id', None)
+        return list(user.entidades.values_list('id', flat=True))
 
     def filter_by_entidade(self, qs):
-        entidade_id = self.get_user_entidade()
-        if entidade_id is None and self.request.user.is_superuser:
+        entidade_ids = self.get_user_entidades_ids()
+        if entidade_ids is None and self.request.user.is_superuser:
             return qs  # Superuser: sem filtro
-        if entidade_id:
-            return qs.filter(**{self.entidade_field: entidade_id})
-        # Usuário sem entidade vinculada: não vê nada com entidade
-        return qs.filter(**{f'{self.entidade_field}__isnull': True})
+        if entidade_ids:
+            return qs.filter(**{f'{self.entidade_field}__in': entidade_ids})
+        # Usuário sem entidades vinculadas: não vê nada
+        return qs.none()
 
 
 def parse_pncp_id(raw, slug_map, field_name="campo"):
@@ -205,7 +204,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         parsers.JSONParser,
     ]
     search_fields = ["username", "email", "first_name", "last_name"]
-    filterset_fields = ["entidade", "is_active", "is_staff"]
+    filterset_fields = ["is_active", "is_staff"]
     ordering_fields = [
         "id",
         "username",
@@ -218,7 +217,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     ordering = ["username"]
 
     def get_queryset(self):
-        return User.objects.select_related("entidade").all().order_by("id")
+        return User.objects.prefetch_related("entidades").all().order_by("id")
 
 
 class CreateUserView(generics.CreateAPIView):
@@ -238,7 +237,7 @@ class ManageUserView(generics.RetrieveUpdateAPIView):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_object(self):
-        return CustomUser.objects.select_related("entidade").get(pk=self.request.user.pk)
+        return CustomUser.objects.prefetch_related("entidades").get(pk=self.request.user.pk)
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -257,9 +256,11 @@ class EntidadeViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Entidade.objects.all().order_by("nome")
-        entidade_id = self.get_user_entidade()
-        if entidade_id is not None:
-            qs = qs.filter(id=entidade_id)
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return qs
+        entidade_ids = self.get_user_entidades_ids()
+        if entidade_ids is not None:
+            qs = qs.filter(id__in=entidade_ids)
         return qs
 
 
@@ -272,10 +273,12 @@ class OrgaoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Orgao.objects.select_related("entidade").order_by("nome")
-        # Multi-tenant: filtra pela entidade do usuário
-        entidade_id = self.get_user_entidade()
-        if entidade_id is not None:
-            qs = qs.filter(entidade_id=entidade_id)
+        # Multi-tenant: filtra pelas entidades do usuário
+        entidade_ids = self.get_user_entidades_ids()
+        if entidade_ids is not None:
+            if not entidade_ids:
+                return qs.none()
+            qs = qs.filter(entidade_id__in=entidade_ids)
         # Filtro adicional por query param
         entidade_param = self.request.query_params.get("entidade")
         if entidade_param:
@@ -1567,17 +1570,22 @@ class DashboardStatsView(APIView):
 
     def get(self, request):
         user = request.user
-        entidade_id = getattr(user, 'entidade_id', None)
+        entidade_ids = list(user.entidades.values_list('id', flat=True))
 
-        # Superuser vê tudo; usuário normal vê apenas da sua entidade
-        if user.is_superuser or not entidade_id:
+        # Superuser vê tudo; usuário normal vê apenas das suas entidades
+        if user.is_superuser:
             processos_qs = ProcessoLicitatorio.objects.all()
             itens_qs = Item.objects.all()
             orgaos_qs = Orgao.objects.all()
+        elif entidade_ids:
+            processos_qs = ProcessoLicitatorio.objects.filter(entidade_id__in=entidade_ids)
+            itens_qs = Item.objects.filter(processo__entidade_id__in=entidade_ids)
+            orgaos_qs = Orgao.objects.filter(entidade_id__in=entidade_ids)
         else:
-            processos_qs = ProcessoLicitatorio.objects.filter(entidade_id=entidade_id)
-            itens_qs = Item.objects.filter(processo__entidade_id=entidade_id)
-            orgaos_qs = Orgao.objects.filter(entidade_id=entidade_id)
+            # Usuário sem entidades: não vê nada
+            processos_qs = ProcessoLicitatorio.objects.none()
+            itens_qs = Item.objects.none()
+            orgaos_qs = Orgao.objects.none()
 
         data = {
             "total_processos": processos_qs.count(),

@@ -52,38 +52,93 @@ TIPO_DOC_MAPA = {
 # ============================================================
 
 class UserSerializer(serializers.ModelSerializer):
-    entidade_nome = serializers.CharField(source="entidade.nome", read_only=True)
+    entidades_nomes = serializers.SerializerMethodField()
     password = serializers.CharField(write_only=True, required=False, min_length=6)
+    entidades = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Entidade.objects.all(),
+        required=False,
+    )
 
     class Meta:
         model = CustomUser
         fields = (
             "id", "username", "first_name", "last_name", "email",
             "cpf", "phone", "profile_image", "data_nascimento",
-            "entidade", "entidade_nome", "password",
+            "entidades", "entidades_nomes", "password",
             "is_active", "is_staff", "is_superuser",
             "date_joined", "last_login",
         )
-        read_only_fields = ("date_joined", "last_login", "entidade_nome")
+        read_only_fields = ("date_joined", "last_login", "entidades_nomes")
+
+    def get_entidades_nomes(self, obj):
+        return [
+            {"id": e.id, "nome": e.nome}
+            for e in obj.entidades.all()
+        ]
+
+    def _is_admin_request(self):
+        request = self.context.get("request")
+        return bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
 
     def create(self, validated_data):
         password = validated_data.pop("password", None)
+        entidades = validated_data.pop("entidades", [])
+
+        # Campos administrativos só podem ser definidos por admin
+        if not self._is_admin_request():
+            validated_data.pop("is_active", None)
+            validated_data.pop("is_staff", None)
+            validated_data.pop("is_superuser", None)
+            entidades = []
+
         user = CustomUser(**validated_data)
         if password:
             user.set_password(password)
         else:
             user.set_unusable_password()
         user.save()
+        if entidades:
+            user.entidades.set(entidades)
         return user
 
     def update(self, instance, validated_data):
         password = validated_data.pop("password", None)
+        entidades = validated_data.pop("entidades", None)
+
+        # Se NÃO é admin, remove campos administrativos
+        if not self._is_admin_request():
+            for field in ("is_active", "is_staff", "is_superuser"):
+                validated_data.pop(field, None)
+            entidades = None  # Não-admin não pode alterar entidades
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         if password:
             instance.set_password(password)
         instance.save()
+
+        if entidades is not None:
+            instance.entidades.set(entidades)
+
         return instance
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+
+        # Usuário comum em /me/ vê apenas dados pessoais (sem campos administrativos)
+        if (
+            request
+            and request.user.is_authenticated
+            and not request.user.is_staff
+            and not request.user.is_superuser
+            and request.user.pk == instance.pk
+        ):
+            for field in ("is_active", "is_staff", "is_superuser", "entidades", "entidades_nomes"):
+                data.pop(field, None)
+
+        return data
 
 
 # ============================================================
