@@ -657,14 +657,28 @@ class PNCPService:
         if not itens_qs or not itens_qs.exists():
             raise ValueError("A contratação deve possuir ao menos um item para ser publicada no PNCP.")
 
+        categorias_validas_por_modalidade = {
+            # Pregão: PNCP aceita Material (1) ou Serviço (2)
+            6: {1, 2},
+        }
+
         for idx, item in enumerate(itens_qs.all(), start=1):
             vl_unit = float(item.valor_estimado or 0)
             qtd = float(item.quantidade or 1)
 
-            # Categoria do item (ajuste simples para pregão, se necessário)
+            # Categoria do item
             cat_id = int(item.categoria_item or 1)
-            if mod_id == 6 and cat_id == 1:
-                cat_id = 2
+
+            categorias_validas = categorias_validas_por_modalidade.get(mod_id)
+            if categorias_validas and cat_id not in categorias_validas:
+                numero_item = item.ordem or idx
+                raise ValueError(
+                    (
+                        f"Categoria de item inválida para a modalidade selecionada. "
+                        f"Item {numero_item}: categoria {cat_id}; modalidade {mod_id}. "
+                        f"Para Pregão, use categoria 1 (Material) ou 2 (Serviço)."
+                    )
+                )
 
             # Material (M) ou Serviço (S) – regra simplificada
             tipo_ms = "S" if cat_id in [2, 4, 8, 9] else "M"
