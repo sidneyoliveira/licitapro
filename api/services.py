@@ -16,6 +16,13 @@ from django.utils import timezone
 
 # Importação do Model para tipagem e uso no ImportacaoService
 from .models import ProcessoLicitatorio
+from .choices import (
+    MAP_MODALIDADE_CATEGORIA_ITEM,
+    MAP_MODALIDADE_MODO_DISPUTA,
+    MAP_MODALIDADE_INSTRUMENTO,
+    MAP_MODALIDADE_CRITERIO_JULGAMENTO,
+    MAP_MODALIDADE_AMPARO,
+)
 
 logger = logging.getLogger("api")
 
@@ -628,6 +635,47 @@ class PNCPService:
                 "devem ser números inteiros."
             ) from exc
 
+        # --- Validação cruzada de domínios PNCP -------------------------
+        # Modo de Disputa x Modalidade
+        modos_validos = MAP_MODALIDADE_MODO_DISPUTA.get(mod_id)
+        if modos_validos and disp_id not in modos_validos:
+            fallback_disp = modos_validos[0]
+            logger.warning(
+                "[PNCP] Modo de disputa %s inválido para modalidade %s. "
+                "Normalizando para %s.", disp_id, mod_id, fallback_disp
+            )
+            disp_id = fallback_disp
+
+        # Instrumento Convocatório x Modalidade
+        instrumentos_validos = MAP_MODALIDADE_INSTRUMENTO.get(mod_id)
+        if instrumentos_validos and inst_id not in instrumentos_validos:
+            fallback_inst = instrumentos_validos[0]
+            logger.warning(
+                "[PNCP] Instrumento convocatório %s inválido para modalidade %s. "
+                "Normalizando para %s.", inst_id, mod_id, fallback_inst
+            )
+            inst_id = fallback_inst
+
+        # Critério de Julgamento x Modalidade
+        criterios_validos = MAP_MODALIDADE_CRITERIO_JULGAMENTO.get(mod_id)
+        if criterios_validos and crit_id not in criterios_validos:
+            fallback_crit = criterios_validos[0]
+            logger.warning(
+                "[PNCP] Critério de julgamento %s inválido para modalidade %s. "
+                "Normalizando para %s.", crit_id, mod_id, fallback_crit
+            )
+            crit_id = fallback_crit
+
+        # Amparo Legal x Modalidade
+        amparos_validos = MAP_MODALIDADE_AMPARO.get(mod_id)
+        if amparos_validos and amp_id not in amparos_validos:
+            fallback_amp = amparos_validos[0]
+            logger.warning(
+                "[PNCP] Amparo legal %s inválido para modalidade %s. "
+                "Normalizando para %s.", amp_id, mod_id, fallback_amp
+            )
+            amp_id = fallback_amp
+
         ano_compra = (
             int(processo.data_processo.year)
             if getattr(processo, "data_processo", None)
@@ -657,11 +705,11 @@ class PNCPService:
         if not itens_qs or not itens_qs.exists():
             raise ValueError("A contratação deve possuir ao menos um item para ser publicada no PNCP.")
 
-        categorias_validas_por_modalidade = {
-            # Pregão: PNCP aceita Material (1) ou Serviço (2)
-            6: {1, 2},
-        }
-        service_like_categories = {2, 4, 8, 9}
+        # Categorias válidas para a modalidade selecionada (mapa centralizado)
+        categorias_validas = set(MAP_MODALIDADE_CATEGORIA_ITEM.get(mod_id, [1, 2, 3, 4, 5, 6, 7, 8]))
+        # Categorias que se comportam como Serviço no PNCP (materialOuServico = "S")
+        # Serviço(2), Obra(3), Serv.Eng(4), TIC(5), Locação(6), Obras+Eng(8)
+        service_like_categories = {2, 3, 4, 5, 6, 8}
 
         for idx, item in enumerate(itens_qs.all(), start=1):
             vl_unit = float(item.valor_estimado or 0)
@@ -670,20 +718,24 @@ class PNCPService:
             # Categoria do item
             cat_id = int(item.categoria_item or 1)
 
-            categorias_validas = categorias_validas_por_modalidade.get(mod_id)
-            if categorias_validas and cat_id not in categorias_validas:
+            if cat_id not in categorias_validas:
                 numero_item = item.ordem or idx
-                normalized_cat = 2 if cat_id in service_like_categories else 1
+                # Normaliza: se parece serviço, usa Serviço (2), senão Material (1)
+                # Se a modalidade aceita Serviço, prioriza; senão, primeiro da lista
+                if cat_id in service_like_categories and 2 in categorias_validas:
+                    normalized_cat = 2
+                elif 1 in categorias_validas:
+                    normalized_cat = 1
+                else:
+                    normalized_cat = list(categorias_validas)[0]
                 logger.warning(
-                    "[PNCP SEND] Categoria inválida para modalidade %s no item %s (cat=%s). Normalizando para %s.",
-                    mod_id,
-                    numero_item,
-                    cat_id,
-                    normalized_cat,
+                    "[PNCP SEND] Categoria %s inválida para modalidade %s no item %s. "
+                    "Categorias válidas: %s. Normalizando para %s.",
+                    cat_id, mod_id, numero_item, categorias_validas, normalized_cat,
                 )
                 cat_id = normalized_cat
 
-            # Material (M) ou Serviço (S) – regra simplificada
+            # Material (M) ou Serviço (S) – regra do PNCP
             tipo_ms = "S" if cat_id in service_like_categories else "M"
 
             payload["itensCompra"].append(
@@ -710,6 +762,16 @@ class PNCPService:
 
         if hasattr(arquivo, "seek"):
             arquivo.seek(0)
+
+        # Log de validação cruzada completa
+        logger.info(
+            "[PNCP PRE-SEND] Validação: modalidade=%s, modo_disputa=%s, "
+            "amparo=%s, instrumento=%s, criterio=%s, itens=%d, "
+            "categorias_itens=%s",
+            mod_id, disp_id, amp_id, inst_id, crit_id,
+            len(payload["itensCompra"]),
+            [i["itemCategoriaId"] for i in payload["itensCompra"]],
+        )
 
         files = {
             "documento": (
@@ -755,12 +817,24 @@ class PNCPService:
         # Retry único para erro conhecido de compatibilidade modalidade x categoria
         if response.status_code == 422:
             response_text = (response.text or "")
-            if "Categoria de compra de item inválida para a modalidade de compra" in response_text:
+            if "Categoria de compra de item inválida" in response_text or "modalidade de compra" in response_text:
                 retry_payload = json.loads(json.dumps(payload))
+                categorias_validas_retry = set(MAP_MODALIDADE_CATEGORIA_ITEM.get(mod_id, [1, 2]))
+                
                 for item_payload in retry_payload.get("itensCompra", []):
                     cat = int(item_payload.get("itemCategoriaId") or 1)
-                    if mod_id == 6 and cat not in {1, 2}:
-                        item_payload["itemCategoriaId"] = 2 if cat in service_like_categories else 1
+                    if cat not in categorias_validas_retry:
+                        # Forçar para a primeira categoria válida da modalidade
+                        if cat in service_like_categories and 2 in categorias_validas_retry:
+                            item_payload["itemCategoriaId"] = 2
+                        elif 1 in categorias_validas_retry:
+                            item_payload["itemCategoriaId"] = 1
+                        else:
+                            item_payload["itemCategoriaId"] = list(categorias_validas_retry)[0]
+                        
+                        item_payload["materialOuServico"] = (
+                            "S" if item_payload["itemCategoriaId"] in service_like_categories else "M"
+                        )
 
                 retry_files = {
                     "documento": files["documento"],

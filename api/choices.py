@@ -211,6 +211,9 @@ MAP_MODALIDADE_AMPARO = {
     
     # Inexigibilidade (Traz todos do Art 74 e Art 25)
     9: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 50, 209, 210, 211],
+
+    # Pré-Qualificação
+    11: [2],
     
     # Leilão
     13: [4, 204],
@@ -224,6 +227,137 @@ MAP_MODALIDADE_AMPARO = {
 
     # Outros (PNAE)
     # Se precisar de modalidade específica, adicione aqui.
+}
+
+# ==============================================================================
+# MAPA: MODALIDADE -> CATEGORIAS DE ITEM PERMITIDAS (IDs)
+# Regras conforme Manual de Integração PNCP v2.3
+# ==============================================================================
+
+MAP_MODALIDADE_CATEGORIA_ITEM = {
+    # Pregão Eletrônico: Material, Serviço, Soluções de TIC
+    6: [1, 2, 5],
+    # Pregão Presencial
+    7: [1, 2, 5],
+
+    # Concorrência Eletrônica: Material, Serviço, Obra, Serv.Eng, TIC, Obras+Eng
+    4: [1, 2, 3, 4, 5, 8],
+    # Concorrência Presencial
+    5: [1, 2, 3, 4, 5, 8],
+
+    # Dispensa de Licitação: Todas exceto Alienação
+    8: [1, 2, 3, 4, 5, 6, 8],
+
+    # Inexigibilidade: Material, Serviço, Serv.Eng, TIC
+    9: [1, 2, 4, 5],
+
+    # Pré-Qualificação: Material, Serviço, Obra, Serv.Eng, TIC, Obras+Eng
+    11: [1, 2, 3, 4, 5, 8],
+
+    # Credenciamento: Material, Serviço, Serv.Eng, TIC
+    12: [1, 2, 4, 5],
+
+    # Leilão: Alienação/Concessão/Permissão
+    13: [7],
+    14: [7],
+
+    # Diálogo Competitivo: Obra, Serv.Eng, TIC, Obras+Eng
+    15: [3, 4, 5, 8],
+}
+
+# ==============================================================================
+# MAPA: MODALIDADE -> MODOS DE DISPUTA PERMITIDOS (IDs)
+# ==============================================================================
+
+MAP_MODALIDADE_MODO_DISPUTA = {
+    # Pregão: Aberto, Aberto-Fechado, Fechado-Aberto
+    6: [1, 3, 6],
+    7: [1, 3, 6],
+
+    # Concorrência: Aberto, Fechado, Aberto-Fechado, Fechado-Aberto
+    4: [1, 2, 3, 6],
+    5: [1, 2, 3, 6],
+
+    # Dispensa: Dispensa com Disputa, Não se aplica
+    8: [4, 5],
+
+    # Inexigibilidade: Não se aplica
+    9: [5],
+
+    # Pré-Qualificação: Aberto, Fechado, Aberto-Fechado
+    11: [1, 2, 3],
+
+    # Credenciamento: Não se aplica
+    12: [5],
+
+    # Leilão: Aberto, Fechado
+    13: [1, 2],
+    14: [1, 2],
+
+    # Diálogo Competitivo: Aberto, Fechado, Aberto-Fechado
+    15: [1, 2, 3],
+}
+
+# ==============================================================================
+# MAPA: MODALIDADE -> INSTRUMENTOS CONVOCATÓRIOS PERMITIDOS (IDs)
+# ==============================================================================
+
+MAP_MODALIDADE_INSTRUMENTO = {
+    # Pregão / Concorrência / Pré-Qualificação: Edital
+    6: [1],
+    7: [1],
+    4: [1],
+    5: [1],
+    11: [1],
+
+    # Dispensa: Aviso de Contratação Direta, Ato que autoriza
+    8: [2, 3],
+
+    # Inexigibilidade: Ato que autoriza a Contratação Direta
+    9: [3],
+
+    # Credenciamento: Edital de Chamamento Público
+    12: [4],
+
+    # Leilão: Edital
+    13: [1],
+    14: [1],
+
+    # Diálogo Competitivo: Edital
+    15: [1],
+}
+
+# ==============================================================================
+# MAPA: MODALIDADE -> CRITÉRIOS DE JULGAMENTO PERMITIDOS (IDs)
+# ==============================================================================
+
+MAP_MODALIDADE_CRITERIO_JULGAMENTO = {
+    # Pregão: Menor preço, Maior desconto
+    6: [1, 2],
+    7: [1, 2],
+
+    # Concorrência: Menor preço, Maior desconto, Melhor técnica, Técnica e preço
+    4: [1, 2, 3, 4, 8, 9],
+    5: [1, 2, 3, 4, 8, 9],
+
+    # Dispensa: Menor preço, Maior desconto, Não se aplica
+    8: [1, 2, 7],
+
+    # Inexigibilidade: Não se aplica
+    9: [7],
+
+    # Pré-Qualificação: Menor preço, Maior desconto, Melhor técnica, Técnica e preço
+    11: [1, 2, 3, 4, 8, 9],
+
+    # Credenciamento: Não se aplica
+    12: [7],
+
+    # Leilão: Maior lance
+    13: [5],
+    14: [5],
+
+    # Diálogo Competitivo: Técnica e preço, Melhor técnica
+    15: [4, 8],
 }
 
 # ==============================================================================

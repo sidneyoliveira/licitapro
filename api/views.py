@@ -79,6 +79,10 @@ from .choices import (
     MODALIDADE_CHOICES,
     AMPARO_LEGAL_CHOICES,
     MAP_MODALIDADE_AMPARO,  
+    MAP_MODALIDADE_CATEGORIA_ITEM,
+    MAP_MODALIDADE_MODO_DISPUTA,
+    MAP_MODALIDADE_INSTRUMENTO,
+    MAP_MODALIDADE_CRITERIO_JULGAMENTO,
     MODO_DISPUTA_CHOICES,
     INSTRUMENTO_CONVOCATORIO_CHOICES,
     CRITERIO_JULGAMENTO_CHOICES,
@@ -184,6 +188,11 @@ class ConstantesSistemaView(APIView):
             # --- MAPA DE DEPENDÊNCIA (CÉREBRO DO FILTRO) ---
             # Envia o mapa { ID_MODALIDADE: [LISTA_IDS_AMPARO] }
             "mapa_modalidade_amparo": MAP_MODALIDADE_AMPARO,
+            # Novos mapas de compatibilidade PNCP
+            "mapa_modalidade_categoria_item": MAP_MODALIDADE_CATEGORIA_ITEM,
+            "mapa_modalidade_modo_disputa": MAP_MODALIDADE_MODO_DISPUTA,
+            "mapa_modalidade_instrumento": MAP_MODALIDADE_INSTRUMENTO,
+            "mapa_modalidade_criterio_julgamento": MAP_MODALIDADE_CRITERIO_JULGAMENTO,
         }
 
         return Response(data)
