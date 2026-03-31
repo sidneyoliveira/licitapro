@@ -754,6 +754,8 @@ class PNCPService:
                 "tipoBeneficioId": int(item.tipo_beneficio or 1),
                 "incentivoProdutivoBasico": False,
                 "orcamentoSigiloso": False,
+                "aplicabilidadeMargemPreferenciaNormal": False,
+                "aplicabilidadeMargemPreferenciaAdicional": False,
                 "descricao": (item.descricao or "Item")[:255],
                 "quantidade": qtd,
                 "unidadeMedida": (item.unidade or "UN")[:20],
