@@ -884,8 +884,8 @@ class PNCPService:
     ) -> Dict[str, Any]:
         """
         Insere o resultado (fornecedor vencedor) de um item da contratação.
-        Endpoint PNCP:
-          POST /orgaos/{cnpj}/compras/{ano}/{seq}/itens/{numeroItem}/resultados
+        Se o PNCP retornar 422 "já existe resultado com o fornecedor",
+        tenta atualizar via PUT nos sequenciais 1..5.
         """
         token = cls._get_token()
 
@@ -929,6 +929,47 @@ class PNCPService:
             cls._log(f"Resultado do item {numero_item} inserido com sucesso.")
             return result
 
+        # Se 422 com "já existe resultado", tentar PUT para atualizar
+        if resp.status_code == 422:
+            resp_text = resp.text or ""
+            if "resultado" in resp_text.lower() and "fornecedor" in resp_text.lower():
+                logger.warning(
+                    "[PNCP] POST resultado item %s deu 422 (já existe). "
+                    "Tentando PUT para atualizar...", numero_item
+                )
+                # Tentar PUT nos sequenciais 1..5
+                for seq_r in range(1, 6):
+                    put_url = f"{url}/{seq_r}"
+                    try:
+                        put_resp = requests.put(
+                            put_url,
+                            headers=headers,
+                            json=resultado_payload,
+                            verify=cls.VERIFY_SSL,
+                            timeout=cls.DEFAULT_TIMEOUT,
+                        )
+                    except requests.exceptions.RequestException:
+                        continue
+
+                    logger.warning(
+                        "[PNCP] PUT resultado item %s seq %s -> %s: %s",
+                        numero_item, seq_r, put_resp.status_code,
+                        (put_resp.text or "")[:500]
+                    )
+
+                    if put_resp.status_code in (200, 204):
+                        cls._log(
+                            f"Resultado do item {numero_item} atualizado "
+                            f"via PUT (seq={seq_r})."
+                        )
+                        return {"status_code": put_resp.status_code, "method": "PUT"}
+
+                # Se PUT não funcionou, log e continua para _handle_error
+                logger.warning(
+                    "[PNCP] PUT também falhou para item %s. Resposta original: %s",
+                    numero_item, resp_text[:500]
+                )
+
         cls._handle_error(resp)
 
     # ------------------------------------------------------------------ #
@@ -946,45 +987,55 @@ class PNCPService:
     ) -> list:
         """
         Consulta os resultados já cadastrados de um item no PNCP.
-        Endpoint:
-          GET /orgaos/{cnpj}/compras/{ano}/{seq}/itens/{numeroItem}/resultados
+        Tenta primeiro no endpoint de escrita (BASE_URL) e depois no de consulta.
         Retorna lista de resultados (cada um com sequencialResultado).
         """
         token = cls._get_token()
 
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/itens/"
-            f"{int(numero_item)}/resultados"
-        )
+        # Tentar nos dois endpoints possíveis
+        base_urls = [cls.BASE_URL]
+        # Adicionar endpoint de consulta como fallback
+        consulta_url = cls.BASE_URL.replace("/api/pncp/", "/api/consulta/")
+        if consulta_url != cls.BASE_URL:
+            base_urls.append(consulta_url)
 
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "accept": "application/json",
-        }
-
-        try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in base_urls:
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/itens/"
+                f"{int(numero_item)}/resultados"
             )
-        except requests.exceptions.RequestException as exc:
-            logger.warning("[PNCP] Falha ao consultar resultados item %s: %s",
-                           numero_item, exc)
-            return []
 
-        if resp.status_code == 200:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "accept": "application/json",
+            }
+
             try:
-                body = resp.json()
-                if isinstance(body, list):
-                    return body
-                # Algumas respostas vêm como objeto com lista interna
-                if isinstance(body, dict):
-                    return body.get("resultados", body.get("data", [body]))
-            except ValueError:
-                pass
+                resp = requests.get(
+                    url,
+                    headers=headers,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                logger.warning("[PNCP] Falha ao consultar resultados item %s em %s: %s",
+                               numero_item, base, exc)
+                continue
+
+            logger.warning("[PNCP] GET resultados item %s -> %s: %s",
+                           numero_item, resp.status_code, (resp.text or "")[:1000])
+
+            if resp.status_code == 200:
+                try:
+                    body = resp.json()
+                    if isinstance(body, list):
+                        return body
+                    if isinstance(body, dict):
+                        return body.get("resultados", body.get("data", [body]))
+                except ValueError:
+                    pass
+
         return []
 
     # ------------------------------------------------------------------ #
@@ -1211,20 +1262,47 @@ class PNCPService:
                     sequencial_compra=seq,
                     numero_item=numero_item,
                 )
-                for res_antigo in resultados_existentes:
-                    seq_resultado = (
-                        res_antigo.get("sequencialResultado")
-                        or res_antigo.get("sequencial")
-                    )
-                    if seq_resultado is not None:
-                        cls.deletar_resultado_item(
+
+                deletados = 0
+                if resultados_existentes:
+                    for res_antigo in resultados_existentes:
+                        seq_resultado = (
+                            res_antigo.get("sequencialResultado")
+                            or res_antigo.get("sequencial")
+                        )
+                        if seq_resultado is not None:
+                            ok = cls.deletar_resultado_item(
+                                cnpj_orgao=cnpj_orgao,
+                                ano_compra=ano,
+                                sequencial_compra=seq,
+                                numero_item=numero_item,
+                                sequencial_resultado=int(seq_resultado),
+                            )
+                            if ok:
+                                deletados += 1
+                            time.sleep(0.3)
+
+                # Se a consulta não retornou nada, tentar deletar por
+                # força bruta os sequenciais 1..5 (o PNCP usa sequencial
+                # incremental a partir de 1)
+                if not resultados_existentes:
+                    for seq_r in range(1, 6):
+                        ok = cls.deletar_resultado_item(
                             cnpj_orgao=cnpj_orgao,
                             ano_compra=ano,
                             sequencial_compra=seq,
                             numero_item=numero_item,
-                            sequencial_resultado=int(seq_resultado),
+                            sequencial_resultado=seq_r,
                         )
-                        time.sleep(0.3)
+                        if ok:
+                            deletados += 1
+                            time.sleep(0.3)
+
+                logger.info("[PNCP] Item %s: %d resultados antigos deletados.",
+                            numero_item, deletados)
+
+                if deletados > 0:
+                    time.sleep(0.5)
 
                 # ---- Inserir novo resultado ----
                 result = cls.inserir_resultado_item(
