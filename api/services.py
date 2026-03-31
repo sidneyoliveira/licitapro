@@ -868,6 +868,273 @@ class PNCPService:
 
         cls._handle_error(response)
 
+    # ------------------------------------------------------------------ #
+    # INSERIR RESULTADO DE ITEM (Fornecedor Vencedor)                    #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def inserir_resultado_item(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        numero_item: int,
+        resultado_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Insere o resultado (fornecedor vencedor) de um item da contratação.
+        Endpoint PNCP:
+          POST /orgaos/{cnpj}/compras/{ano}/{seq}/itens/{numeroItem}/resultados
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/itens/"
+            f"{int(numero_item)}/resultados"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "application/json",
+        }
+
+        cls._log(f"Inserindo resultado do item {numero_item} no PNCP: {url}")
+        logger.warning("[PNCP] Resultado item %s payload: %s",
+                       numero_item, json.dumps(resultado_payload, ensure_ascii=False))
+
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=resultado_payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (resultado item {numero_item}): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 201):
+            result = {"status_code": resp.status_code}
+            try:
+                body = resp.json()
+                if isinstance(body, dict):
+                    result.update(body)
+            except ValueError:
+                result["raw_response"] = resp.text
+            cls._log(f"Resultado do item {numero_item} inserido com sucesso.")
+            return result
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # ATUALIZAR ITEM DE CONTRATAÇÃO (PATCH parcial)                      #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def atualizar_item_compra(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        numero_item: int,
+        item_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Atualiza parcialmente um item da contratação no PNCP.
+        Endpoint PNCP:
+          PATCH /orgaos/{cnpj}/compras/{ano}/{seq}/itens/{numeroItem}
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/itens/{int(numero_item)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "application/json",
+        }
+
+        cls._log(f"Atualizando item {numero_item} no PNCP: {url}")
+
+        try:
+            resp = requests.patch(
+                url,
+                headers=headers,
+                json=item_payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (atualizar item {numero_item}): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 204):
+            cls._log(f"Item {numero_item} atualizado com sucesso no PNCP.")
+            return {"status_code": resp.status_code}
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # SINCRONIZAR RESULTADOS (enviar fornecedores vencedores dos itens)  #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def sincronizar_resultados(
+        cls,
+        processo,
+    ) -> Dict[str, Any]:
+        """
+        Sincroniza os resultados dos itens no PNCP:
+        - Para cada item com fornecedor vencedor (ItemFornecedor.vencedor=True),
+          envia o resultado (fornecedor, valores homologados).
+        - Atualiza a situação dos itens para 'Homologado' (2).
+
+        Requer que a compra já esteja publicada (pncp_ano_compra e
+        pncp_sequencial_compra preenchidos).
+        """
+        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+            raise ValueError(
+                "Processo não publicado no PNCP. Publique primeiro antes de "
+                "sincronizar resultados."
+            )
+
+        cnpj_orgao = re.sub(r"\D", "", (processo.entidade.cnpj or ""))
+        if len(cnpj_orgao) != 14:
+            raise ValueError("CNPJ da entidade inválido.")
+
+        ano = int(processo.pncp_ano_compra)
+        seq = int(processo.pncp_sequencial_compra)
+
+        # Mapeamento de porte do fornecedor para ID PNCP
+        # 1=ME, 2=EPP, 3=Demais, 4=Cooperativa, 5=MEI
+        PORTE_MAP = {
+            "ME": "1", "EPP": "2", "MEI": "5",
+            "DEMAIS": "3", "COOPERATIVA": "4",
+            "MICRO EMPRESA": "1", "EMPRESA DE PEQUENO PORTE": "2",
+        }
+
+        resultados_ok = []
+        erros = []
+
+        itens = processo.itens.select_related("fornecedor").prefetch_related(
+            "propostas__fornecedor"
+        ).order_by("ordem")
+
+        for item in itens:
+            numero_item = item.ordem or item.pncp_numero_item
+
+            if not numero_item:
+                erros.append(f"Item '{item.descricao}' sem número de ordem.")
+                continue
+
+            # Buscar proposta vencedora
+            proposta_vencedora = item.propostas.filter(
+                vencedor=True
+            ).select_related("fornecedor").first()
+
+            # Fallback: fornecedor direto do item
+            if not proposta_vencedora and item.fornecedor:
+                fornecedor = item.fornecedor
+                valor_unit = float(item.valor_estimado or 0)
+                qtd = float(item.quantidade or 1)
+            elif proposta_vencedora:
+                fornecedor = proposta_vencedora.fornecedor
+                valor_unit = float(proposta_vencedora.valor_proposto or 0)
+                qtd = float(item.quantidade or 1)
+            else:
+                logger.info("[PNCP] Item %s '%s' sem fornecedor vencedor, pulando.",
+                            numero_item, item.descricao)
+                continue
+
+            ni_fornecedor = re.sub(r"\D", "", (fornecedor.cnpj or ""))
+            if not ni_fornecedor:
+                erros.append(
+                    f"Item {numero_item}: Fornecedor '{fornecedor.razao_social}' sem CNPJ."
+                )
+                continue
+
+            tipo_pessoa = "PJ" if len(ni_fornecedor) == 14 else (
+                "PF" if len(ni_fornecedor) == 11 else "PJ"
+            )
+
+            porte_raw = (fornecedor.porte or "").strip().upper()
+            porte_id = PORTE_MAP.get(porte_raw, "3")
+
+            from datetime import date as date_cls
+            data_resultado = date_cls.today().isoformat()
+
+            resultado_payload = {
+                "quantidadeHomologada": qtd,
+                "valorUnitarioHomologado": valor_unit,
+                "valorTotalHomologado": round(valor_unit * qtd, 2),
+                "percentualDesconto": 0,
+                "aplicacaoMargemPreferencia": False,
+                "aplicacaoBeneficioMeEpp": porte_id in ("1", "2", "5"),
+                "aplicacaoCriterioDesempate": False,
+                "tipoPessoaId": tipo_pessoa,
+                "niFornecedor": ni_fornecedor,
+                "nomeRazaoSocialFornecedor": (fornecedor.razao_social or "")[:255],
+                "porteFornecedorId": porte_id,
+                "codigoPais": "BRA",
+                "indicadorSubcontratacao": False,
+                "ordemClassificacaoSrp": 1,
+                "dataResultado": data_resultado,
+            }
+
+            try:
+                result = cls.inserir_resultado_item(
+                    cnpj_orgao=cnpj_orgao,
+                    ano_compra=ano,
+                    sequencial_compra=seq,
+                    numero_item=numero_item,
+                    resultado_payload=resultado_payload,
+                )
+                resultados_ok.append({
+                    "item": numero_item,
+                    "fornecedor": fornecedor.razao_social,
+                    "status": "OK",
+                })
+
+                # Atualizar situação do item para Homologado (2)
+                try:
+                    cls.atualizar_item_compra(
+                        cnpj_orgao=cnpj_orgao,
+                        ano_compra=ano,
+                        sequencial_compra=seq,
+                        numero_item=numero_item,
+                        item_payload={"situacaoCompraItemId": "2"},
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[PNCP] Erro ao atualizar situação do item %s: %s",
+                        numero_item, str(e)
+                    )
+
+            except Exception as e:
+                erros.append(f"Item {numero_item}: {str(e)}")
+                logger.error("[PNCP] Erro ao inserir resultado item %s: %s",
+                             numero_item, str(e))
+
+            time.sleep(0.5)
+
+        return {
+            "total_itens": itens.count(),
+            "resultados_enviados": len(resultados_ok),
+            "erros": len(erros),
+            "detalhes": resultados_ok,
+            "erros_detalhes": erros,
+        }
+
      # ------------------------------------------------------------------ #
     # 6.4.1 – Inserir Ata de Registro de Preço                          #
     # ------------------------------------------------------------------ #

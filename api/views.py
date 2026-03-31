@@ -675,6 +675,56 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
             )
 
     # ----------------------------------------------------------------------
+    # SINCRONIZAR RESULTADOS DOS ITENS NO PNCP
+    # ----------------------------------------------------------------------
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="sincronizar-pncp",
+    )
+    def sincronizar_pncp(self, request, pk=None):
+        """
+        Sincroniza os resultados dos itens (fornecedores vencedores)
+        com o PNCP, sem necessidade de enviar arquivo.
+        """
+        processo = self.get_object()
+
+        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+            return Response(
+                {"detail": "Processo ainda não publicado no PNCP. Publique primeiro."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            resultado = PNCPService.sincronizar_resultados(processo)
+
+            if hasattr(processo, "pncp_ultimo_retorno"):
+                processo.pncp_ultimo_retorno = resultado
+                processo.save(update_fields=["pncp_ultimo_retorno"])
+
+            return Response(
+                {
+                    "detail": (
+                        f"Sincronização concluída: "
+                        f"{resultado['resultados_enviados']}/{resultado['total_itens']} "
+                        f"resultados enviados."
+                    ),
+                    "resultado": resultado,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            logger.exception("Erro interno PNCP (sincronizar_pncp)")
+            return Response(
+                {"detail": f"Erro interno ao sincronizar: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    # ----------------------------------------------------------------------
     # RETIFICAÇÃO: INSERIR NOVO DOCUMENTO NA CONTRATAÇÃO
     # ----------------------------------------------------------------------
     @action(
