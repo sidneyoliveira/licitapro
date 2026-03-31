@@ -650,13 +650,19 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 arquivo.seek(0)
 
             # Registra documento inicial em DocumentoPNCP (metadados)
-            DocumentoPNCP.objects.create(
+            # Usa update_or_create para evitar violação de UNIQUE constraint
+            # ao republicar o mesmo processo com o mesmo tipo de documento.
+            DocumentoPNCP.objects.update_or_create(
                 processo=processo,
                 tipo_documento_id=tipo_documento_id,
-                titulo=titulo,
-                arquivo_nome=getattr(arquivo, "name", None),
-                observacao=request.data.get("observacao") or None,
-                arquivo=arquivo,
+                ativo=True,
+                defaults={
+                    "titulo": titulo,
+                    "arquivo_nome": getattr(arquivo, "name", None),
+                    "observacao": request.data.get("observacao") or None,
+                    "arquivo": arquivo,
+                    "status": "enviado",
+                },
             )
 
             return Response(
@@ -879,13 +885,17 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 processo.save(update_fields=["pncp_ultimo_retorno"])
 
             # Registra em DocumentoPNCP
-            DocumentoPNCP.objects.create(
+            DocumentoPNCP.objects.update_or_create(
                 processo=processo,
                 tipo_documento_id=tipo_documento_id,
-                titulo=titulo,
-                observacao=justificativa,
-                arquivo_nome=getattr(arquivo, "name", None),
-                arquivo=arquivo,
+                ativo=True,
+                defaults={
+                    "titulo": titulo,
+                    "observacao": justificativa,
+                    "arquivo_nome": getattr(arquivo, "name", None),
+                    "arquivo": arquivo,
+                    "status": "enviado",
+                },
             )
 
             return Response(
@@ -1040,13 +1050,17 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
             )
 
             # Registra em DocumentoPNCP
-            DocumentoPNCP.objects.create(
+            DocumentoPNCP.objects.update_or_create(
                 processo=processo,
                 tipo_documento_id=tipo_documento_id,
-                titulo=titulo,
-                arquivo_nome=getattr(arquivo, "name", None),
-                observacao=request.data.get("observacao") or None,
-                arquivo=arquivo,
+                ativo=True,
+                defaults={
+                    "titulo": titulo,
+                    "arquivo_nome": getattr(arquivo, "name", None),
+                    "observacao": request.data.get("observacao") or None,
+                    "arquivo": arquivo,
+                    "status": "enviado",
+                },
             )
 
             return Response(
@@ -1245,14 +1259,18 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 # justificativa_exclusao=justificativa, # Se o serviço suportar
             )
 
-            # Registra o novo documento em DocumentoPNCP (não mexo no antigo local)
-            DocumentoPNCP.objects.create(
+            # Registra o novo documento em DocumentoPNCP
+            DocumentoPNCP.objects.update_or_create(
                 processo=processo,
                 tipo_documento_id=novo_tipo_id,
-                titulo=titulo,
-                observacao=justificativa,
-                arquivo_nome=getattr(arquivo, "name", None),
-                arquivo=arquivo,
+                ativo=True,
+                defaults={
+                    "titulo": titulo,
+                    "observacao": justificativa,
+                    "arquivo_nome": getattr(arquivo, "name", None),
+                    "arquivo": arquivo,
+                    "status": "enviado",
+                },
             )
 
             return Response(
