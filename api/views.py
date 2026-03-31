@@ -548,6 +548,285 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @staticmethod
+    def _to_bool(value):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "sim", "yes", "on"}
+
+    def _resolver_referencia_pncp(self, processo, request_data=None):
+        """Resolve ano/sequencial PNCP a partir de campos, JSON retorno e body."""
+        ano = getattr(processo, "pncp_ano_compra", None)
+        seq = getattr(processo, "pncp_sequencial_compra", None)
+
+        retorno = getattr(processo, "pncp_ultimo_retorno", None)
+        if (not ano or not seq) and isinstance(retorno, dict):
+            ano = ano or retorno.get("anoCompra") or retorno.get("ano_compra")
+            seq = seq or (
+                retorno.get("sequencialCompra")
+                or retorno.get("sequencial_compra")
+                or retorno.get("sequencialCompraPNCP")
+            )
+            if (not ano or not seq) and retorno.get("compraUri"):
+                m = re.search(r"/compras/(\d+)/(\d+)", retorno["compraUri"])
+                if m:
+                    ano = ano or int(m.group(1))
+                    seq = seq or int(m.group(2))
+
+        if request_data and (not ano or not seq):
+            body_ano = request_data.get("ano_compra")
+            body_seq = request_data.get("sequencial_compra")
+            if body_ano:
+                ano = int(body_ano)
+            if body_seq:
+                seq = int(body_seq)
+
+        return ano, seq
+
+    def _validar_pre_envio_pncp(self, processo, sincronizar_resultados=False):
+        """Valida campos essenciais de processo/itens antes do envio ao PNCP."""
+        erros = []
+        avisos = []
+
+        if not processo.entidade_id or not (processo.entidade and processo.entidade.cnpj):
+            erros.append("Processo sem Entidade/CNPJ.")
+
+        if not processo.orgao_id or not (processo.orgao and processo.orgao.codigo_unidade):
+            erros.append("Processo sem Órgão/código da unidade compradora.")
+
+        itens = processo.itens.prefetch_related("propostas__fornecedor").select_related("fornecedor")
+        if not itens.exists():
+            erros.append("O processo não possui itens cadastrados.")
+        else:
+            for item in itens:
+                numero_item = item.ordem or item.pncp_numero_item
+                if not numero_item:
+                    erros.append(f"Item '{item.descricao or item.id}' sem número de ordem.")
+
+                if not (item.descricao or "").strip():
+                    erros.append(f"Item {numero_item or item.id} sem descrição.")
+
+                try:
+                    if float(item.quantidade or 0) <= 0:
+                        erros.append(f"Item {numero_item or item.id} com quantidade inválida (<= 0).")
+                except Exception:
+                    erros.append(f"Item {numero_item or item.id} com quantidade inválida.")
+
+                if item.valor_estimado is None:
+                    avisos.append(f"Item {numero_item or item.id} sem valor estimado; será enviado como 0.")
+
+                if sincronizar_resultados:
+                    proposta_vencedora = item.propostas.filter(vencedor=True).select_related("fornecedor").first()
+                    fornecedor = proposta_vencedora.fornecedor if proposta_vencedora else item.fornecedor
+
+                    if not fornecedor:
+                        avisos.append(
+                            f"Item {numero_item or item.id} sem fornecedor vencedor; resultado não será sincronizado."
+                        )
+                        continue
+
+                    cnpj_forn = re.sub(r"\D", "", fornecedor.cnpj or "")
+                    if not cnpj_forn:
+                        erros.append(
+                            f"Item {numero_item or item.id}: fornecedor '{fornecedor.razao_social}' sem CNPJ/CPF."
+                        )
+
+        return {
+            "ok": len(erros) == 0,
+            "erros": erros,
+            "avisos": avisos,
+            "resumo": {
+                "total_erros": len(erros),
+                "total_avisos": len(avisos),
+                "total_itens": itens.count() if hasattr(itens, "count") else 0,
+            },
+        }
+
+    @action(detail=True, methods=["get", "post"], url_path="validar-envio-pncp")
+    def validar_envio_pncp(self, request, pk=None):
+        """Validação prévia para orientar usuário antes da publicação/sincronização."""
+        processo = self.get_object()
+        sync_flag = self._to_bool(
+            request.query_params.get("sincronizar_resultados")
+            if request.method.lower() == "get"
+            else request.data.get("sincronizar_resultados")
+        )
+        validacao = self._validar_pre_envio_pncp(processo, sincronizar_resultados=sync_flag)
+        code = status.HTTP_200_OK if validacao["ok"] else status.HTTP_400_BAD_REQUEST
+        return Response(validacao, status=code)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="enviar-pncp",
+        parser_classes=[parsers.MultiPartParser, parsers.FormParser],
+    )
+    def enviar_pncp(self, request, pk=None):
+        """
+        Fluxo unificado do botão "Enviar PNCP":
+        - publica contratação (quando ainda não publicada)
+        - sincroniza resultados homologados (opcional)
+        - devolve avisos de validação prévia
+        """
+        processo = self.get_object()
+        arquivo = request.FILES.get("arquivo")
+        titulo = request.data.get("titulo_documento") or "Edital de Licitação"
+        sincronizar_resultados = self._to_bool(request.data.get("sincronizar_resultados"))
+
+        validacao = self._validar_pre_envio_pncp(
+            processo,
+            sincronizar_resultados=sincronizar_resultados,
+        )
+        if not validacao["ok"]:
+            return Response(
+                {
+                    "detail": "Validação prévia falhou. Corrija os itens antes de enviar ao PNCP.",
+                    "validacao": validacao,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        publicado = bool(getattr(processo, "pncp_sequencial_compra", None))
+        pncp_resultado_publicacao = None
+        pncp_resultado_sync = None
+
+        # Publicação inicial (somente se ainda não publicado)
+        if not publicado:
+            if not arquivo:
+                return Response(
+                    {
+                        "detail": "Arquivo do documento é obrigatório para publicação inicial no PNCP.",
+                        "validacao": validacao,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            raw_tipo = request.data.get("tipo_documento_id") or "2"
+            try:
+                tipo_documento_id = int(raw_tipo)
+            except (TypeError, ValueError):
+                tipo_documento_id = 2
+
+            try:
+                pncp_resultado_publicacao = PNCPService.publicar_compra(
+                    processo=processo,
+                    arquivo=arquivo,
+                    titulo_documento=titulo,
+                    tipo_documento_id=tipo_documento_id,
+                )
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+            updated_fields = []
+            ano_compra = pncp_resultado_publicacao.get("anoCompra") or pncp_resultado_publicacao.get("ano_compra")
+            sequencial_compra = (
+                pncp_resultado_publicacao.get("sequencialCompra")
+                or pncp_resultado_publicacao.get("sequencial_compra")
+                or pncp_resultado_publicacao.get("sequencialCompraPNCP")
+            )
+
+            if (not ano_compra or not sequencial_compra) and pncp_resultado_publicacao.get("compraUri"):
+                m = re.search(r"/compras/(\d+)/(\d+)", pncp_resultado_publicacao["compraUri"])
+                if m:
+                    ano_compra = ano_compra or int(m.group(1))
+                    sequencial_compra = sequencial_compra or int(m.group(2))
+
+            numero_controle = (
+                pncp_resultado_publicacao.get("numeroControlePNCP")
+                or pncp_resultado_publicacao.get("numero_controle_pncp")
+            )
+            link_processo = (
+                pncp_resultado_publicacao.get("linkProcessoEletronico")
+                or pncp_resultado_publicacao.get("link_processo_eletronico")
+                or pncp_resultado_publicacao.get("compraUri")
+            )
+
+            if hasattr(processo, "pncp_ano_compra") and ano_compra:
+                processo.pncp_ano_compra = ano_compra
+                updated_fields.append("pncp_ano_compra")
+            if hasattr(processo, "pncp_sequencial_compra") and sequencial_compra:
+                processo.pncp_sequencial_compra = sequencial_compra
+                updated_fields.append("pncp_sequencial_compra")
+            if hasattr(processo, "pncp_numero_controle") and numero_controle:
+                processo.pncp_numero_controle = numero_controle
+                updated_fields.append("pncp_numero_controle")
+            if hasattr(processo, "pncp_url") and link_processo:
+                processo.pncp_url = link_processo
+                updated_fields.append("pncp_url")
+            if hasattr(processo, "pncp_ultimo_retorno"):
+                processo.pncp_ultimo_retorno = pncp_resultado_publicacao
+                updated_fields.append("pncp_ultimo_retorno")
+
+            processo.situacao = "publicado"
+            updated_fields.append("situacao")
+            processo.save(update_fields=updated_fields)
+
+            if hasattr(arquivo, "seek"):
+                arquivo.seek(0)
+
+            DocumentoPNCP.objects.update_or_create(
+                processo=processo,
+                tipo_documento_id=tipo_documento_id,
+                ativo=True,
+                defaults={
+                    "titulo": titulo,
+                    "arquivo_nome": getattr(arquivo, "name", None),
+                    "observacao": request.data.get("observacao") or None,
+                    "arquivo": arquivo,
+                    "status": "enviado",
+                },
+            )
+
+        # Sincronização opcional de resultados
+        if sincronizar_resultados:
+            ano, seq = self._resolver_referencia_pncp(processo, request.data)
+            if not ano or not seq:
+                return Response(
+                    {
+                        "detail": (
+                            "Não foi possível resolver referência PNCP (ano/sequencial) "
+                            "para sincronização dos resultados."
+                        ),
+                        "validacao": validacao,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+                processo.pncp_ano_compra = int(ano)
+                processo.pncp_sequencial_compra = int(seq)
+                processo.save(update_fields=["pncp_ano_compra", "pncp_sequencial_compra"])
+
+            try:
+                pncp_resultado_sync = PNCPService.sincronizar_resultados(processo)
+            except ValueError as e:
+                return Response({"detail": str(e), "validacao": validacao}, status=status.HTTP_400_BAD_REQUEST)
+
+        detail_parts = []
+        if pncp_resultado_publicacao:
+            detail_parts.append("Publicação concluída")
+        elif publicado:
+            detail_parts.append("Processo já estava publicado")
+
+        if sincronizar_resultados:
+            if pncp_resultado_sync:
+                detail_parts.append(
+                    f"sincronização: {pncp_resultado_sync.get('resultados_enviados', 0)}/"
+                    f"{pncp_resultado_sync.get('total_itens', 0)}"
+                )
+            else:
+                detail_parts.append("sincronização solicitada")
+
+        return Response(
+            {
+                "detail": "; ".join(detail_parts) + ".",
+                "validacao": validacao,
+                "publicacao": pncp_resultado_publicacao,
+                "sincronizacao": pncp_resultado_sync,
+            },
+            status=status.HTTP_200_OK,
+        )
+
     # ----------------------------------------------------------------------
     # PUBLICAÇÃO INICIAL NO PNCP
     # ----------------------------------------------------------------------
