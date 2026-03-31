@@ -869,6 +869,66 @@ class PNCPService:
         cls._handle_error(response)
 
     # ------------------------------------------------------------------ #
+    # INSERIR ITENS EM CONTRATAÇÃO EXISTENTE (6.3.10)                    #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def inserir_itens_compra(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        itens_payload: list,
+    ) -> Dict[str, Any]:
+        """
+        Insere um ou vários itens a uma contratação existente no PNCP.
+        Endpoint:
+          POST /orgaos/{cnpj}/compras/{ano}/{seq}/itens
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/itens"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "application/json",
+        }
+
+        cls._log(f"Inserindo {len(itens_payload)} item(ns) no PNCP: {url}")
+        logger.warning("[PNCP] Inserir itens payload: %s",
+                       json.dumps(itens_payload, ensure_ascii=False))
+
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=itens_payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (inserir itens): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        logger.warning("[PNCP] Inserir itens response: %s %s",
+                       resp.status_code, (resp.text or "")[:1000])
+
+        if resp.status_code in (200, 201):
+            cls._log("Itens inseridos com sucesso no PNCP.")
+            try:
+                return {"status_code": resp.status_code, "body": resp.json()}
+            except ValueError:
+                return {"status_code": resp.status_code, "raw": resp.text}
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
     # INSERIR RESULTADO DE ITEM (Fornecedor Vencedor)                    #
     # ------------------------------------------------------------------ #
 
@@ -1283,8 +1343,7 @@ class PNCPService:
                             time.sleep(0.3)
 
                 # Se a consulta não retornou nada, tentar deletar por
-                # força bruta os sequenciais 1..5 (o PNCP usa sequencial
-                # incremental a partir de 1)
+                # força bruta os sequenciais 1..5
                 if not resultados_existentes:
                     for seq_r in range(1, 6):
                         ok = cls.deletar_resultado_item(
@@ -1305,13 +1364,66 @@ class PNCPService:
                     time.sleep(0.5)
 
                 # ---- Inserir novo resultado ----
-                result = cls.inserir_resultado_item(
-                    cnpj_orgao=cnpj_orgao,
-                    ano_compra=ano,
-                    sequencial_compra=seq,
-                    numero_item=numero_item,
-                    resultado_payload=resultado_payload,
-                )
+                try:
+                    result = cls.inserir_resultado_item(
+                        cnpj_orgao=cnpj_orgao,
+                        ano_compra=ano,
+                        sequencial_compra=seq,
+                        numero_item=numero_item,
+                        resultado_payload=resultado_payload,
+                    )
+                except ValueError as ve:
+                    ve_str = str(ve)
+                    # Se 404 "Item não cadastrado", inserir o item no PNCP primeiro
+                    if "404" in ve_str and ("não cadastrado" in ve_str.lower()
+                                            or "not found" in ve_str.lower()):
+                        logger.warning(
+                            "[PNCP] Item %s não existe no PNCP. Inserindo...",
+                            numero_item
+                        )
+                        # Determinar material/serviço
+                        service_cats = {2, 3, 4, 5, 6, 8}
+                        cat_id_raw = item.categoria_item
+                        cat_id_val = int(cat_id_raw) if cat_id_raw else None
+                        tipo_ms = "S" if (cat_id_val and cat_id_val in service_cats) else "M"
+
+                        crit_id = int(processo.criterio_julgamento or 1)
+
+                        item_pncp_payload = [{
+                            "numeroItem": numero_item,
+                            "materialOuServico": tipo_ms,
+                            "tipoBeneficioId": int(item.tipo_beneficio or 1),
+                            "incentivoProdutivoBasico": False,
+                            "orcamentoSigiloso": False,
+                            "aplicabilidadeMargemPreferenciaNormal": False,
+                            "aplicabilidadeMargemPreferenciaAdicional": False,
+                            "descricao": (item.descricao or "Item")[:255],
+                            "quantidade": qtd,
+                            "unidadeMedida": (item.unidade or "UN")[:20],
+                            "valorUnitarioEstimado": valor_unit,
+                            "valorTotal": round(valor_unit * qtd, 4),
+                            "criterioJulgamentoId": crit_id,
+                        }]
+
+                        cls.inserir_itens_compra(
+                            cnpj_orgao=cnpj_orgao,
+                            ano_compra=ano,
+                            sequencial_compra=seq,
+                            itens_payload=item_pncp_payload,
+                        )
+                        time.sleep(1)
+
+                        # Tentar inserir resultado de novo
+                        result = cls.inserir_resultado_item(
+                            cnpj_orgao=cnpj_orgao,
+                            ano_compra=ano,
+                            sequencial_compra=seq,
+                            numero_item=numero_item,
+                            resultado_payload=resultado_payload,
+                        )
+                    else:
+                        raise
+
                 resultados_ok.append({
                     "item": numero_item,
                     "fornecedor": fornecedor.razao_social,
