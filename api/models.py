@@ -301,6 +301,14 @@ class DocumentoPNCP(models.Model):
         on_delete=models.CASCADE
     )
 
+    linha_documento = models.ForeignKey(
+        "ProcessoDocumentoLinha",
+        related_name="documentos_pncp",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
     tipo_documento_id = models.PositiveIntegerField()
     titulo = models.CharField(max_length=255, default="Documento")
     observacao = models.TextField(blank=True, null=True)
@@ -321,14 +329,42 @@ class DocumentoPNCP(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["processo", "tipo_documento_id"],
+                fields=["linha_documento"],
                 condition=Q(ativo=True) & ~Q(status="removido"),
-                name="uniq_docpncp_processo_tipo_ativo"
+                name="uniq_docpncp_linha_ativo"
             )
         ]
 
     def __str__(self):
         return f"{self.processo_id} - tipo {self.tipo_documento_id} - {self.status}"
+
+
+class ProcessoDocumentoLinha(models.Model):
+    processo = models.ForeignKey(
+        ProcessoLicitatorio,
+        related_name="linhas_documentos",
+        on_delete=models.CASCADE,
+    )
+    nome = models.CharField(max_length=255)
+    tipo_documento_id = models.PositiveIntegerField()
+    ordem = models.PositiveIntegerField(default=1)
+    custom = models.BooleanField(default=False)
+    ativo = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["ordem", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["processo", "ordem"],
+                condition=Q(ativo=True),
+                name="uniq_doclinha_processo_ordem_ativo",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.processo_id} - {self.ordem} - {self.nome}"
 # ============================================================
 # 📦 LOTE
 # ============================================================

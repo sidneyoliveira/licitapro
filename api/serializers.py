@@ -15,6 +15,7 @@ from .models import (
     Notificacao,
     ArquivoUser,
     DocumentoPNCP,
+    ProcessoDocumentoLinha,
     AtaRegistroPrecos,
     DocumentoAtaRegistroPrecos,
 )
@@ -35,6 +36,7 @@ User = get_user_model()
 
 # Reutiliza o mesmo mapa de tipos que você já usa
 TIPO_DOC_MAPA = {
+    16: "Outros Documentos",
     1: "Aviso de Contratação Direta",
     2: "Edital",
     3: "Minuta do Contrato",
@@ -42,6 +44,7 @@ TIPO_DOC_MAPA = {
     5: "Anteprojeto",
     6: "Projeto Básico",
     7: "Estudo Técnico Preliminar",
+    8: "Projeto Executivo",
     9: "Mapa de Riscos",
     10: "DFD",
     19: "Minuta de Ata de Registro de Preços",
@@ -566,12 +569,17 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
     # Para o frontend abrir/baixar o arquivo
     arquivo_url = serializers.SerializerMethodField()
     tipo_documento_nome = serializers.SerializerMethodField()
+    linha_nome = serializers.CharField(source="linha_documento.nome", read_only=True)
+    linha_ordem = serializers.IntegerField(source="linha_documento.ordem", read_only=True)
 
     class Meta:
         model = DocumentoPNCP
         fields = (
             "id",
             "processo",
+            "linha_documento",
+            "linha_nome",
+            "linha_ordem",
             "tipo_documento_id",
             "tipo_documento_nome",
             "titulo",
@@ -604,6 +612,7 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
 
     def get_tipo_documento_nome(self, obj):
         mapa = {
+            16: "Outros Documentos",
             1: "Aviso de Contratação Direta",
             2: "Edital",
             3: "Minuta do Contrato",
@@ -611,12 +620,36 @@ class DocumentoPNCPSerializer(serializers.ModelSerializer):
             5: "Anteprojeto",
             6: "Projeto Básico",
             7: "Estudo Técnico Preliminar",
+            8: "Projeto Executivo",
             9: "Mapa de Riscos",
             10: "DFD",
             19: "Minuta de Ata de Registro de Preços",
             20: "Ato que autoriza a Contratação Direta",
         }
         return mapa.get(obj.tipo_documento_id, f"Tipo {obj.tipo_documento_id}")
+
+
+class ProcessoDocumentoLinhaSerializer(serializers.ModelSerializer):
+    tipo_documento_nome = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProcessoDocumentoLinha
+        fields = (
+            "id",
+            "processo",
+            "nome",
+            "tipo_documento_id",
+            "tipo_documento_nome",
+            "ordem",
+            "custom",
+            "ativo",
+            "criado_em",
+            "atualizado_em",
+        )
+        read_only_fields = ("ativo", "criado_em", "atualizado_em")
+
+    def get_tipo_documento_nome(self, obj):
+        return TIPO_DOC_MAPA.get(obj.tipo_documento_id, f"Tipo {obj.tipo_documento_id}")
 
 
 

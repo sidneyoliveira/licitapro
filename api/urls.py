@@ -26,6 +26,7 @@ from .views import (
     NotificacaoViewSet,
     UsuarioLookupView,
     ArquivoUserViewSet,
+    ProcessoDocumentoLinhaViewSet,
     DocumentoPNCPViewSet,
     AtaRegistroPrecosViewSet,
     DocumentoAtaRegistroPrecosViewSet,
@@ -68,6 +69,7 @@ router.register(r'arquivos-user', ArquivoUserViewSet, basename='arquivos-user')
 
 # DOCUMENTOS PNCP (IMPORTANTE: definir basename)
 router.register(r'documentos-pncp', DocumentoPNCPViewSet, basename='documento-pncp')
+router.register(r'processo-documento-linhas', ProcessoDocumentoLinhaViewSet, basename='processo-documento-linha')
 router.register(r'atas-registro-precos', AtaRegistroPrecosViewSet, basename='atas-registro-precos')
 router.register(r'documentos-atas', DocumentoAtaRegistroPrecosViewSet, basename='documento-ata')
 

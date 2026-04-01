@@ -45,7 +45,8 @@ from .models import (
     FornecedorProcesso,
     ItemFornecedor,
     ContratoEmpenho,
-    DocumentoPNCP, 
+    DocumentoPNCP,
+    ProcessoDocumentoLinha,
     Anotacao,
     Notificacao,
     ArquivoUser,
@@ -69,6 +70,7 @@ from .serializers import (
     AnotacaoSerializer,
     NotificacaoSerializer,
     ArquivoUserSerializer,
+    ProcessoDocumentoLinhaSerializer,
     DocumentoPNCPSerializer,
     AtaRegistroPrecosSerializer,
     DocumentoAtaRegistroPrecosSerializer
@@ -770,18 +772,30 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
             if hasattr(arquivo, "seek"):
                 arquivo.seek(0)
 
-            DocumentoPNCP.objects.update_or_create(
+            doc_existente = DocumentoPNCP.objects.filter(
                 processo=processo,
                 tipo_documento_id=tipo_documento_id,
+                titulo=titulo,
                 ativo=True,
-                defaults={
-                    "titulo": titulo,
-                    "arquivo_nome": getattr(arquivo, "name", None),
-                    "observacao": request.data.get("observacao") or None,
-                    "arquivo": arquivo,
-                    "status": "enviado",
-                },
-            )
+                linha_documento__isnull=True,
+            ).first()
+            if doc_existente:
+                doc_existente.arquivo_nome = getattr(arquivo, "name", None)
+                doc_existente.observacao = request.data.get("observacao") or None
+                doc_existente.arquivo = arquivo
+                doc_existente.status = "enviado"
+                doc_existente.save(update_fields=["arquivo_nome", "observacao", "arquivo", "status"])
+            else:
+                DocumentoPNCP.objects.create(
+                    processo=processo,
+                    tipo_documento_id=tipo_documento_id,
+                    titulo=titulo,
+                    arquivo_nome=getattr(arquivo, "name", None),
+                    observacao=request.data.get("observacao") or None,
+                    arquivo=arquivo,
+                    status="enviado",
+                    ativo=True,
+                )
 
         # Sincronização opcional de resultados
         if sincronizar_resultados:
@@ -949,18 +963,30 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
             # Registra documento inicial em DocumentoPNCP (metadados)
             # Usa update_or_create para evitar violação de UNIQUE constraint
             # ao republicar o mesmo processo com o mesmo tipo de documento.
-            DocumentoPNCP.objects.update_or_create(
+            doc_existente = DocumentoPNCP.objects.filter(
                 processo=processo,
                 tipo_documento_id=tipo_documento_id,
+                titulo=titulo,
                 ativo=True,
-                defaults={
-                    "titulo": titulo,
-                    "arquivo_nome": getattr(arquivo, "name", None),
-                    "observacao": request.data.get("observacao") or None,
-                    "arquivo": arquivo,
-                    "status": "enviado",
-                },
-            )
+                linha_documento__isnull=True,
+            ).first()
+            if doc_existente:
+                doc_existente.arquivo_nome = getattr(arquivo, "name", None)
+                doc_existente.observacao = request.data.get("observacao") or None
+                doc_existente.arquivo = arquivo
+                doc_existente.status = "enviado"
+                doc_existente.save(update_fields=["arquivo_nome", "observacao", "arquivo", "status"])
+            else:
+                DocumentoPNCP.objects.create(
+                    processo=processo,
+                    tipo_documento_id=tipo_documento_id,
+                    titulo=titulo,
+                    arquivo_nome=getattr(arquivo, "name", None),
+                    observacao=request.data.get("observacao") or None,
+                    arquivo=arquivo,
+                    status="enviado",
+                    ativo=True,
+                )
 
             return Response(
                 {"detail": "Publicado no PNCP com sucesso!", "pncp_data": resultado},
@@ -2485,6 +2511,75 @@ class ArquivoUserViewSet(viewsets.ModelViewSet):
         serializer.save(usuario=self.request.user)
 
 
+class ProcessoDocumentoLinhaViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
+    serializer_class = ProcessoDocumentoLinhaSerializer
+    permission_classes = [IsAuthenticated]
+    entidade_field = 'processo__entidade'
+
+    def get_queryset(self):
+        qs = ProcessoDocumentoLinha.objects.select_related(
+            "processo", "processo__entidade"
+        ).filter(ativo=True).order_by("ordem", "id")
+        qs = self.filter_by_entidade(qs)
+        processo_id = self.request.query_params.get("processo")
+        if processo_id:
+            qs = qs.filter(processo_id=processo_id)
+        return qs
+
+    def perform_create(self, serializer):
+        processo = serializer.validated_data.get("processo")
+        if not processo:
+            raise PermissionDenied("Processo é obrigatório.")
+
+        entidade_ids = self.get_user_entidades_ids()
+        if entidade_ids is not None and processo.entidade_id not in entidade_ids:
+            raise PermissionDenied("Você não tem acesso a este processo.")
+
+        ordem = serializer.validated_data.get("ordem")
+        if not ordem or ordem <= 0:
+            last = ProcessoDocumentoLinha.objects.filter(
+                processo=processo,
+                ativo=True,
+            ).order_by("-ordem").first()
+            serializer.save(ordem=(last.ordem + 1) if last else 1)
+            return
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        instance.ativo = False
+        instance.save(update_fields=["ativo", "atualizado_em"])
+
+    @action(detail=False, methods=["post"], url_path="reordenar")
+    def reordenar(self, request):
+        processo_id = request.data.get("processo_id")
+        linhas = request.data.get("linhas") or []
+
+        if not processo_id or not isinstance(linhas, list):
+            return Response(
+                {"detail": "Informe processo_id e lista 'linhas' no payload."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mapa = {
+            obj.id: obj
+            for obj in self.get_queryset().filter(processo_id=processo_id)
+        }
+
+        with transaction.atomic():
+            ordem = 1
+            for row in linhas:
+                rid = row.get("id")
+                obj = mapa.get(rid)
+                if not obj:
+                    continue
+                obj.ordem = ordem
+                obj.save(update_fields=["ordem", "atualizado_em"])
+                ordem += 1
+
+        out = self.get_queryset().filter(processo_id=processo_id)
+        return Response(self.get_serializer(out, many=True).data, status=status.HTTP_200_OK)
+
+
 
 
 class DocumentoPNCPViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
@@ -2495,7 +2590,33 @@ class DocumentoPNCPViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = DocumentoPNCP.objects.select_related("processo", "processo__entidade").all().order_by("-criado_em")
-        return self.filter_by_entidade(qs)
+        qs = self.filter_by_entidade(qs)
+        processo_id = self.request.query_params.get("processo")
+        if processo_id:
+            qs = qs.filter(processo_id=processo_id)
+        linha_id = self.request.query_params.get("linha_documento")
+        if linha_id:
+            qs = qs.filter(linha_documento_id=linha_id)
+        return qs
+
+    def perform_create(self, serializer):
+        processo = serializer.validated_data.get("processo")
+        linha = serializer.validated_data.get("linha_documento")
+
+        entidade_ids = self.get_user_entidades_ids()
+        if entidade_ids is not None and processo and processo.entidade_id not in entidade_ids:
+            raise PermissionDenied("Você não tem acesso a este processo.")
+
+        if linha:
+            if processo and linha.processo_id != processo.id:
+                raise PermissionDenied("A linha de documento não pertence ao processo informado.")
+            serializer.save(
+                tipo_documento_id=linha.tipo_documento_id,
+                titulo=serializer.validated_data.get("titulo") or linha.nome,
+            )
+            return
+
+        serializer.save()
 
     def _extrair_sequencial_location(self, location: str):
         """
