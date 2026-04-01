@@ -211,6 +211,12 @@ class PNCPService:
             bases.append(consulta_url)
         return bases
 
+    @classmethod
+    def _candidate_consulta_base_urls(cls) -> List[str]:
+        """Retorna bases para endpoints de consulta, priorizando /api/consulta/."""
+        bases = cls._candidate_base_urls()
+        return sorted(bases, key=lambda base: 0 if "/api/consulta/" in base else 1)
+
     # ------------------------------------------------------------------ #
     # 6.3.5 – Consultar uma Contratação                                  #
     # ------------------------------------------------------------------ #
@@ -229,36 +235,49 @@ class PNCPService:
         """
         token = cls._get_token()
 
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}"
-        )
         headers = {
             "Authorization": f"Bearer {token}",
             "accept": "*/*",
         }
+        last_response: Optional[requests.Response] = None
 
-        cls._log(f"Consultando contratação no PNCP: {url}")
-
-        try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in cls._candidate_consulta_base_urls():
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (consultar contratação): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
+            cls._log(f"Consultando contratação no PNCP: {url}")
 
-        if resp.status_code == 200:
             try:
-                return resp.json()
-            except ValueError:
-                return {"raw_response": resp.text}
+                resp = requests.get(
+                    url,
+                    headers=headers,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (consultar contratação): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
 
-        cls._handle_error(resp)
+            if resp.status_code == 200:
+                try:
+                    return resp.json()
+                except ValueError:
+                    return {"raw_response": resp.text}
+
+            last_response = resp
+            if resp.status_code == 301:
+                cls._log(
+                    "Endpoint de consulta retornou 301; tentando base alternativa.",
+                    "error",
+                )
+                continue
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao consultar contratação no PNCP: nenhuma resposta recebida.")
 
     # ------------------------------------------------------------------ #
     # 6.3.8 – Consultar TODOS Documentos de uma Contratação              #
@@ -278,45 +297,59 @@ class PNCPService:
         """
         token = cls._get_token()
 
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/arquivos"
-        )
         headers = {
             "Authorization": f"Bearer {token}",
             "accept": "*/*",
         }
+        last_response: Optional[requests.Response] = None
 
-        cls._log(f"Listando documentos da contratação: {url}")
-
-        try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in cls._candidate_consulta_base_urls():
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/arquivos"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (listar documentos): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code == 200:
+            cls._log(f"Listando documentos da contratação: {url}")
+
             try:
-                data = resp.json()
-            except ValueError:
-                return [{"raw_response": resp.text}]
+                resp = requests.get(
+                    url,
+                    headers=headers,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (listar documentos): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
 
-            # Tratamento para variações de resposta do PNCP (Lista direta ou envelope)
-            if isinstance(data, list):
-                return data
-            if isinstance(data, dict):
-                docs = data.get("documentos") or data.get("Documentos")
-                if isinstance(docs, list):
-                    return docs
-            return [data]
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                except ValueError:
+                    return [{"raw_response": resp.text}]
 
-        cls._handle_error(resp)
+                # Tratamento para variações de resposta do PNCP (Lista direta ou envelope)
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict):
+                    docs = data.get("documentos") or data.get("Documentos")
+                    if isinstance(docs, list):
+                        return docs
+                return [data]
+
+            last_response = resp
+            if resp.status_code == 301:
+                cls._log(
+                    "Endpoint de consulta de documentos retornou 301; tentando base alternativa.",
+                    "error",
+                )
+                continue
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao listar documentos no PNCP: nenhuma resposta recebida.")
 
     # ------------------------------------------------------------------ #
     # 6.3.6 – Inserir Documento a uma Contratação                        #
@@ -1870,45 +1903,58 @@ class PNCPService:
         """
         token = cls._get_token()
 
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}/arquivos"
-        )
-
         headers = {
             "Authorization": f"Bearer {token}",
             "accept": "*/*",
         }
+        last_response: Optional[requests.Response] = None
 
-        cls._log(f"Listando documentos da Ata {sequencial_ata} no PNCP: {url}")
-
-        try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in cls._candidate_consulta_base_urls():
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}/arquivos"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (listar documentos de ata): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code == 200:
+            cls._log(f"Listando documentos da Ata {sequencial_ata} no PNCP: {url}")
+
             try:
-                data = resp.json()
-            except ValueError:
-                return [{"raw_response": resp.text}]
+                resp = requests.get(
+                    url,
+                    headers=headers,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (listar documentos de ata): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
 
-            if isinstance(data, list):
-                return data
-            if isinstance(data, dict):
-                docs = data.get("documentos") or data.get("Documentos")
-                if isinstance(docs, list):
-                    return docs
-            return [data]
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                except ValueError:
+                    return [{"raw_response": resp.text}]
 
-        cls._handle_error(resp)
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict):
+                    docs = data.get("documentos") or data.get("Documentos")
+                    if isinstance(docs, list):
+                        return docs
+                return [data]
+
+            last_response = resp
+            if resp.status_code == 301:
+                cls._log(
+                    "Endpoint de consulta de documentos da ata retornou 301; tentando base alternativa.",
+                    "error",
+                )
+                continue
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao listar documentos de ata no PNCP: nenhuma resposta recebida.")
 
 
 
