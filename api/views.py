@@ -2210,6 +2210,17 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         )
         return self.filter_by_entidade(qs)
 
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        ids = request.data.get("ids", [])
+        if not ids or not isinstance(ids, list):
+            return Response(
+                {"error": "Envie uma lista de IDs."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        deleted, _ = ContratoEmpenho.objects.filter(id__in=ids).delete()
+        return Response({"deleted": deleted}, status=status.HTTP_200_OK)
+
 class SystemConfigView(APIView):
     
     """
@@ -2805,6 +2816,11 @@ class AtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         ser = self.get_serializer(ata)
         return Response(ser.data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=["post"], url_path="enviar-ao-pncp")
+    def enviar_ao_pncp(self, request, pk=None):
+        """Alias de compatibilidade para clients legados."""
+        return self.publicar_no_pncp(request, pk=pk)
+
     @action(detail=True, methods=["post"], url_path="excluir-do-pncp")
     def excluir_do_pncp(self, request, pk=None):
         ata = self.get_object()
@@ -2857,6 +2873,11 @@ class AtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
         ser = self.get_serializer(ata)
         return Response(ser.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="remover-do-pncp")
+    def remover_do_pncp(self, request, pk=None):
+        """Alias de compatibilidade para clients legados."""
+        return self.excluir_do_pncp(request, pk=pk)
     
 class DocumentoAtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = DocumentoAtaRegistroPrecosSerializer
@@ -3095,3 +3116,8 @@ class DocumentoAtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewS
 
         ser = self.get_serializer(doc)
         return Response(ser.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="remover-do-pncp")
+    def remover_do_pncp(self, request, pk=None):
+        """Alias de compatibilidade para clients legados."""
+        return self.excluir_do_pncp(request, pk=pk)
