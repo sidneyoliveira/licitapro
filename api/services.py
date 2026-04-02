@@ -1640,6 +1640,7 @@ class PNCPService:
         data_assinatura: str,
         data_vigencia_inicio: str,
         data_vigencia_fim: str,
+        possibilidade_adesao: bool = False,
     ) -> Dict[str, Any]:
         """
         6.4.1 – Inserir Ata de Registro de Preço
@@ -1665,6 +1666,7 @@ class PNCPService:
             "dataAssinatura": data_assinatura,       # yyyy-MM-dd
             "dataVigenciaInicio": data_vigencia_inicio,
             "dataVigenciaFim": data_vigencia_fim,
+            "possibilidadeAdesao": bool(possibilidade_adesao),
         }
 
         cls._log(f"Inserindo Ata de RP no PNCP: {url}")
@@ -1683,10 +1685,10 @@ class PNCPService:
             raise ValueError(msg) from exc
 
         if resp.status_code in (200, 201):
-            # a API retorna location no header e, em alguns ambientes, um JSON
+            location = resp.headers.get("location") or resp.headers.get("Location") or ""
             result: Dict[str, Any] = {
                 "status_code": resp.status_code,
-                "location": resp.headers.get("location") or resp.headers.get("Location"),
+                "location": location,
             }
             try:
                 body = resp.json()
@@ -1694,7 +1696,100 @@ class PNCPService:
                     result.update(body)
             except ValueError:
                 result["raw_response"] = resp.text
-            cls._log(f"Ata inserida com sucesso. Location: {result.get('location')}")
+
+            # Extrai sequencialAta da location (ex: .../atas/3)
+            if not result.get("sequencialAta") and location:
+                match = re.search(r"/atas/(\d+)", location)
+                if match:
+                    result["sequencialAta"] = int(match.group(1))
+
+            cls._log(f"Ata inserida com sucesso. Location: {location}")
+            return result
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # 6.4.2 – Retificar Ata de Registro de Preço                        #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def retificar_ata_registro_preco(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_ata: int,
+        numero_ata_registro_preco: str,
+        ano_ata: int,
+        data_assinatura: str,
+        data_vigencia_inicio: str,
+        data_vigencia_fim: str,
+        possibilidade_adesao: bool = False,
+        justificativa: str = "",
+        cancelado: bool = False,
+        data_cancelamento: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        6.4.2 – Retificar Ata de Registro de Preço
+        Endpoint:
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas/{sequencialAta}  (PUT)
+
+        IMPORTANTE: Na retificação, TODOS os campos obrigatórios devem ser reenviados,
+        não apenas os que mudaram.
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "*/*",
+        }
+
+        payload: Dict[str, Any] = {
+            "numeroAtaRegistroPreco": (numero_ata_registro_preco or "").strip(),
+            "anoAta": int(ano_ata),
+            "dataAssinatura": data_assinatura,
+            "dataInicioVigencia": data_vigencia_inicio,
+            "dataFimVigencia": data_vigencia_fim,
+            "possibilidadeAdesao": bool(possibilidade_adesao),
+            "justificativa": (justificativa or "Retificação de Ata de Registro de Preços.")[:255],
+        }
+
+        if cancelado:
+            payload["cancelado"] = True
+            if data_cancelamento:
+                payload["dataCancelamento"] = data_cancelamento
+
+        cls._log(f"Retificando Ata de RP no PNCP: {url}")
+
+        try:
+            resp = requests.put(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (retificar ata): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 204):
+            result: Dict[str, Any] = {"status_code": resp.status_code}
+            try:
+                body = resp.json()
+                if isinstance(body, dict):
+                    result.update(body)
+            except ValueError:
+                pass
+            cls._log("Ata retificada com sucesso no PNCP.")
             return result
 
         cls._handle_error(resp)

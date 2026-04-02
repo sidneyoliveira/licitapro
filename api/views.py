@@ -2798,20 +2798,98 @@ class AtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 data_assinatura=ata.data_assinatura.isoformat(),
                 data_vigencia_inicio=ata.data_vigencia_inicio.isoformat(),
                 data_vigencia_fim=ata.data_vigencia_fim.isoformat(),
+                possibilidade_adesao=ata.possibilidade_adesao,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        ata.pncp_sequencial_ata = result.get("sequencialAta")
-        ata.numero_controle_pncp = result.get("numeroControlePNCP")  # se futuramente você buscar
+        # Extrai sequencialAta do resultado ou do header Location
+        seq_ata = result.get("sequencialAta")
+        location = result.get("location") or ""
+
+        if not seq_ata and location:
+            match = re.search(r"/atas/(\d+)", location)
+            if match:
+                seq_ata = int(match.group(1))
+
+        ata.pncp_sequencial_ata = seq_ata
+        ata.numero_controle_pncp = result.get("numeroControlePNCP") or ""
+        ata.link_pncp = location or None
         ata.status = "publicada"
         ata.pncp_publicada_em = timezone.now()
         ata.save(update_fields=[
             "pncp_sequencial_ata",
             "numero_controle_pncp",
+            "link_pncp",
             "status",
             "pncp_publicada_em",
         ])
+
+        ser = self.get_serializer(ata)
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="retificar-no-pncp")
+    def retificar_no_pncp(self, request, pk=None):
+        """
+        6.4.2 – Retificar Ata de Registro de Preço no PNCP.
+        Reenvia todos os dados da ata (obrigatório pela API).
+        Aceita 'justificativa' no body do request.
+        """
+        ata = self.get_object()
+        processo = ata.processo
+
+        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+            return Response(
+                {"detail": "Processo ainda não foi publicado no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not ata.pncp_sequencial_ata:
+            return Response(
+                {"detail": "Ata não possui sequencial no PNCP. Publique-a primeiro."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not processo.entidade or not processo.entidade.cnpj:
+            return Response(
+                {"detail": "Entidade/CNPJ da contratação não configurados."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cnpj = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        if len(cnpj) != 14:
+            return Response(
+                {"detail": "CNPJ da entidade inválido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not ata.data_assinatura or not ata.data_vigencia_inicio or not ata.data_vigencia_fim:
+            return Response(
+                {"detail": "Datas de assinatura, início e fim de vigência são obrigatórias."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        justificativa = request.data.get(
+            "justificativa",
+            "Retificação de Ata de Registro de Preços solicitada pelo sistema de origem.",
+        )
+
+        try:
+            PNCPService.retificar_ata_registro_preco(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                sequencial_ata=ata.pncp_sequencial_ata,
+                numero_ata_registro_preco=ata.numero_ata,
+                ano_ata=ata.ano_ata,
+                data_assinatura=ata.data_assinatura.isoformat(),
+                data_vigencia_inicio=ata.data_vigencia_inicio.isoformat(),
+                data_vigencia_fim=ata.data_vigencia_fim.isoformat(),
+                possibilidade_adesao=ata.possibilidade_adesao,
+                justificativa=justificativa,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         ser = self.get_serializer(ata)
         return Response(ser.data, status=status.HTTP_200_OK)

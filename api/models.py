@@ -715,6 +715,13 @@ class AtaRegistroPrecos(models.Model):
     data_vigencia_inicio = models.DateField(blank=True, null=True)
     data_vigencia_fim = models.DateField(blank=True, null=True)
 
+    # Campo obrigatório do PNCP: possibilidadeAdesao
+    possibilidade_adesao = models.BooleanField(
+        default=False,
+        verbose_name="Permite adesão de não participantes",
+        help_text="Indicador se a Ata permite adesão de não participantes (PNCP).",
+    )
+
     observacao = models.TextField(blank=True, null=True)
 
     status = models.CharField(
@@ -726,6 +733,11 @@ class AtaRegistroPrecos(models.Model):
     # PNCP
     pncp_sequencial_ata = models.PositiveIntegerField(blank=True, null=True)
     numero_controle_pncp = models.CharField(max_length=100, blank=True, null=True)
+    link_pncp = models.URLField(
+        blank=True, null=True,
+        verbose_name="Link no PNCP",
+        help_text="URL retornada pelo PNCP (header Location) na inserção da ata.",
+    )
     pncp_publicada_em = models.DateTimeField(blank=True, null=True)
 
     ativo = models.BooleanField(default=True)
