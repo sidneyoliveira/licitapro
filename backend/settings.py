@@ -28,6 +28,7 @@ ALLOWED_HOSTS = [
 PNCP_ACCESS_TOKEN = os.getenv('PNCP_ACCESS_TOKEN')
 PNCP_USERNAME = os.getenv('PNCP_USERNAME')
 PNCP_PASSWORD = os.getenv('PNCP_PASSWORD')
+PNCP_BASE_URL = os.getenv('PNCP_BASE_URL', 'https://treina.pncp.gov.br/api/pncp/v1')
 
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
 

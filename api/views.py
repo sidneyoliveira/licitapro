@@ -130,6 +130,24 @@ def require_referencia_pncp(processo):
         raise ValueError("Processo ainda não publicado no PNCP (ano/sequencial ausentes).")
 
 
+def get_referencias_pncp_processo(processo):
+    referencias = []
+
+    for attr in ("pncp_link", "pncp_url"):
+        value = getattr(processo, attr, None)
+        if value:
+            referencias.append(str(value))
+
+    retorno = getattr(processo, "pncp_ultimo_retorno", None)
+    if isinstance(retorno, dict):
+        for key in ("compraUri", "linkProcessoEletronico", "link_processo_eletronico", "location"):
+            value = retorno.get(key)
+            if value:
+                referencias.append(str(value))
+
+    return referencias
+
+
 # ============================================================
 # PAGINAÇÃO PADRÃO
 # ============================================================
@@ -238,6 +256,7 @@ def enviar_documentos_obrigatorios_contrato_para_pncp(contrato, cnpj_orgao):
     processo = contrato.processo
     enviados = []
     erros = []
+    referencias_pncp = get_referencias_pncp_processo(processo)
 
     for spec in CONTRATO_DOCUMENTOS_OBRIGATORIOS:
         doc = get_documento_contrato_por_chave(contrato, spec["chave"])
@@ -261,6 +280,7 @@ def enviar_documentos_obrigatorios_contrato_para_pncp(contrato, cnpj_orgao):
                 titulo_documento=doc.titulo or spec["titulo"],
                 tipo_documento_id=doc.tipo_documento_id,
                 content_type=content_type,
+                referencias_pncp=referencias_pncp,
             )
 
             seq = (
@@ -692,7 +712,7 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 "situacao": processo.situacao,
                 "ano_compra": getattr(processo, "pncp_ano_compra", None),
                 "sequencial_pncp": getattr(processo, "pncp_sequencial_compra", None),
-                "url_pncp": getattr(processo, "pncp_url", None),
+                "url_pncp": getattr(processo, "pncp_link", None) or getattr(processo, "pncp_url", None),
             },
             status=status.HTTP_200_OK,
         )
@@ -905,9 +925,9 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
             if hasattr(processo, "pncp_numero_controle") and numero_controle:
                 processo.pncp_numero_controle = numero_controle
                 updated_fields.append("pncp_numero_controle")
-            if hasattr(processo, "pncp_url") and link_processo:
-                processo.pncp_url = link_processo
-                updated_fields.append("pncp_url")
+            if hasattr(processo, "pncp_link") and link_processo:
+                processo.pncp_link = link_processo
+                updated_fields.append("pncp_link")
             if hasattr(processo, "pncp_ultimo_retorno"):
                 processo.pncp_ultimo_retorno = pncp_resultado_publicacao
                 updated_fields.append("pncp_ultimo_retorno")
@@ -1086,12 +1106,12 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 processo.pncp_numero_controle = numero_controle
                 updated_fields.append("pncp_numero_controle")
 
-            if hasattr(processo, "pncp_url") and link_processo:
-                processo.pncp_url = link_processo
-                updated_fields.append("pncp_url")
-            elif hasattr(processo, "pncp_url") and not link_processo and resultado.get("compraUri"):
-                processo.pncp_url = resultado["compraUri"]
-                updated_fields.append("pncp_url")
+            if hasattr(processo, "pncp_link") and link_processo:
+                processo.pncp_link = link_processo
+                updated_fields.append("pncp_link")
+            elif hasattr(processo, "pncp_link") and not link_processo and resultado.get("compraUri"):
+                processo.pncp_link = resultado["compraUri"]
+                updated_fields.append("pncp_link")
 
             if hasattr(processo, "pncp_ultimo_retorno"):
                 processo.pncp_ultimo_retorno = resultado
@@ -2072,9 +2092,9 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
         processo.pncp_ano_compra = None
         processo.pncp_sequencial_compra = None
-        processo.pncp_url = None
+        processo.pncp_link = None
         processo.pncp_publicado_em = None
-        processo.save(update_fields=["pncp_ano_compra", "pncp_sequencial_compra", "pncp_url", "pncp_publicado_em"])
+        processo.save(update_fields=["pncp_ano_compra", "pncp_sequencial_compra", "pncp_link", "pncp_publicado_em"])
 
         return Response(
             {"detail": "Contratação excluída do PNCP com sucesso."},
@@ -2501,6 +2521,7 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 unidade_codigo=contrato.unidade_codigo,
                 processo_ref=contrato.processo_ref,
                 categoria_processo_id=contrato.categoria_processo_id,
+                referencias_pncp=get_referencias_pncp_processo(processo),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -2589,6 +2610,7 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 processo_ref=contrato.processo_ref,
                 categoria_processo_id=contrato.categoria_processo_id,
                 justificativa=justificativa,
+                referencias_pncp=get_referencias_pncp_processo(processo),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -2641,6 +2663,7 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 sequencial_compra=processo.pncp_sequencial_compra,
                 sequencial_contrato=contrato.pncp_sequencial_contrato,
                 justificativa=justificativa,
+                referencias_pncp=get_referencias_pncp_processo(processo),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -2816,6 +2839,7 @@ class DocumentoContratoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 titulo_documento=doc.titulo,
                 tipo_documento_id=doc.tipo_documento_id,
                 content_type=content_type,
+                referencias_pncp=get_referencias_pncp_processo(processo),
             )
         except ValueError as exc:
             doc.status = "erro"
@@ -3466,6 +3490,7 @@ class AtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 data_vigencia_inicio=ata.data_vigencia_inicio.isoformat(),
                 data_vigencia_fim=ata.data_vigencia_fim.isoformat(),
                 possibilidade_adesao=ata.possibilidade_adesao,
+                referencias_pncp=get_referencias_pncp_processo(processo),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -3554,6 +3579,7 @@ class AtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 data_vigencia_fim=ata.data_vigencia_fim.isoformat(),
                 possibilidade_adesao=ata.possibilidade_adesao,
                 justificativa=justificativa,
+                referencias_pncp=get_referencias_pncp_processo(processo),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -3608,6 +3634,7 @@ class AtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 sequencial_compra=processo.pncp_sequencial_compra,
                 sequencial_ata=ata.pncp_sequencial_ata,
                 justificativa=justificativa,
+                referencias_pncp=get_referencias_pncp_processo(processo),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -3857,6 +3884,7 @@ class DocumentoAtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewS
                 titulo_documento=doc.titulo,
                 tipo_documento_id=doc.tipo_documento_id,
                 content_type=content_type,
+                referencias_pncp=get_referencias_pncp_processo(processo),
             )
         except ValueError as exc:
             # marca como erro se der falha de integração

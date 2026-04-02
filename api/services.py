@@ -8,6 +8,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, IO, List, Optional
+from urllib.parse import urlparse
 
 import pytz
 import requests
@@ -212,8 +213,46 @@ class PNCPService:
             msg = (response.text or "").strip()[:500]
 
         full_msg = f"PNCP recusou a operação ({response.status_code}): {msg}"
+        if getattr(response, "url", ""):
+            full_msg = f"{full_msg} | URL: {response.url}"
         logger.error("[PNCP ERROR] Status=%s | Body=%s", response.status_code, (response.text or "")[:2000])
         raise ValueError(full_msg)
+
+    @staticmethod
+    def _normalize_base_url(base_url: str) -> str:
+        return (base_url or "").strip().rstrip("/")
+
+    @classmethod
+    def _api_base_from_reference(cls, reference: Optional[str]) -> Optional[str]:
+        if not reference or not isinstance(reference, str):
+            return None
+
+        parsed = urlparse(reference.strip())
+        if not parsed.scheme or not parsed.netloc:
+            return None
+
+        return cls._normalize_base_url(f"{parsed.scheme}://{parsed.netloc}/api/pncp/v1")
+
+    @classmethod
+    def _candidate_write_base_urls(
+        cls,
+        referencias_pncp: Optional[List[str]] = None,
+    ) -> List[str]:
+        bases: List[str] = []
+
+        for reference in referencias_pncp or []:
+            derived_base = cls._api_base_from_reference(reference)
+            if derived_base and derived_base not in bases:
+                bases.append(derived_base)
+
+        for base in cls._candidate_base_urls():
+            normalized = cls._normalize_base_url(base)
+            if "/api/consulta/" in normalized:
+                normalized = normalized.replace("/api/consulta/", "/api/pncp/")
+            if normalized and normalized not in bases:
+                bases.append(normalized)
+
+        return bases
 
     @classmethod
     def _candidate_base_urls(cls) -> List[str]:
@@ -1653,6 +1692,7 @@ class PNCPService:
         data_vigencia_inicio: str,
         data_vigencia_fim: str,
         possibilidade_adesao: bool = False,
+        referencias_pncp: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         6.4.1 – Inserir Ata de Registro de Preço
@@ -1660,11 +1700,6 @@ class PNCPService:
         /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas  (POST)
         """
         token = cls._get_token()
-
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/atas"
-        )
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -1681,44 +1716,61 @@ class PNCPService:
             "possibilidadeAdesao": bool(possibilidade_adesao),
         }
 
-        cls._log(f"Inserindo Ata de RP no PNCP: {url}")
+        last_response: Optional[requests.Response] = None
 
-        try:
-            resp = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in cls._candidate_write_base_urls(referencias_pncp):
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/atas"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (inserir ata): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code in (200, 201):
-            location = resp.headers.get("location") or resp.headers.get("Location") or ""
-            result: Dict[str, Any] = {
-                "status_code": resp.status_code,
-                "location": location,
-            }
+            cls._log(f"Inserindo Ata de RP no PNCP: {url}")
+
             try:
-                body = resp.json()
-                if isinstance(body, dict):
-                    result.update(body)
-            except ValueError:
-                result["raw_response"] = resp.text
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (inserir ata): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
 
-            # Extrai sequencialAta da location (ex: .../atas/3)
-            if not result.get("sequencialAta") and location:
-                match = re.search(r"/atas/(\d+)", location)
-                if match:
-                    result["sequencialAta"] = int(match.group(1))
+            if resp.status_code in (200, 201):
+                location = resp.headers.get("location") or resp.headers.get("Location") or ""
+                result: Dict[str, Any] = {
+                    "status_code": resp.status_code,
+                    "location": location,
+                }
+                try:
+                    body = resp.json()
+                    if isinstance(body, dict):
+                        result.update(body)
+                except ValueError:
+                    result["raw_response"] = resp.text
 
-            cls._log(f"Ata inserida com sucesso. Location: {location}")
-            return result
+                if not result.get("sequencialAta") and location:
+                    match = re.search(r"/atas/(\d+)", location)
+                    if match:
+                        result["sequencialAta"] = int(match.group(1))
 
-        cls._handle_error(resp)
+                cls._log(f"Ata inserida com sucesso. Location: {location}")
+                return result
+
+            last_response = resp
+            if resp.status_code == 404:
+                cls._log("Endpoint de inserção de ata retornou 404; tentando base alternativa.", "error")
+                continue
+
+            cls._handle_error(resp)
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao inserir ata no PNCP: nenhuma resposta recebida.")
 
     # ------------------------------------------------------------------ #
     # 6.4.2 – Retificar Ata de Registro de Preço                        #
@@ -1741,6 +1793,7 @@ class PNCPService:
         justificativa: str = "",
         cancelado: bool = False,
         data_cancelamento: Optional[str] = None,
+        referencias_pncp: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         6.4.2 – Retificar Ata de Registro de Preço
@@ -1751,11 +1804,6 @@ class PNCPService:
         não apenas os que mudaram.
         """
         token = cls._get_token()
-
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}"
-        )
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -1778,33 +1826,51 @@ class PNCPService:
             if data_cancelamento:
                 payload["dataCancelamento"] = data_cancelamento
 
-        cls._log(f"Retificando Ata de RP no PNCP: {url}")
+        last_response: Optional[requests.Response] = None
 
-        try:
-            resp = requests.put(
-                url,
-                headers=headers,
-                json=payload,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in cls._candidate_write_base_urls(referencias_pncp):
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (retificar ata): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code in (200, 204):
-            result: Dict[str, Any] = {"status_code": resp.status_code}
+            cls._log(f"Retificando Ata de RP no PNCP: {url}")
+
             try:
-                body = resp.json()
-                if isinstance(body, dict):
-                    result.update(body)
-            except ValueError:
-                pass
-            cls._log("Ata retificada com sucesso no PNCP.")
-            return result
+                resp = requests.put(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (retificar ata): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
 
-        cls._handle_error(resp)
+            if resp.status_code in (200, 204):
+                result: Dict[str, Any] = {"status_code": resp.status_code}
+                try:
+                    body = resp.json()
+                    if isinstance(body, dict):
+                        result.update(body)
+                except ValueError:
+                    pass
+                cls._log("Ata retificada com sucesso no PNCP.")
+                return result
+
+            last_response = resp
+            if resp.status_code == 404:
+                cls._log("Endpoint de retificação de ata retornou 404; tentando base alternativa.", "error")
+                continue
+
+            cls._handle_error(resp)
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao retificar ata no PNCP: nenhuma resposta recebida.")
 
     # ------------------------------------------------------------------ #
     # 6.4.3 – Excluir Ata de Registro de Preço                          #
@@ -1819,6 +1885,7 @@ class PNCPService:
         sequencial_compra: int,
         sequencial_ata: int,
         justificativa: str,
+        referencias_pncp: Optional[List[str]] = None,
     ) -> bool:
         """
         Exclui/Remove uma Ata de Registro de Preços no PNCP.
@@ -1826,11 +1893,6 @@ class PNCPService:
           /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas/{sequencialAta} (DELETE)
         """
         token = cls._get_token()
-
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}"
-        )
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -1842,26 +1904,44 @@ class PNCPService:
             "justificativa": (justificativa or "")[:255],
         }
 
-        cls._log(f"Excluindo Ata de Registro de Preços no PNCP: {url}")
+        last_response: Optional[requests.Response] = None
 
-        try:
-            resp = requests.delete(
-                url,
-                headers=headers,
-                json=payload,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in cls._candidate_write_base_urls(referencias_pncp):
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (excluir Ata): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code in (200, 204):
-            cls._log("Ata excluída com sucesso do PNCP.")
-            return True
+            cls._log(f"Excluindo Ata de Registro de Preços no PNCP: {url}")
 
-        cls._handle_error(resp)
+            try:
+                resp = requests.delete(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (excluir Ata): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
+
+            if resp.status_code in (200, 204):
+                cls._log("Ata excluída com sucesso do PNCP.")
+                return True
+
+            last_response = resp
+            if resp.status_code == 404:
+                cls._log("Endpoint de exclusão de ata retornou 404; tentando base alternativa.", "error")
+                continue
+
+            cls._handle_error(resp)
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao excluir ata no PNCP: nenhuma resposta recebida.")
     @classmethod
     def anexar_documento_ata(
         cls,
@@ -1874,6 +1954,7 @@ class PNCPService:
         titulo_documento: str,
         tipo_documento_id: int,
         content_type: str = "application/pdf",
+        referencias_pncp: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         6.4.6 – Inserir Documento de uma Ata
@@ -1881,14 +1962,6 @@ class PNCPService:
         /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/atas/{sequencialAta}/arquivos  (POST)
         """
         token = cls._get_token()
-
-        if hasattr(arquivo, "seek"):
-            arquivo.seek(0)
-
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}/arquivos"
-        )
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -1905,38 +1978,59 @@ class PNCPService:
             )
         }
 
-        cls._log(f"Anexando documento à Ata no PNCP: {url}")
+        last_response: Optional[requests.Response] = None
 
-        try:
-            resp = requests.post(
-                url,
-                headers=headers,
-                files=files,
-                verify=cls.VERIFY_SSL,
-                timeout=90,
+        for base in cls._candidate_write_base_urls(referencias_pncp):
+            if hasattr(arquivo, "seek"):
+                arquivo.seek(0)
+
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/atas/{int(sequencial_ata)}/arquivos"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (anexar documento à ata): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code in (200, 201):
-            location = resp.headers.get("location") or resp.headers.get("Location")
-            result: Dict[str, Any] = {
-                "location": location,
-                "status_code": resp.status_code,
-            }
+            cls._log(f"Anexando documento à Ata no PNCP: {url}")
+
             try:
-                body = resp.json()
-                if isinstance(body, dict):
-                    result.update(body)
-            except ValueError:
-                result["raw_response"] = resp.text
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    files=files,
+                    verify=cls.VERIFY_SSL,
+                    timeout=90,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (anexar documento à ata): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
 
-            cls._log(f"Documento de Ata anexado com sucesso. Location: {location}")
-            return result
+            if resp.status_code in (200, 201):
+                location = resp.headers.get("location") or resp.headers.get("Location")
+                result: Dict[str, Any] = {
+                    "location": location,
+                    "status_code": resp.status_code,
+                }
+                try:
+                    body = resp.json()
+                    if isinstance(body, dict):
+                        result.update(body)
+                except ValueError:
+                    result["raw_response"] = resp.text
 
-        cls._handle_error(resp)
+                cls._log(f"Documento de Ata anexado com sucesso. Location: {location}")
+                return result
+
+            last_response = resp
+            if resp.status_code == 404:
+                cls._log("Endpoint de documento de ata retornou 404; tentando base alternativa.", "error")
+                continue
+
+            cls._handle_error(resp)
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao anexar documento da ata no PNCP: nenhuma resposta recebida.")
 
     @classmethod
     def excluir_documento_ata(
@@ -2093,6 +2187,7 @@ class PNCPService:
         unidade_codigo: Optional[str] = None,
         processo_ref: Optional[str] = None,
         categoria_processo_id: Optional[int] = None,
+        referencias_pncp: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         6.5.1 – Inserir Contrato/Empenho no PNCP.
@@ -2100,11 +2195,6 @@ class PNCPService:
         /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos  (POST)
         """
         token = cls._get_token()
-
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/contratos"
-        )
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -2138,44 +2228,61 @@ class PNCPService:
         if categoria_processo_id:
             payload["categoriaProcessoId"] = int(categoria_processo_id)
 
-        cls._log(f"Inserindo Contrato/Empenho no PNCP: {url}")
+        last_response: Optional[requests.Response] = None
 
-        try:
-            resp = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in cls._candidate_write_base_urls(referencias_pncp):
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/contratos"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (inserir contrato): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code in (200, 201):
-            location = resp.headers.get("location") or resp.headers.get("Location") or ""
-            result: Dict[str, Any] = {
-                "status_code": resp.status_code,
-                "location": location,
-            }
+            cls._log(f"Inserindo Contrato/Empenho no PNCP: {url}")
+
             try:
-                body = resp.json()
-                if isinstance(body, dict):
-                    result.update(body)
-            except ValueError:
-                result["raw_response"] = resp.text
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (inserir contrato): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
 
-            # Extrai sequencialContrato da location (ex: .../contratos/3)
-            if not result.get("sequencialContrato") and location:
-                match = re.search(r"/contratos/(\d+)", location)
-                if match:
-                    result["sequencialContrato"] = int(match.group(1))
+            if resp.status_code in (200, 201):
+                location = resp.headers.get("location") or resp.headers.get("Location") or ""
+                result: Dict[str, Any] = {
+                    "status_code": resp.status_code,
+                    "location": location,
+                }
+                try:
+                    body = resp.json()
+                    if isinstance(body, dict):
+                        result.update(body)
+                except ValueError:
+                    result["raw_response"] = resp.text
 
-            cls._log(f"Contrato inserido com sucesso. Location: {location}")
-            return result
+                if not result.get("sequencialContrato") and location:
+                    match = re.search(r"/contratos/(\d+)", location)
+                    if match:
+                        result["sequencialContrato"] = int(match.group(1))
 
-        cls._handle_error(resp)
+                cls._log(f"Contrato inserido com sucesso. Location: {location}")
+                return result
+
+            last_response = resp
+            if resp.status_code == 404:
+                cls._log("Endpoint de inserção de contrato retornou 404; tentando base alternativa.", "error")
+                continue
+
+            cls._handle_error(resp)
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao inserir contrato no PNCP: nenhuma resposta recebida.")
 
     # ------------------------------------------------------------------ #
     # 6.5.2 – Retificar Contrato                                         #
@@ -2205,6 +2312,7 @@ class PNCPService:
         processo_ref: Optional[str] = None,
         categoria_processo_id: Optional[int] = None,
         justificativa: str = "",
+        referencias_pncp: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         6.5.2 – Retificar Contrato/Empenho no PNCP.
@@ -2214,11 +2322,6 @@ class PNCPService:
         IMPORTANTE: Na retificação, TODOS os campos obrigatórios devem ser reenviados.
         """
         token = cls._get_token()
-
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}"
-        )
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -2253,33 +2356,51 @@ class PNCPService:
         if categoria_processo_id:
             payload["categoriaProcessoId"] = int(categoria_processo_id)
 
-        cls._log(f"Retificando Contrato/Empenho no PNCP: {url}")
+        last_response: Optional[requests.Response] = None
 
-        try:
-            resp = requests.put(
-                url,
-                headers=headers,
-                json=payload,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in cls._candidate_write_base_urls(referencias_pncp):
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (retificar contrato): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code in (200, 204):
-            result: Dict[str, Any] = {"status_code": resp.status_code}
+            cls._log(f"Retificando Contrato/Empenho no PNCP: {url}")
+
             try:
-                body = resp.json()
-                if isinstance(body, dict):
-                    result.update(body)
-            except ValueError:
-                pass
-            cls._log("Contrato retificado com sucesso no PNCP.")
-            return result
+                resp = requests.put(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (retificar contrato): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
 
-        cls._handle_error(resp)
+            if resp.status_code in (200, 204):
+                result: Dict[str, Any] = {"status_code": resp.status_code}
+                try:
+                    body = resp.json()
+                    if isinstance(body, dict):
+                        result.update(body)
+                except ValueError:
+                    pass
+                cls._log("Contrato retificado com sucesso no PNCP.")
+                return result
+
+            last_response = resp
+            if resp.status_code == 404:
+                cls._log("Endpoint de retificação de contrato retornou 404; tentando base alternativa.", "error")
+                continue
+
+            cls._handle_error(resp)
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao retificar contrato no PNCP: nenhuma resposta recebida.")
 
     # ------------------------------------------------------------------ #
     # 6.5.3 – Excluir Contrato                                           #
@@ -2294,6 +2415,7 @@ class PNCPService:
         sequencial_compra: int,
         sequencial_contrato: int,
         justificativa: str,
+        referencias_pncp: Optional[List[str]] = None,
     ) -> bool:
         """
         6.5.3 – Excluir/Remover um Contrato/Empenho no PNCP.
@@ -2301,11 +2423,6 @@ class PNCPService:
         /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos/{sequencialContrato} (DELETE)
         """
         token = cls._get_token()
-
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}"
-        )
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -2317,26 +2434,44 @@ class PNCPService:
             "justificativa": (justificativa or "")[:255],
         }
 
-        cls._log(f"Excluindo Contrato/Empenho no PNCP: {url}")
+        last_response: Optional[requests.Response] = None
 
-        try:
-            resp = requests.delete(
-                url,
-                headers=headers,
-                json=payload,
-                verify=cls.VERIFY_SSL,
-                timeout=cls.DEFAULT_TIMEOUT,
+        for base in cls._candidate_write_base_urls(referencias_pncp):
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (excluir contrato): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code in (200, 204):
-            cls._log("Contrato excluído com sucesso do PNCP.")
-            return True
+            cls._log(f"Excluindo Contrato/Empenho no PNCP: {url}")
 
-        cls._handle_error(resp)
+            try:
+                resp = requests.delete(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    verify=cls.VERIFY_SSL,
+                    timeout=cls.DEFAULT_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (excluir contrato): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
+
+            if resp.status_code in (200, 204):
+                cls._log("Contrato excluído com sucesso do PNCP.")
+                return True
+
+            last_response = resp
+            if resp.status_code == 404:
+                cls._log("Endpoint de exclusão de contrato retornou 404; tentando base alternativa.", "error")
+                continue
+
+            cls._handle_error(resp)
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao excluir contrato no PNCP: nenhuma resposta recebida.")
 
     # ------------------------------------------------------------------ #
     # 6.5.6 – Inserir Documento de um Contrato                           #
@@ -2354,6 +2489,7 @@ class PNCPService:
         titulo_documento: str,
         tipo_documento_id: int,
         content_type: str = "application/pdf",
+        referencias_pncp: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         6.5.6 – Inserir Documento de um Contrato
@@ -2361,14 +2497,6 @@ class PNCPService:
         /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos/{sequencialContrato}/arquivos  (POST)
         """
         token = cls._get_token()
-
-        if hasattr(arquivo, "seek"):
-            arquivo.seek(0)
-
-        url = (
-            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
-            f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}/arquivos"
-        )
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -2385,38 +2513,59 @@ class PNCPService:
             )
         }
 
-        cls._log(f"Anexando documento ao Contrato no PNCP: {url}")
+        last_response: Optional[requests.Response] = None
 
-        try:
-            resp = requests.post(
-                url,
-                headers=headers,
-                files=files,
-                verify=cls.VERIFY_SSL,
-                timeout=90,
+        for base in cls._candidate_write_base_urls(referencias_pncp):
+            if hasattr(arquivo, "seek"):
+                arquivo.seek(0)
+
+            url = (
+                f"{base}/orgaos/{cnpj_orgao}/compras/"
+                f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}/arquivos"
             )
-        except requests.exceptions.RequestException as exc:
-            msg = f"Falha de comunicação com PNCP (anexar documento ao contrato): {exc}"
-            cls._log(msg, "error")
-            raise ValueError(msg) from exc
 
-        if resp.status_code in (200, 201):
-            location = resp.headers.get("location") or resp.headers.get("Location")
-            result: Dict[str, Any] = {
-                "location": location,
-                "status_code": resp.status_code,
-            }
+            cls._log(f"Anexando documento ao Contrato no PNCP: {url}")
+
             try:
-                body = resp.json()
-                if isinstance(body, dict):
-                    result.update(body)
-            except ValueError:
-                result["raw_response"] = resp.text
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    files=files,
+                    verify=cls.VERIFY_SSL,
+                    timeout=90,
+                )
+            except requests.exceptions.RequestException as exc:
+                msg = f"Falha de comunicação com PNCP (anexar documento ao contrato): {exc}"
+                cls._log(msg, "error")
+                raise ValueError(msg) from exc
 
-            cls._log(f"Documento de Contrato anexado com sucesso. Location: {location}")
-            return result
+            if resp.status_code in (200, 201):
+                location = resp.headers.get("location") or resp.headers.get("Location")
+                result: Dict[str, Any] = {
+                    "location": location,
+                    "status_code": resp.status_code,
+                }
+                try:
+                    body = resp.json()
+                    if isinstance(body, dict):
+                        result.update(body)
+                except ValueError:
+                    result["raw_response"] = resp.text
 
-        cls._handle_error(resp)
+                cls._log(f"Documento de Contrato anexado com sucesso. Location: {location}")
+                return result
+
+            last_response = resp
+            if resp.status_code == 404:
+                cls._log("Endpoint de documento de contrato retornou 404; tentando base alternativa.", "error")
+                continue
+
+            cls._handle_error(resp)
+
+        if last_response is not None:
+            cls._handle_error(last_response)
+
+        raise ValueError("Falha ao anexar documento do contrato no PNCP: nenhuma resposta recebida.")
 
     # ------------------------------------------------------------------ #
     # 6.5.7 – Excluir Documento de um Contrato                           #
