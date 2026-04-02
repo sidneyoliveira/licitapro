@@ -2192,7 +2192,8 @@ class PNCPService:
         """
         6.5.1 – Inserir Contrato/Empenho no PNCP.
         Endpoint:
-        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos  (POST)
+        /orgaos/{cnpj}/contratos  (POST)
+        anoCompra/sequencialCompra são enviados no corpo, não na URL.
         """
         token = cls._get_token()
 
@@ -2203,12 +2204,15 @@ class PNCPService:
         }
 
         payload: Dict[str, Any] = {
+            "cnpjCompra": cnpj_orgao,
+            "anoCompra": int(ano_compra),
+            "sequencialCompra": int(sequencial_compra),
             "tipoContratoId": int(tipo_contrato_id),
             "numeroContratoEmpenho": (numero_contrato_empenho or "").strip(),
             "anoContrato": int(ano_contrato),
             "niFornecedor": (ni_fornecedor or "").strip(),
             "tipoPessoaFornecedor": (tipo_pessoa_fornecedor or "PJ").strip(),
-            "receitaDespesa": receita_despesa,
+            "receita": receita_despesa == "R",
             "valorInicial": float(valor_inicial or 0),
             "valorGlobal": float(valor_global or 0),
         }
@@ -2222,7 +2226,7 @@ class PNCPService:
         if data_vigencia_fim:
             payload["dataVigenciaFim"] = data_vigencia_fim
         if unidade_codigo:
-            payload["unidadeOrgao"] = {"codigoUnidade": unidade_codigo}
+            payload["codigoUnidade"] = unidade_codigo
         if processo_ref:
             payload["processo"] = processo_ref
         if categoria_processo_id:
@@ -2231,10 +2235,7 @@ class PNCPService:
         last_response: Optional[requests.Response] = None
 
         for base in cls._candidate_write_base_urls(referencias_pncp):
-            url = (
-                f"{base}/orgaos/{cnpj_orgao}/compras/"
-                f"{int(ano_compra)}/{int(sequencial_compra)}/contratos"
-            )
+            url = f"{base}/orgaos/{cnpj_orgao}/contratos"
 
             cls._log(f"Inserindo Contrato/Empenho no PNCP: {url}")
 
@@ -2317,7 +2318,7 @@ class PNCPService:
         """
         6.5.2 – Retificar Contrato/Empenho no PNCP.
         Endpoint:
-        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos/{sequencialContrato}  (PUT)
+        /orgaos/{cnpj}/contratos/{sequencialContrato}  (PUT)
 
         IMPORTANTE: Na retificação, TODOS os campos obrigatórios devem ser reenviados.
         """
@@ -2330,12 +2331,15 @@ class PNCPService:
         }
 
         payload: Dict[str, Any] = {
+            "cnpjCompra": cnpj_orgao,
+            "anoCompra": int(ano_compra),
+            "sequencialCompra": int(sequencial_compra),
             "tipoContratoId": int(tipo_contrato_id),
             "numeroContratoEmpenho": (numero_contrato_empenho or "").strip(),
             "anoContrato": int(ano_contrato),
             "niFornecedor": (ni_fornecedor or "").strip(),
             "tipoPessoaFornecedor": (tipo_pessoa_fornecedor or "PJ").strip(),
-            "receitaDespesa": receita_despesa,
+            "receita": receita_despesa == "R",
             "valorInicial": float(valor_inicial or 0),
             "valorGlobal": float(valor_global or 0),
             "justificativa": (justificativa or "Retificação de contrato solicitada.")[:255],
@@ -2350,7 +2354,7 @@ class PNCPService:
         if data_vigencia_fim:
             payload["dataVigenciaFim"] = data_vigencia_fim
         if unidade_codigo:
-            payload["unidadeOrgao"] = {"codigoUnidade": unidade_codigo}
+            payload["codigoUnidade"] = unidade_codigo
         if processo_ref:
             payload["processo"] = processo_ref
         if categoria_processo_id:
@@ -2359,10 +2363,7 @@ class PNCPService:
         last_response: Optional[requests.Response] = None
 
         for base in cls._candidate_write_base_urls(referencias_pncp):
-            url = (
-                f"{base}/orgaos/{cnpj_orgao}/compras/"
-                f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}"
-            )
+            url = f"{base}/orgaos/{cnpj_orgao}/contratos/{int(sequencial_contrato)}"
 
             cls._log(f"Retificando Contrato/Empenho no PNCP: {url}")
 
@@ -2420,7 +2421,7 @@ class PNCPService:
         """
         6.5.3 – Excluir/Remover um Contrato/Empenho no PNCP.
         Endpoint:
-        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos/{sequencialContrato} (DELETE)
+        /orgaos/{cnpj}/contratos/{sequencialContrato} (DELETE)
         """
         token = cls._get_token()
 
@@ -2437,10 +2438,7 @@ class PNCPService:
         last_response: Optional[requests.Response] = None
 
         for base in cls._candidate_write_base_urls(referencias_pncp):
-            url = (
-                f"{base}/orgaos/{cnpj_orgao}/compras/"
-                f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}"
-            )
+            url = f"{base}/orgaos/{cnpj_orgao}/contratos/{int(sequencial_contrato)}"
 
             cls._log(f"Excluindo Contrato/Empenho no PNCP: {url}")
 
@@ -2494,7 +2492,7 @@ class PNCPService:
         """
         6.5.6 – Inserir Documento de um Contrato
         Endpoint:
-        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos/{sequencialContrato}/arquivos  (POST)
+        /orgaos/{cnpj}/contratos/{sequencialContrato}/arquivos  (POST)
         """
         token = cls._get_token()
 
@@ -2519,10 +2517,7 @@ class PNCPService:
             if hasattr(arquivo, "seek"):
                 arquivo.seek(0)
 
-            url = (
-                f"{base}/orgaos/{cnpj_orgao}/compras/"
-                f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}/arquivos"
-            )
+            url = f"{base}/orgaos/{cnpj_orgao}/contratos/{int(sequencial_contrato)}/arquivos"
 
             cls._log(f"Anexando documento ao Contrato no PNCP: {url}")
 
