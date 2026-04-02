@@ -57,6 +57,8 @@ from .models import (
 
 # Imports Locais - Serializers
 from .serializers import (
+    CONTRATO_DOCUMENTOS_OBRIGATORIOS,
+    CONTRATO_DOCUMENTOS_OBRIGATORIOS_MAPA,
     TIPO_DOC_MAPA,
     UserSerializer,
     EntidadeSerializer,
@@ -75,7 +77,8 @@ from .serializers import (
     ProcessoDocumentoLinhaSerializer,
     DocumentoPNCPSerializer,
     AtaRegistroPrecosSerializer,
-    DocumentoAtaRegistroPrecosSerializer
+    DocumentoAtaRegistroPrecosSerializer,
+    infer_chave_documento_contrato,
 )
 
 # Imports Locais - Choices (Atualizado para nova lógica sem Fundamentação)
@@ -180,6 +183,103 @@ def parse_pncp_id(raw, slug_map, field_name="campo"):
     if not _id:
         raise ValueError(f"{field_name} inválido: '{raw}'. Envie um ID numérico ou um slug conhecido.")
     return int(_id)
+
+
+def get_documentos_contrato_ativos(contrato):
+    return contrato.documentos.filter(ativo=True).exclude(status="removido").order_by("-criado_em")
+
+
+def get_documento_contrato_por_chave(contrato, chave):
+    for doc in get_documentos_contrato_ativos(contrato):
+        doc_chave = infer_chave_documento_contrato(
+            doc.chave_documento,
+            doc.titulo,
+            doc.arquivo_nome,
+            doc.tipo_documento_id,
+        )
+        if doc_chave == chave:
+            return doc
+    return None
+
+
+def get_documentos_obrigatorios_faltantes_contrato(contrato):
+    faltantes = []
+    for spec in CONTRATO_DOCUMENTOS_OBRIGATORIOS:
+        doc = get_documento_contrato_por_chave(contrato, spec["chave"])
+        if not doc or not doc.arquivo:
+            faltantes.append(spec["titulo"])
+    return faltantes
+
+
+def get_campos_pendentes_publicacao_contrato(contrato):
+    pendencias = []
+    if not contrato.numero_contrato_empenho:
+        pendencias.append("Informe o número do contrato.")
+    if not contrato.ano_contrato:
+        pendencias.append("Informe o ano do contrato.")
+    if not contrato.ni_fornecedor:
+        pendencias.append("Selecione o fornecedor do contrato.")
+    if not contrato.unidade_codigo:
+        pendencias.append("Selecione a secretaria/unidade do contrato.")
+    if not contrato.objeto:
+        pendencias.append("Informe o objeto do contrato.")
+    if contrato.valor_global in (None, "") and contrato.valor_inicial in (None, ""):
+        pendencias.append("Informe o valor contratado.")
+    if not contrato.data_assinatura:
+        pendencias.append("Informe o início da vigência/data da assinatura.")
+    if not contrato.data_vigencia_inicio:
+        pendencias.append("Informe o início da vigência.")
+    if not contrato.data_vigencia_fim:
+        pendencias.append("Informe o fim da vigência.")
+    return pendencias
+
+
+def enviar_documentos_obrigatorios_contrato_para_pncp(contrato, cnpj_orgao):
+    processo = contrato.processo
+    enviados = []
+    erros = []
+
+    for spec in CONTRATO_DOCUMENTOS_OBRIGATORIOS:
+        doc = get_documento_contrato_por_chave(contrato, spec["chave"])
+        if not doc or not doc.arquivo:
+            erros.append({"chave": spec["chave"], "titulo": spec["titulo"], "erro": "Arquivo obrigatório não anexado."})
+            continue
+
+        if doc.status == "enviado" and doc.pncp_sequencial_documento:
+            enviados.append({"chave": spec["chave"], "titulo": doc.titulo, "status": "ja_enviado"})
+            continue
+
+        content_type = getattr(getattr(doc.arquivo, "file", None), "content_type", "application/pdf")
+
+        try:
+            result = PNCPService.anexar_documento_contrato(
+                cnpj_orgao=cnpj_orgao,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                sequencial_contrato=contrato.pncp_sequencial_contrato,
+                arquivo=doc.arquivo,
+                titulo_documento=doc.titulo or spec["titulo"],
+                tipo_documento_id=doc.tipo_documento_id,
+                content_type=content_type,
+            )
+
+            seq = (
+                result.get("sequencialDocumento")
+                or result.get("sequencialArquivo")
+                or result.get("sequencial")
+            )
+
+            doc.status = "enviado"
+            doc.pncp_sequencial_documento = seq
+            doc.pncp_publicado_em = timezone.now()
+            doc.save(update_fields=["status", "pncp_sequencial_documento", "pncp_publicado_em"])
+            enviados.append({"chave": spec["chave"], "titulo": doc.titulo, "status": "enviado"})
+        except ValueError as exc:
+            doc.status = "erro"
+            doc.save(update_fields=["status"])
+            erros.append({"chave": spec["chave"], "titulo": doc.titulo or spec["titulo"], "erro": str(exc)})
+
+    return enviados, erros
 
 # ============================================================
 # 0️⃣ API DE CONSTANTES DO SISTEMA (ATUALIZADA)
@@ -2327,7 +2427,7 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = (
-            ContratoEmpenho.objects.select_related("processo", "processo__entidade")
+            ContratoEmpenho.objects.select_related("processo", "processo__entidade", "processo__orgao")
             .filter(ativo=True)
             .order_by("-criado_em", "id")
         )
@@ -2363,15 +2463,21 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validações obrigatórias
-        if not contrato.numero_contrato_empenho or not contrato.ano_contrato:
+        campos_pendentes = get_campos_pendentes_publicacao_contrato(contrato)
+        documentos_pendentes = get_documentos_obrigatorios_faltantes_contrato(contrato)
+
+        if campos_pendentes or documentos_pendentes:
+            mensagens = []
+            if campos_pendentes:
+                mensagens.append("Há campos obrigatórios pendentes no contrato.")
+            if documentos_pendentes:
+                mensagens.append("Anexe todos os documentos obrigatórios antes de enviar ao PNCP.")
             return Response(
-                {"detail": "Número e ano do contrato são obrigatórios."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not contrato.ni_fornecedor:
-            return Response(
-                {"detail": "NI do Fornecedor (CPF/CNPJ) é obrigatório para publicação no PNCP."},
+                {
+                    "detail": " ".join(mensagens),
+                    "campos_pendentes": campos_pendentes,
+                    "documentos_pendentes": documentos_pendentes,
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2421,8 +2527,20 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
             "pncp_publicado_em",
         ])
 
+        documentos_enviados, documentos_com_erro = enviar_documentos_obrigatorios_contrato_para_pncp(contrato, cnpj)
+
         ser = self.get_serializer(contrato)
-        return Response(ser.data, status=status.HTTP_200_OK)
+        payload = {
+            **ser.data,
+            "documentos_enviados": documentos_enviados,
+            "documentos_com_erro": documentos_com_erro,
+            "detail": (
+                "Contrato publicado no PNCP com sucesso."
+                if not documentos_com_erro
+                else "Contrato publicado no PNCP, mas houve falha no envio de parte dos documentos."
+            ),
+        }
+        return Response(payload, status=status.HTTP_200_OK)
 
     # ------------------------------------------------------------------ #
     # RETIFICAR CONTRATO NO PNCP (POST)
@@ -2475,8 +2593,21 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        documentos_enviados, documentos_com_erro = enviar_documentos_obrigatorios_contrato_para_pncp(contrato, cnpj)
         ser = self.get_serializer(contrato)
-        return Response(ser.data, status=status.HTTP_200_OK)
+        return Response(
+            {
+                **ser.data,
+                "documentos_enviados": documentos_enviados,
+                "documentos_com_erro": documentos_com_erro,
+                "detail": (
+                    "Contrato retificado no PNCP com sucesso."
+                    if not documentos_com_erro
+                    else "Contrato retificado, mas alguns documentos ainda precisam ser reenviados."
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     # ------------------------------------------------------------------ #
     # EXCLUIR CONTRATO DO PNCP (POST)
@@ -2545,11 +2676,17 @@ class DocumentoContratoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         contrato_id = request.data.get("contrato")
         tipo_id = request.data.get("tipo_documento_id")
+        chave_documento = infer_chave_documento_contrato(
+            request.data.get("chave_documento"),
+            request.data.get("titulo"),
+            getattr(request.FILES.get("arquivo"), "name", None),
+            tipo_id,
+        )
         arquivo = request.FILES.get("arquivo")
 
-        if not contrato_id or not tipo_id:
+        if not contrato_id:
             return Response(
-                {"detail": "Campos 'contrato' e 'tipo_documento_id' são obrigatórios."},
+                {"detail": "Campo 'contrato' é obrigatório."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2566,41 +2703,48 @@ class DocumentoContratoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
             contrato_qs = contrato_qs.filter(processo__entidade_id__in=entidade_ids)
         contrato = get_object_or_404(contrato_qs)
 
+        if not chave_documento or chave_documento not in CONTRATO_DOCUMENTOS_OBRIGATORIOS_MAPA:
+            return Response(
+                {"detail": "Selecione um dos documentos obrigatórios do contrato para anexar o arquivo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        spec = CONTRATO_DOCUMENTOS_OBRIGATORIOS_MAPA[chave_documento]
+
+        try:
+            tipo_id_int = int(tipo_id or spec["tipo_documento_id"])
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "tipo_documento_id inválido para o documento do contrato."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # hash do arquivo
         content = arquivo.read()
         file_hash = hashlib.sha256(content).hexdigest()
         arquivo.seek(0)
 
-        TIPO_DOC_CONTRATO_MAPA = {
-            1: "Documento Principal",
-            2: "Extrato",
-            3: "Termo Aditivo",
-            4: "Publicação DOU",
-            5: "Apostilamento",
-            6: "Rescisão",
-            7: "Outros",
-        }
+        titulo = request.data.get("titulo") or spec["titulo"]
+        existing = get_documento_contrato_por_chave(contrato, chave_documento)
 
-        titulo = request.data.get("titulo") or TIPO_DOC_CONTRATO_MAPA.get(int(tipo_id), "Documento")
-
-        # upsert por (contrato, tipo_documento_id)
-        existing = (
-            DocumentoContrato.objects.filter(
-                contrato=contrato,
-                tipo_documento_id=tipo_id,
-                ativo=True,
+        if existing and existing.status == "enviado":
+            return Response(
+                {
+                    "detail": "Este documento já foi enviado ao PNCP. Remova-o do PNCP antes de substituir o arquivo local.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            .exclude(status="removido")
-            .order_by("-criado_em")
-            .first()
-        )
 
-        if existing and existing.status != "enviado":
+        if existing:
             existing.arquivo = arquivo
             existing.arquivo_nome = arquivo.name
             existing.arquivo_hash = file_hash
+            existing.chave_documento = chave_documento
+            existing.tipo_documento_id = tipo_id_int
             existing.titulo = titulo
             existing.status = "rascunho"
+            existing.pncp_sequencial_documento = None
+            existing.pncp_publicado_em = None
             existing.ativo = True
             existing.save()
             ser = self.get_serializer(existing)
@@ -2608,7 +2752,8 @@ class DocumentoContratoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
         doc = DocumentoContrato.objects.create(
             contrato=contrato,
-            tipo_documento_id=tipo_id,
+            chave_documento=chave_documento,
+            tipo_documento_id=tipo_id_int,
             titulo=titulo,
             observacao=request.data.get("observacao") or None,
             arquivo=arquivo,
@@ -2622,6 +2767,11 @@ class DocumentoContratoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         obj = self.get_object()
+        if obj.status == "enviado" and obj.pncp_sequencial_documento:
+            return Response(
+                {"detail": "Remova o documento do PNCP antes de excluí-lo localmente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         obj.ativo = False
         obj.status = "removido"
         obj.save(update_fields=["ativo", "status"])

@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import (
@@ -51,6 +53,89 @@ TIPO_DOC_MAPA = {
     19: "Minuta de Ata de Registro de Preços",
     20: "Ato que autoriza a Contratação Direta",
 }
+
+CONTRATO_DOCUMENTOS_OBRIGATORIOS = (
+    {
+        "chave": "termo_convocacao",
+        "titulo": "Termo de convocação",
+        "tipo_documento_id": 7,
+        "tipo_documento_nome": "Outros Documentos",
+    },
+    {
+        "chave": "contrato",
+        "titulo": "Contrato",
+        "tipo_documento_id": 1,
+        "tipo_documento_nome": "Contrato",
+    },
+    {
+        "chave": "extrato",
+        "titulo": "Extrato",
+        "tipo_documento_id": 7,
+        "tipo_documento_nome": "Outros Documentos",
+    },
+    {
+        "chave": "certidao",
+        "titulo": "Certidão",
+        "tipo_documento_id": 7,
+        "tipo_documento_nome": "Outros Documentos",
+    },
+)
+
+CONTRATO_DOCUMENTOS_OBRIGATORIOS_MAPA = {
+    item["chave"]: item for item in CONTRATO_DOCUMENTOS_OBRIGATORIOS
+}
+
+CONTRATO_TIPO_DOC_MAPA = {
+    1: "Contrato",
+    2: "Extrato",
+    3: "Termo Aditivo",
+    4: "Publicação DOU",
+    5: "Apostilamento",
+    6: "Rescisão",
+    7: "Outros Documentos",
+}
+
+
+def _clean_digits(value):
+    return re.sub(r"\D", "", value or "")
+
+
+def _add_one_year(base_date):
+    if not base_date:
+        return None
+    try:
+        return base_date.replace(year=base_date.year + 1)
+    except ValueError:
+        return base_date.replace(month=2, day=28, year=base_date.year + 1)
+
+
+def infer_chave_documento_contrato(chave_documento=None, titulo=None, arquivo_nome=None, tipo_documento_id=None):
+    if chave_documento:
+        return chave_documento
+
+    texto = " ".join(filter(None, [titulo, arquivo_nome])).strip().lower()
+    texto = texto.replace("ç", "c")
+    texto = texto.replace("ã", "a")
+    texto = texto.replace("á", "a")
+    texto = texto.replace("â", "a")
+    texto = texto.replace("é", "e")
+    texto = texto.replace("ê", "e")
+    texto = texto.replace("í", "i")
+    texto = texto.replace("ó", "o")
+    texto = texto.replace("ô", "o")
+    texto = texto.replace("õ", "o")
+    texto = texto.replace("ú", "u")
+
+    if "termo" in texto and "convoc" in texto:
+        return "termo_convocacao"
+    if "certidao" in texto or "certidão" in texto:
+        return "certidao"
+    if "extrato" in texto or str(tipo_documento_id or "") == "2":
+        return "extrato"
+    if "contrato" in texto or str(tipo_documento_id or "") == "1":
+        return "contrato"
+
+    return None
 
 # ============================================================
 # 👤 USER
@@ -388,6 +473,14 @@ class ItemFornecedorSerializer(serializers.ModelSerializer):
 
 class ContratoEmpenhoSerializer(serializers.ModelSerializer):
     processo_numero = serializers.CharField(source="processo.numero_processo", read_only=True)
+    fornecedor = serializers.SerializerMethodField()
+    fornecedor_nome = serializers.SerializerMethodField()
+    fornecedor_cnpj = serializers.SerializerMethodField()
+    fornecedor_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    unidade_nome = serializers.SerializerMethodField()
+    valor_contratado = serializers.SerializerMethodField()
+    documentos_obrigatorios_ok = serializers.SerializerMethodField()
+    documentos_pendentes = serializers.SerializerMethodField()
 
     class Meta:
         model = ContratoEmpenho
@@ -401,15 +494,35 @@ class ContratoEmpenhoSerializer(serializers.ModelSerializer):
             "processo_ref",
             "categoria_processo_id",
             "receita",
+            "fornecedor",
+            "fornecedor_nome",
+            "fornecedor_cnpj",
+            "fornecedor_id",
             "unidade_codigo",
+            "unidade_nome",
             "ni_fornecedor",
             "tipo_pessoa_fornecedor",
             "objeto",
             "valor_inicial",
             "valor_global",
+            "valor_contratado",
             "data_assinatura",
             "data_vigencia_inicio",
             "data_vigencia_fim",
+            "documentos_obrigatorios_ok",
+            "documentos_pendentes",
+            "status",
+            "pncp_sequencial_contrato",
+            "numero_controle_pncp",
+            "link_pncp",
+            "pncp_publicado_em",
+            "ativo",
+            "criado_em",
+            "atualizado_em",
+        )
+        read_only_fields = (
+            "tipo_contrato_id",
+            "receita",
             "status",
             "pncp_sequencial_contrato",
             "numero_controle_pncp",
@@ -430,22 +543,121 @@ class ContratoEmpenhoSerializer(serializers.ModelSerializer):
             "atualizado_em",
         )
 
+    def _get_fornecedor_obj(self, obj):
+        cnpj = _clean_digits(obj.ni_fornecedor)
+        if not cnpj or not obj.processo_id:
+            return None
+
+        queryset = Fornecedor.objects.filter(processos__processo=obj.processo).distinct()
+        for fornecedor in queryset:
+            if _clean_digits(fornecedor.cnpj) == cnpj:
+                return fornecedor
+        return None
+
+    def get_fornecedor(self, obj):
+        fornecedor = self._get_fornecedor_obj(obj)
+        return fornecedor.id if fornecedor else None
+
+    def get_fornecedor_nome(self, obj):
+        fornecedor = self._get_fornecedor_obj(obj)
+        return fornecedor.razao_social if fornecedor else None
+
+    def get_fornecedor_cnpj(self, obj):
+        fornecedor = self._get_fornecedor_obj(obj)
+        return fornecedor.cnpj if fornecedor else obj.ni_fornecedor
+
+    def get_unidade_nome(self, obj):
+        if not obj.unidade_codigo or not obj.processo_id or not obj.processo.entidade_id:
+            return None
+        orgao = obj.processo.entidade.orgaos.filter(codigo_unidade=obj.unidade_codigo).first()
+        return orgao.nome if orgao else None
+
+    def get_valor_contratado(self, obj):
+        return obj.valor_global if obj.valor_global is not None else obj.valor_inicial
+
+    def get_documentos_pendentes(self, obj):
+        docs = obj.documentos.filter(ativo=True).exclude(status="removido")
+        presentes = {
+            infer_chave_documento_contrato(doc.chave_documento, doc.titulo, doc.arquivo_nome, doc.tipo_documento_id)
+            for doc in docs
+            if doc.arquivo
+        }
+        return [
+            item["titulo"]
+            for item in CONTRATO_DOCUMENTOS_OBRIGATORIOS
+            if item["chave"] not in presentes
+        ]
+
+    def get_documentos_obrigatorios_ok(self, obj):
+        return len(self.get_documentos_pendentes(obj)) == 0
+
+    def validate(self, attrs):
+        processo = attrs.get("processo") or getattr(self.instance, "processo", None)
+        if not processo:
+            return attrs
+
+        fornecedor_id = attrs.pop("fornecedor_id", serializers.empty)
+        if fornecedor_id is not serializers.empty:
+            if fornecedor_id in (None, ""):
+                attrs["ni_fornecedor"] = None
+                attrs["tipo_pessoa_fornecedor"] = None
+            else:
+                fornecedor = Fornecedor.objects.filter(pk=fornecedor_id).first()
+                if not fornecedor:
+                    raise serializers.ValidationError({"fornecedor_id": "Fornecedor inválido."})
+                if not FornecedorProcesso.objects.filter(processo=processo, fornecedor=fornecedor).exists():
+                    raise serializers.ValidationError({"fornecedor_id": "Selecione um fornecedor vinculado a este processo."})
+                attrs["ni_fornecedor"] = _clean_digits(fornecedor.cnpj)
+                attrs["tipo_pessoa_fornecedor"] = "PJ"
+        elif not self.instance and not attrs.get("ni_fornecedor"):
+            raise serializers.ValidationError({"fornecedor_id": "Selecione um fornecedor."})
+
+        attrs["tipo_contrato_id"] = 1
+        attrs["receita"] = False
+
+        if not attrs.get("objeto"):
+            attrs["objeto"] = processo.objeto or ""
+        if not attrs.get("processo_ref"):
+            attrs["processo_ref"] = processo.numero_processo or ""
+
+        unidade_codigo = attrs.get("unidade_codigo", getattr(self.instance, "unidade_codigo", None))
+        if unidade_codigo and processo.entidade_id and not processo.entidade.orgaos.filter(codigo_unidade=unidade_codigo).exists():
+            raise serializers.ValidationError({"unidade_codigo": "Selecione uma unidade vinculada a entidade do processo."})
+
+        valor_global = attrs.get("valor_global", getattr(self.instance, "valor_global", None))
+        valor_inicial = attrs.get("valor_inicial", getattr(self.instance, "valor_inicial", None))
+        if valor_global is not None and attrs.get("valor_inicial", serializers.empty) in (serializers.empty, None, ""):
+            attrs["valor_inicial"] = valor_global
+        elif valor_inicial is not None and attrs.get("valor_global", serializers.empty) in (serializers.empty, None, ""):
+            attrs["valor_global"] = valor_inicial
+
+        assinatura_informada = attrs.get("data_assinatura", serializers.empty)
+        data_assinatura = attrs.get("data_assinatura", getattr(self.instance, "data_assinatura", None))
+        data_inicio = attrs.get("data_vigencia_inicio", getattr(self.instance, "data_vigencia_inicio", None))
+        data_fim = attrs.get("data_vigencia_fim", getattr(self.instance, "data_vigencia_fim", None))
+
+        if assinatura_informada is not serializers.empty and data_assinatura:
+            attrs["data_vigencia_inicio"] = data_assinatura
+            data_inicio = data_assinatura
+
+        if data_inicio and attrs.get("data_vigencia_fim", serializers.empty) in (serializers.empty, None, ""):
+            attrs["data_vigencia_fim"] = _add_one_year(data_inicio)
+            data_fim = attrs["data_vigencia_fim"]
+
+        if data_inicio and data_fim and data_fim < data_inicio:
+            raise serializers.ValidationError(
+                {"data_vigencia_fim": "O fim da vigência não pode ser anterior ao início da vigência."}
+            )
+
+        return attrs
+
 
 class DocumentoContratoSerializer(serializers.ModelSerializer):
     arquivo = serializers.FileField(required=False)
     arquivo_url = serializers.SerializerMethodField()
     tipo_documento_nome = serializers.SerializerMethodField()
     contrato_display = serializers.SerializerMethodField()
-
-    TIPO_DOC_MAPA = {
-        1: "Documento Principal",
-        2: "Extrato",
-        3: "Termo Aditivo",
-        4: "Publicação DOU",
-        5: "Apostilamento",
-        6: "Rescisão",
-        7: "Outros",
-    }
+    chave_documento_nome = serializers.SerializerMethodField()
 
     class Meta:
         model = DocumentoContrato
@@ -453,6 +665,8 @@ class DocumentoContratoSerializer(serializers.ModelSerializer):
             "id",
             "contrato",
             "contrato_display",
+            "chave_documento",
+            "chave_documento_nome",
             "tipo_documento_id",
             "tipo_documento_nome",
             "titulo",
@@ -477,11 +691,21 @@ class DocumentoContratoSerializer(serializers.ModelSerializer):
         return None
 
     def get_tipo_documento_nome(self, obj):
-        return self.TIPO_DOC_MAPA.get(obj.tipo_documento_id, f"Tipo {obj.tipo_documento_id}")
+        return CONTRATO_TIPO_DOC_MAPA.get(obj.tipo_documento_id, f"Tipo {obj.tipo_documento_id}")
 
     def get_contrato_display(self, obj):
         c = obj.contrato
         return f"{c.numero_contrato_empenho}/{c.ano_contrato}" if c else ""
+
+    def get_chave_documento_nome(self, obj):
+        chave = infer_chave_documento_contrato(
+            obj.chave_documento,
+            obj.titulo,
+            obj.arquivo_nome,
+            obj.tipo_documento_id,
+        )
+        spec = CONTRATO_DOCUMENTOS_OBRIGATORIOS_MAPA.get(chave)
+        return spec["titulo"] if spec else obj.titulo
 
 
 # ============================================================

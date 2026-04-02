@@ -623,6 +623,7 @@ class DocumentoContrato(models.Model):
         on_delete=models.CASCADE,
     )
 
+    chave_documento = models.CharField(max_length=64, blank=True, null=True, db_index=True)
     tipo_documento_id = models.PositiveIntegerField()
     titulo = models.CharField(max_length=255, default="Documento do Contrato")
     observacao = models.TextField(blank=True, null=True)
