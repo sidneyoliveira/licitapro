@@ -6,7 +6,7 @@ import logging
 import re
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, IO, List, Optional
 
 import pytz
@@ -47,6 +47,11 @@ class PNCPService:
 
     DEFAULT_TIMEOUT: int = 30
     VERIFY_SSL: bool = getattr(settings, "PNCP_VERIFY_SSL", False)
+
+    # Cache de token: evita re-autenticação a cada chamada
+    _cached_token: Optional[str] = None
+    _token_expires_at: float = 0.0  # timestamp Unix
+    _TOKEN_TTL: int = 1500  # 25 minutos (tokens PNCP normalmente duram 30min)
 
     # ------------------------------------------------------------------ #
     # HELPERS DE LOG                                                     #
@@ -91,8 +96,14 @@ class PNCPService:
     def _get_token(cls) -> str:
         """
         Obtém o token Bearer no endpoint /usuarios/login.
+        Usa cache interno para evitar re-autenticação desnecessária.
         Levanta ValueError em caso de erro.
         """
+        # Verifica cache
+        now = time.time()
+        if cls._cached_token and now < cls._token_expires_at:
+            return cls._cached_token
+
         cls._debug_credenciais()
 
         if not cls.USERNAME or not cls.PASSWORD:
@@ -128,6 +139,8 @@ class PNCPService:
                 raise ValueError(msg)
 
             cls._log("Token PNCP obtido com sucesso.")
+            cls._cached_token = token
+            cls._token_expires_at = time.time() + cls._TOKEN_TTL
             return token
 
         cls._handle_error(response)
@@ -677,18 +690,18 @@ class PNCPService:
             ) from exc
 
         # ===== LOG DIAGNÓSTICO: DADOS BRUTOS DO PROCESSO =====
-        logger.warning("=" * 80)
-        logger.warning("[PNCP DEBUG] ======= DADOS DO PROCESSO =======")
-        logger.warning("  Processo ID: %s", processo.id)
-        logger.warning("  Número: %s", processo.numero_processo)
-        logger.warning("  Modalidade (raw): %r -> mod_id=%s", processo.modalidade, mod_id)
-        logger.warning("  Modo Disputa (raw): %r -> disp_id=%s", processo.modo_disputa, disp_id)
-        logger.warning("  Amparo Legal (raw): %r -> amp_id=%s", processo.amparo_legal, amp_id)
-        logger.warning("  Instrumento Conv. (raw): %r -> inst_id=%s", processo.instrumento_convocatorio, inst_id)
-        logger.warning("  Critério Julg. (raw): %r -> crit_id=%s", processo.criterio_julgamento, crit_id)
-        logger.warning("  CNPJ Orgão: %s", cnpj_orgao)
-        logger.warning("  Unidade Compradora: %s", processo.orgao.codigo_unidade if processo.orgao else 'N/A')
-        logger.warning("=" * 80)
+        logger.debug("=" * 80)
+        logger.debug("[PNCP] ======= DADOS DO PROCESSO =======")
+        logger.debug("  Processo ID: %s", processo.id)
+        logger.debug("  Número: %s", processo.numero_processo)
+        logger.debug("  Modalidade (raw): %r -> mod_id=%s", processo.modalidade, mod_id)
+        logger.debug("  Modo Disputa (raw): %r -> disp_id=%s", processo.modo_disputa, disp_id)
+        logger.debug("  Amparo Legal (raw): %r -> amp_id=%s", processo.amparo_legal, amp_id)
+        logger.debug("  Instrumento Conv. (raw): %r -> inst_id=%s", processo.instrumento_convocatorio, inst_id)
+        logger.debug("  Critério Julg. (raw): %r -> crit_id=%s", processo.criterio_julgamento, crit_id)
+        logger.debug("  CNPJ Orgão: %s", cnpj_orgao)
+        logger.debug("  Unidade Compradora: %s", processo.orgao.codigo_unidade if processo.orgao else 'N/A')
+        logger.debug("=" * 80)
 
         # --- Validação cruzada de domínios PNCP -------------------------
         # Modo de Disputa x Modalidade
@@ -820,8 +833,8 @@ class PNCPService:
         )
 
         # ===== LOG DIAGNÓSTICO: PAYLOAD JSON COMPLETO =====
-        logger.warning("[PNCP DEBUG] ======= PAYLOAD JSON COMPLETO =======")
-        logger.warning("%s", json.dumps(payload, ensure_ascii=False, indent=2))
+        logger.debug("[PNCP] ======= PAYLOAD JSON COMPLETO =======")
+        logger.debug("%s", json.dumps(payload, ensure_ascii=False, indent=2))
 
         files = {
             "documento": (
@@ -865,9 +878,9 @@ class PNCPService:
             raise ValueError(msg) from exc
 
         # ===== LOG DIAGNÓSTICO: RESPOSTA DO PNCP =====
-        logger.warning("[PNCP DEBUG] ======= RESPOSTA DO PNCP =======")
-        logger.warning("  Status Code: %s", response.status_code)
-        logger.warning("  Response Body: %s", (response.text or '')[:3000])
+        logger.debug("[PNCP] ======= RESPOSTA DO PNCP =======")
+        logger.debug("  Status Code: %s", response.status_code)
+        logger.debug("  Response Body: %s", (response.text or '')[:3000])
 
         # Retry: se 422 por categoria inválida, remover itemCategoriaId e reenviar
         if response.status_code == 422:
@@ -884,8 +897,8 @@ class PNCPService:
                     "compra": (None, json.dumps(retry_payload), "application/json"),
                 }
 
-                logger.warning(
-                    "[PNCP SEND] Retentando publicação SEM itemCategoriaId para modalidade %s.",
+                logger.info(
+                    "[PNCP] Retentando publicação SEM itemCategoriaId para modalidade %s.",
                     mod_id,
                 )
 
@@ -898,7 +911,7 @@ class PNCPService:
                     cls._log(msg, "error")
                     raise ValueError(msg) from exc
 
-                logger.warning("[PNCP DEBUG] RETRY Response: %s %s",
+                logger.debug("[PNCP] RETRY Response: %s %s",
                                response.status_code, (response.text or '')[:3000])
 
         if response.status_code in (200, 201):
@@ -942,7 +955,7 @@ class PNCPService:
         }
 
         cls._log(f"Inserindo {len(itens_payload)} item(ns) no PNCP: {url}")
-        logger.warning("[PNCP] Inserir itens payload: %s",
+        logger.debug("[PNCP] Inserir itens payload: %s",
                        json.dumps(itens_payload, ensure_ascii=False))
 
         try:
@@ -958,7 +971,7 @@ class PNCPService:
             cls._log(msg, "error")
             raise ValueError(msg) from exc
 
-        logger.warning("[PNCP] Inserir itens response: %s %s",
+        logger.debug("[PNCP] Inserir itens response: %s %s",
                        resp.status_code, (resp.text or "")[:1000])
 
         if resp.status_code in (200, 201):
@@ -1000,7 +1013,7 @@ class PNCPService:
         }
 
         cls._log(f"Inserindo resultado do item {numero_item} no PNCP: {url}")
-        logger.warning("[PNCP] Resultado item %s payload: %s",
+        logger.debug("[PNCP] Resultado item %s payload: %s",
                        numero_item, json.dumps(resultado_payload, ensure_ascii=False))
 
         try:
@@ -1077,7 +1090,7 @@ class PNCPService:
                 cls._log(msg, "error")
                 raise ValueError(msg) from exc
 
-            logger.warning(
+            logger.debug(
                 "[PNCP] %s resultado item=%s seqResultado=%s -> %s: %s",
                 method.upper(),
                 numero_item,
@@ -1151,11 +1164,11 @@ class PNCPService:
                     timeout=cls.DEFAULT_TIMEOUT,
                 )
             except requests.exceptions.RequestException as exc:
-                logger.warning("[PNCP] Falha ao consultar resultados item %s em %s: %s",
+                logger.debug("[PNCP] Falha ao consultar resultados item %s em %s: %s",
                                numero_item, base, exc)
                 continue
 
-            logger.warning("[PNCP] GET resultados item %s -> %s: %s",
+            logger.debug("[PNCP] GET resultados item %s -> %s: %s",
                            numero_item, resp.status_code, (resp.text or "")[:1000])
 
             if resp.status_code == 200:
@@ -1262,7 +1275,7 @@ class PNCPService:
                 timeout=cls.DEFAULT_TIMEOUT,
             )
         except requests.exceptions.RequestException as exc:
-            logger.warning("[PNCP] Falha ao deletar resultado %s do item %s: %s",
+            logger.debug("[PNCP] Falha ao deletar resultado %s do item %s: %s",
                            sequencial_resultado, numero_item, exc)
             return False
 
@@ -1270,7 +1283,7 @@ class PNCPService:
             cls._log(f"Resultado {sequencial_resultado} do item {numero_item} deletado.")
             return True
 
-        logger.warning("[PNCP] DELETE resultado %s item %s retornou %s: %s",
+        logger.debug("[PNCP] DELETE resultado %s item %s retornou %s: %s",
                        sequencial_resultado, numero_item,
                        resp.status_code, (resp.text or "")[:500])
         return False
@@ -1431,8 +1444,7 @@ class PNCPService:
             porte_raw = (fornecedor.porte or "").strip().upper()
             porte_id = PORTE_MAP.get(porte_raw, "3")
 
-            from datetime import date as date_cls
-            data_resultado = date_cls.today().isoformat()
+            data_resultado = date.today().isoformat()
 
             resultado_payload = {
                 "quantidadeHomologada": qtd,

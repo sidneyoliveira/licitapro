@@ -97,10 +97,42 @@ from .choices import (
     MAP_INSTRUMENTO_CONVOCATORIO_PNCP
 )
 
+from rest_framework.pagination import PageNumberPagination
+
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
 GOOGLE_CLIENT_ID = getattr(settings, "GOOGLE_CLIENT_ID", "") or ""
+
+
+# ============================================================
+# HELPERS DRY (usados em várias actions PNCP)
+# ============================================================
+
+def extrair_cnpj_processo(processo):
+    """Retorna CNPJ limpo (14 dígitos) ou levanta ValueError."""
+    if not processo.entidade or not processo.entidade.cnpj:
+        raise ValueError("Entidade/CNPJ da contratação não configurados.")
+    cnpj = re.sub(r"\D", "", processo.entidade.cnpj or "")
+    if len(cnpj) != 14:
+        raise ValueError("CNPJ da entidade inválido.")
+    return cnpj
+
+
+def require_referencia_pncp(processo):
+    """Garante que o processo tem ano_compra e sequencial_compra; levanta ValueError se não."""
+    if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
+        raise ValueError("Processo ainda não publicado no PNCP (ano/sequencial ausentes).")
+
+
+# ============================================================
+# PAGINAÇÃO PADRÃO
+# ============================================================
+
+class StandardPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 200
 
 
 # ============================================================
@@ -450,12 +482,24 @@ class OrgaoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
 
 class FornecedorViewSet(viewsets.ModelViewSet):
-    queryset = Fornecedor.objects.all().order_by("razao_social")
     serializer_class = FornecedorSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, DjangoFilterBackend]
     search_fields = ["razao_social", "cnpj"]
     filterset_fields = ["cnpj"]
+
+    def get_queryset(self):
+        qs = Fornecedor.objects.all().order_by("razao_social")
+        user = self.request.user
+        if user.is_superuser or user.is_staff:
+            return qs
+        entidade_ids = list(user.entidades.values_list("id", flat=True))
+        if not entidade_ids:
+            return qs.none()
+        # Filtra fornecedores vinculados a processos das entidades do usuário
+        return qs.filter(
+            processos__processo__entidade_id__in=entidade_ids
+        ).distinct()
 
 
 # ============================================================
@@ -466,6 +510,7 @@ class FornecedorViewSet(viewsets.ModelViewSet):
 class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = ProcessoLicitatorioSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     search_fields = ["numero_processo", "numero_certame", "objeto"]
     filterset_fields = ["modalidade", "situacao", "entidade", "orgao"]
@@ -913,8 +958,7 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
 
             # Extrair da compraUri se não veio em chaves diretas
             if (not ano_compra or not sequencial_compra) and resultado.get("compraUri"):
-                import re as _re
-                m = _re.search(r"/compras/(\d+)/(\d+)", resultado["compraUri"])
+                m = re.search(r"/compras/(\d+)/(\d+)", resultado["compraUri"])
                 if m:
                     ano_compra = ano_compra or int(m.group(1))
                     sequencial_compra = sequencial_compra or int(m.group(2))
@@ -1041,8 +1085,7 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 )
                 # 2b. Extrair da compraUri (ex: .../compras/2026/8)
                 if (not ano or not seq) and retorno.get("compraUri"):
-                    import re as _re
-                    m = _re.search(r"/compras/(\d+)/(\d+)", retorno["compraUri"])
+                    m = re.search(r"/compras/(\d+)/(\d+)", retorno["compraUri"])
                     if m:
                         ano = ano or int(m.group(1))
                         seq = seq or int(m.group(2))
@@ -1179,8 +1222,7 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         if (not ano_compra or not sequencial_compra) and getattr(processo, "pncp_ultimo_retorno", None):
             retorno = processo.pncp_ultimo_retorno
             if isinstance(retorno, dict) and retorno.get("compraUri"):
-                import re as _re
-                m = _re.search(r"/compras/(\d+)/(\d+)", retorno["compraUri"])
+                m = re.search(r"/compras/(\d+)/(\d+)", retorno["compraUri"])
                 if m:
                     ano_compra = ano_compra or int(m.group(1))
                     sequencial_compra = sequencial_compra or int(m.group(2))
@@ -1798,19 +1840,11 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         """
         processo = self.get_object()
 
-        if not processo.pncp_ano_compra or not processo.pncp_sequencial_compra:
-            return Response(
-                {"detail": "Processo não publicado no PNCP ainda."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if not processo.entidade or not processo.entidade.cnpj:
-            return Response(
-                {"detail": "Processo sem Entidade/CNPJ."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        cnpj = re.sub(r"\D", "", processo.entidade.cnpj or "")
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         # Busca propostas vencedoras
         vencedores = ItemFornecedor.objects.filter(
@@ -1882,6 +1916,69 @@ class ProcessoLicitatorioViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    # ------------------------------------------------------------------
+    # RETIFICAR CONTRATAÇÃO NO PNCP
+    # ------------------------------------------------------------------
+    @action(detail=True, methods=["put"], url_path="pncp/retificar-contratacao")
+    def retificar_contratacao_pncp(self, request, pk=None):
+        """Retifica (PUT) uma contratação já publicada no PNCP."""
+        processo = self.get_object()
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            result = PNCPService.retificar_contratacao(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                payload=request.data,
+            )
+            return Response(result, status=status.HTTP_200_OK)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    # ------------------------------------------------------------------
+    # EXCLUIR CONTRATAÇÃO NO PNCP
+    # ------------------------------------------------------------------
+    @action(detail=True, methods=["delete"], url_path="pncp/excluir-contratacao")
+    def excluir_contratacao_pncp(self, request, pk=None):
+        """Exclui (DELETE) uma contratação publicada no PNCP."""
+        processo = self.get_object()
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        justificativa = request.data.get(
+            "justificativa",
+            "Exclusão de contratação solicitada pelo sistema de origem.",
+        )
+
+        try:
+            PNCPService.excluir_contratacao(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                justificativa=justificativa,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        processo.pncp_ano_compra = None
+        processo.pncp_sequencial_compra = None
+        processo.pncp_url = None
+        processo.pncp_publicado_em = None
+        processo.save(update_fields=["pncp_ano_compra", "pncp_sequencial_compra", "pncp_url", "pncp_publicado_em"])
+
+        return Response(
+            {"detail": "Contratação excluída do PNCP com sucesso."},
+            status=status.HTTP_200_OK,
+        )
+
 # ============================================================
 # 4️⃣ LOTE
 # ============================================================
@@ -1905,9 +2002,10 @@ class LoteViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         ids = request.data.get("ids", [])
         if not ids or not isinstance(ids, list):
             return Response({"error": "Envie uma lista de IDs."}, status=status.HTTP_400_BAD_REQUEST)
+        qs = self.get_queryset().filter(id__in=ids)
         # desvincula itens antes de deletar
-        Item.objects.filter(lote_id__in=ids).update(lote=None)
-        deleted, _ = Lote.objects.filter(id__in=ids).delete()
+        Item.objects.filter(lote__in=qs).update(lote=None)
+        deleted, _ = qs.delete()
         return Response({"deleted": deleted}, status=status.HTTP_200_OK)
 
 
@@ -1934,7 +2032,7 @@ class ItemViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         ids = request.data.get("ids", [])
         if not ids or not isinstance(ids, list):
             return Response({"error": "Envie uma lista de IDs."}, status=status.HTTP_400_BAD_REQUEST)
-        deleted, _ = Item.objects.filter(id__in=ids).delete()
+        deleted, _ = self.get_queryset().filter(id__in=ids).delete()
         return Response({"deleted": deleted}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="definir-fornecedor")
@@ -1993,10 +2091,10 @@ class FornecedorProcessoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         processo_id = request.data.get("processo_id")
         if not ids or not isinstance(ids, list):
             return Response({"error": "Envie uma lista de IDs de fornecedores."}, status=status.HTTP_400_BAD_REQUEST)
+        qs = self.get_queryset().filter(fornecedor_id__in=ids)
         if processo_id:
-            deleted, _ = FornecedorProcesso.objects.filter(processo_id=processo_id, fornecedor_id__in=ids).delete()
-        else:
-            deleted, _ = FornecedorProcesso.objects.filter(fornecedor_id__in=ids).delete()
+            qs = qs.filter(processo_id=processo_id)
+        deleted, _ = qs.delete()
         return Response({"deleted": deleted}, status=status.HTTP_200_OK)
 
 
@@ -2025,15 +2123,28 @@ class ReorderItensView(APIView):
 
     def post(self, request, _format=None):
         item_ids = request.data.get("item_ids", [])
-        if not isinstance(item_ids, list):
+        if not isinstance(item_ids, list) or not item_ids:
             return Response(
-                {"error": "item_ids deve ser uma lista."},
+                {"error": "item_ids deve ser uma lista não vazia."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        user = request.user
+        # Filtra apenas itens que o usuário tem acesso (multi-tenant)
+        qs = Item.objects.filter(id__in=item_ids)
+        if not user.is_superuser and not user.is_staff:
+            entidade_ids = list(user.entidades.values_list("id", flat=True))
+            if entidade_ids:
+                qs = qs.filter(processo__entidade_id__in=entidade_ids)
+            else:
+                qs = qs.none()
+
+        allowed_ids = set(qs.values_list("id", flat=True))
+
         with transaction.atomic():
             for index, item_id in enumerate(item_ids):
-                Item.objects.filter(id=item_id).update(ordem=index + 1)
+                if item_id in allowed_ids:
+                    Item.objects.filter(id=item_id).update(ordem=index + 1)
 
         return Response(
             {"status": "Itens reordenados com sucesso."},
@@ -2053,21 +2164,31 @@ class DashboardStatsView(APIView):
             processos_qs = ProcessoLicitatorio.objects.all()
             itens_qs = Item.objects.all()
             orgaos_qs = Orgao.objects.all()
+            # Fornecedor não tem FK entidade — contamos os distintos via FornecedorProcesso
+            total_fornecedores = Fornecedor.objects.count()
         elif entidade_ids:
             processos_qs = ProcessoLicitatorio.objects.filter(entidade_id__in=entidade_ids)
             itens_qs = Item.objects.filter(processo__entidade_id__in=entidade_ids)
             orgaos_qs = Orgao.objects.filter(entidade_id__in=entidade_ids)
+            # Conta fornecedores vinculados a processos das entidades do usuário
+            total_fornecedores = (
+                Fornecedor.objects
+                .filter(processos__processo__entidade_id__in=entidade_ids)
+                .distinct()
+                .count()
+            )
         else:
             # Usuário sem entidades: não vê nada
             processos_qs = ProcessoLicitatorio.objects.none()
             itens_qs = Item.objects.none()
             orgaos_qs = Orgao.objects.none()
+            total_fornecedores = 0
 
         data = {
             "total_processos": processos_qs.count(),
             "processos_em_andamento": processos_qs.filter(situacao="em_contratacao").count(),
             "processos_publicados": processos_qs.filter(situacao="publicado").count(),
-            "total_fornecedores": Fornecedor.objects.count(),
+            "total_fornecedores": total_fornecedores,
             "total_orgaos": orgaos_qs.count(),
             "total_itens": itens_qs.count(),
         }
@@ -2218,7 +2339,7 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 {"error": "Envie uma lista de IDs."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        deleted, _ = ContratoEmpenho.objects.filter(id__in=ids).delete()
+        deleted, _ = self.get_queryset().filter(id__in=ids).delete()
         return Response({"deleted": deleted}, status=status.HTTP_200_OK)
 
 class SystemConfigView(APIView):
@@ -2748,7 +2869,7 @@ class AtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
         ids = request.data.get("ids", [])
         if not ids or not isinstance(ids, list):
             return Response({"error": "Envie uma lista de IDs."}, status=status.HTTP_400_BAD_REQUEST)
-        updated = AtaRegistroPrecos.objects.filter(id__in=ids, ativo=True).update(ativo=False, status="cancelada")
+        updated = self.get_queryset().filter(id__in=ids, ativo=True).update(ativo=False, status="cancelada")
         return Response({"deleted": updated}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="publicar-no-pncp")
@@ -2956,7 +3077,92 @@ class AtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     def remover_do_pncp(self, request, pk=None):
         """Alias de compatibilidade para clients legados."""
         return self.excluir_do_pncp(request, pk=pk)
-    
+
+    # ------------------------------------------------------------------
+    # CONSULTAR ATA NO PNCP (GET)
+    # ------------------------------------------------------------------
+    @action(detail=True, methods=["get"], url_path="consultar-pncp")
+    def consultar_pncp(self, request, pk=None):
+        """Consulta a situação de uma Ata de Registro de Preços no PNCP."""
+        ata = self.get_object()
+        processo = ata.processo
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not ata.pncp_sequencial_ata:
+            return Response(
+                {"detail": "Ata não possui sequencial no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            token = PNCPService._get_token()
+            url = (
+                f"{PNCPService.CONSULTA_URL}/compras/{cnpj}"
+                f"/{processo.pncp_ano_compra}/{processo.pncp_sequencial_compra}"
+                f"/atas/{ata.pncp_sequencial_ata}"
+            )
+            resp = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                verify=PNCPService.VERIFY_SSL,
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                return Response(resp.json(), status=status.HTTP_200_OK)
+            return Response(
+                {"detail": f"PNCP retornou {resp.status_code}", "body": resp.text},
+                status=resp.status_code,
+            )
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # ------------------------------------------------------------------
+    # LISTAR ATAS NO PNCP (GET)
+    # ------------------------------------------------------------------
+    @action(detail=False, methods=["get"], url_path="listar-pncp")
+    def listar_pncp(self, request):
+        """Lista todas as Atas de Registro de Preços de um processo no PNCP."""
+        processo_id = request.query_params.get("processo")
+        if not processo_id:
+            return Response({"detail": "Parâmetro ?processo= é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
+
+        proc_qs = ProcessoLicitatorio.objects.filter(pk=processo_id)
+        user = request.user
+        if not user.is_superuser and not user.is_staff:
+            entidade_ids = list(user.entidades.values_list("id", flat=True))
+            proc_qs = proc_qs.filter(entidade_id__in=entidade_ids)
+        processo = get_object_or_404(proc_qs)
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            token = PNCPService._get_token()
+            url = (
+                f"{PNCPService.CONSULTA_URL}/compras/{cnpj}"
+                f"/{processo.pncp_ano_compra}/{processo.pncp_sequencial_compra}/atas"
+            )
+            resp = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                verify=PNCPService.VERIFY_SSL,
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                return Response(resp.json(), status=status.HTTP_200_OK)
+            return Response(
+                {"detail": f"PNCP retornou {resp.status_code}", "body": resp.text},
+                status=resp.status_code,
+            )
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class DocumentoAtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     serializer_class = DocumentoAtaRegistroPrecosSerializer
     permission_classes = [IsAuthenticated]
@@ -2990,7 +3196,12 @@ class DocumentoAtaRegistroPrecosViewSet(EntidadeFilterMixin, viewsets.ModelViewS
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        ata = get_object_or_404(AtaRegistroPrecos, pk=ata_id, ativo=True)
+        ata_qs = AtaRegistroPrecos.objects.filter(pk=ata_id, ativo=True)
+        user = request.user
+        if not user.is_superuser and not user.is_staff:
+            entidade_ids = list(user.entidades.values_list("id", flat=True))
+            ata_qs = ata_qs.filter(processo__entidade_id__in=entidade_ids)
+        ata = get_object_or_404(ata_qs)
 
         # hash do arquivo
         content = arquivo.read()

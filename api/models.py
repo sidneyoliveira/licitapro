@@ -125,7 +125,7 @@ class ProcessoLicitatorio(models.Model):
 
     # --- Classificadores ---
     # Agora Modalidade é Inteiro (ID do PNCP)
-    modalidade = models.IntegerField(choices=MODALIDADE_CHOICES, blank=True, null=True, verbose_name="Modalidade (ID)")
+    modalidade = models.IntegerField(choices=MODALIDADE_CHOICES, blank=True, null=True, verbose_name="Modalidade (ID)", db_index=True)
     
     # Classificação ainda pode ser string se for controle interno, ou ajustar se houver tabela PNCP
     classificacao = models.CharField(max_length=50, blank=True, null=True) 
@@ -136,12 +136,13 @@ class ProcessoLicitatorio(models.Model):
         max_length=50, 
         blank=True, 
         choices=SITUACAO_CHOICES,
-        default='em_pesquisa'
+        default='em_pesquisa',
+        db_index=True,
     )
 
     # --- Datas e Valores ---
     data_processo = models.DateField(blank=True, null=True)
-    data_abertura = models.DateTimeField(blank=True, null=True)
+    data_abertura = models.DateTimeField(blank=True, null=True, db_index=True)
     valor_referencia = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
     vigencia_meses = models.PositiveIntegerField(blank=True, null=True)
 

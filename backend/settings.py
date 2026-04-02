@@ -138,3 +138,60 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # A configuração para o WhiteNoise, que ajuda a gerir os ficheiros.
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# ============================================================
+# JWT — Simple JWT
+# ============================================================
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": False,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+# ============================================================
+# SEGURANÇA (SEM HTTPS — HTTP only)
+# ============================================================
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+
+# NÃO habilitar SSL/HTTPS — servidor roda HTTP atrás do LiteSpeed
+# SECURE_SSL_REDIRECT = False
+# SECURE_HSTS_SECONDS = 0
+# SESSION_COOKIE_SECURE = False
+# CSRF_COOKIE_SECURE = False
+
+# ============================================================
+# LOGGING
+# ============================================================
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "api": {
+            "handlers": ["console"],
+            "level": "DEBUG" if DEBUG else "INFO",
+            "propagate": False,
+        },
+    },
+}
