@@ -520,19 +520,13 @@ class ContratoEmpenhoSerializer(serializers.ModelSerializer):
             "criado_em",
             "atualizado_em",
         )
+        extra_kwargs = {
+            "tipo_contrato_id": {"required": False},
+            "receita": {"required": False},
+        }
         read_only_fields = (
             "tipo_contrato_id",
             "receita",
-            "status",
-            "pncp_sequencial_contrato",
-            "numero_controle_pncp",
-            "link_pncp",
-            "pncp_publicado_em",
-            "ativo",
-            "criado_em",
-            "atualizado_em",
-        )
-        read_only_fields = (
             "status",
             "pncp_sequencial_contrato",
             "numero_controle_pncp",
