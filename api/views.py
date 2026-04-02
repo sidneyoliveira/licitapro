@@ -45,6 +45,7 @@ from .models import (
     FornecedorProcesso,
     ItemFornecedor,
     ContratoEmpenho,
+    DocumentoContrato,
     DocumentoPNCP,
     ProcessoDocumentoLinha,
     Anotacao,
@@ -67,6 +68,7 @@ from .serializers import (
     FornecedorProcessoSerializer,
     ItemFornecedorSerializer,
     ContratoEmpenhoSerializer,
+    DocumentoContratoSerializer,
     AnotacaoSerializer,
     NotificacaoSerializer,
     ArquivoUserSerializer,
@@ -2326,10 +2328,15 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = (
             ContratoEmpenho.objects.select_related("processo", "processo__entidade")
-            .all()
+            .filter(ativo=True)
             .order_by("-criado_em", "id")
         )
         return self.filter_by_entidade(qs)
+
+    def perform_destroy(self, instance):
+        instance.ativo = False
+        instance.status = "cancelado"
+        instance.save(update_fields=["ativo", "status"])
 
     @action(detail=False, methods=["post"], url_path="bulk-delete")
     def bulk_delete(self, request):
@@ -2339,8 +2346,397 @@ class ContratoEmpenhoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
                 {"error": "Envie uma lista de IDs."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        deleted, _ = self.get_queryset().filter(id__in=ids).delete()
-        return Response({"deleted": deleted}, status=status.HTTP_200_OK)
+        updated = self.get_queryset().filter(id__in=ids, ativo=True).update(ativo=False, status="cancelado")
+        return Response({"deleted": updated}, status=status.HTTP_200_OK)
+
+    # ------------------------------------------------------------------ #
+    # PUBLICAR CONTRATO NO PNCP (POST)
+    # ------------------------------------------------------------------ #
+    @action(detail=True, methods=["post"], url_path="publicar-no-pncp")
+    def publicar_no_pncp(self, request, pk=None):
+        contrato = self.get_object()
+        processo = contrato.processo
+
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validações obrigatórias
+        if not contrato.numero_contrato_empenho or not contrato.ano_contrato:
+            return Response(
+                {"detail": "Número e ano do contrato são obrigatórios."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not contrato.ni_fornecedor:
+            return Response(
+                {"detail": "NI do Fornecedor (CPF/CNPJ) é obrigatório para publicação no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = PNCPService.inserir_contrato(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                tipo_contrato_id=contrato.tipo_contrato_id,
+                numero_contrato_empenho=contrato.numero_contrato_empenho,
+                ano_contrato=contrato.ano_contrato,
+                ni_fornecedor=contrato.ni_fornecedor,
+                tipo_pessoa_fornecedor=contrato.tipo_pessoa_fornecedor or "PJ",
+                objeto=contrato.objeto or "",
+                receita_despesa="R" if contrato.receita else "D",
+                valor_inicial=float(contrato.valor_inicial or 0),
+                valor_global=float(contrato.valor_global or 0),
+                data_assinatura=contrato.data_assinatura.isoformat() if contrato.data_assinatura else None,
+                data_vigencia_inicio=contrato.data_vigencia_inicio.isoformat() if contrato.data_vigencia_inicio else None,
+                data_vigencia_fim=contrato.data_vigencia_fim.isoformat() if contrato.data_vigencia_fim else None,
+                unidade_codigo=contrato.unidade_codigo,
+                processo_ref=contrato.processo_ref,
+                categoria_processo_id=contrato.categoria_processo_id,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Extrai sequencialContrato
+        seq = result.get("sequencialContrato")
+        location = result.get("location") or ""
+
+        if not seq and location:
+            match = re.search(r"/contratos/(\d+)", location)
+            if match:
+                seq = int(match.group(1))
+
+        contrato.pncp_sequencial_contrato = seq
+        contrato.numero_controle_pncp = result.get("numeroControlePNCP") or ""
+        contrato.link_pncp = location or None
+        contrato.status = "publicado"
+        contrato.pncp_publicado_em = timezone.now()
+        contrato.save(update_fields=[
+            "pncp_sequencial_contrato",
+            "numero_controle_pncp",
+            "link_pncp",
+            "status",
+            "pncp_publicado_em",
+        ])
+
+        ser = self.get_serializer(contrato)
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+    # ------------------------------------------------------------------ #
+    # RETIFICAR CONTRATO NO PNCP (POST)
+    # ------------------------------------------------------------------ #
+    @action(detail=True, methods=["post"], url_path="retificar-no-pncp")
+    def retificar_no_pncp(self, request, pk=None):
+        contrato = self.get_object()
+        processo = contrato.processo
+
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not contrato.pncp_sequencial_contrato:
+            return Response(
+                {"detail": "Contrato não possui sequencial no PNCP. Publique-o primeiro."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        justificativa = request.data.get(
+            "justificativa",
+            "Retificação de contrato/empenho solicitada pelo sistema de origem.",
+        )
+
+        try:
+            PNCPService.retificar_contrato(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                sequencial_contrato=contrato.pncp_sequencial_contrato,
+                tipo_contrato_id=contrato.tipo_contrato_id,
+                numero_contrato_empenho=contrato.numero_contrato_empenho,
+                ano_contrato=contrato.ano_contrato,
+                ni_fornecedor=contrato.ni_fornecedor or "",
+                tipo_pessoa_fornecedor=contrato.tipo_pessoa_fornecedor or "PJ",
+                objeto=contrato.objeto or "",
+                receita_despesa="R" if contrato.receita else "D",
+                valor_inicial=float(contrato.valor_inicial or 0),
+                valor_global=float(contrato.valor_global or 0),
+                data_assinatura=contrato.data_assinatura.isoformat() if contrato.data_assinatura else None,
+                data_vigencia_inicio=contrato.data_vigencia_inicio.isoformat() if contrato.data_vigencia_inicio else None,
+                data_vigencia_fim=contrato.data_vigencia_fim.isoformat() if contrato.data_vigencia_fim else None,
+                unidade_codigo=contrato.unidade_codigo,
+                processo_ref=contrato.processo_ref,
+                categoria_processo_id=contrato.categoria_processo_id,
+                justificativa=justificativa,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        ser = self.get_serializer(contrato)
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+    # ------------------------------------------------------------------ #
+    # EXCLUIR CONTRATO DO PNCP (POST)
+    # ------------------------------------------------------------------ #
+    @action(detail=True, methods=["post"], url_path="excluir-do-pncp")
+    def excluir_do_pncp(self, request, pk=None):
+        contrato = self.get_object()
+        processo = contrato.processo
+
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not contrato.pncp_sequencial_contrato:
+            return Response(
+                {"detail": "Contrato não possui sequencial no PNCP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        justificativa = request.data.get(
+            "justificativa",
+            "Exclusão de contrato/empenho solicitada pelo sistema de origem.",
+        )
+
+        try:
+            PNCPService.excluir_contrato(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                sequencial_contrato=contrato.pncp_sequencial_contrato,
+                justificativa=justificativa,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        contrato.status = "cancelado"
+        contrato.save(update_fields=["status"])
+
+        ser = self.get_serializer(contrato)
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+
+# ============================================================
+# 9️⃣.1 DOCUMENTOS DE CONTRATO / EMPENHO
+# ============================================================
+
+
+class DocumentoContratoViewSet(EntidadeFilterMixin, viewsets.ModelViewSet):
+    serializer_class = DocumentoContratoSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
+    entidade_field = 'contrato__processo__entidade'
+
+    def get_queryset(self):
+        qs = DocumentoContrato.objects.select_related(
+            "contrato", "contrato__processo", "contrato__processo__entidade"
+        ).filter(ativo=True).order_by("-criado_em")
+        qs = self.filter_by_entidade(qs)
+        contrato_id = self.request.query_params.get("contrato")
+        if contrato_id:
+            qs = qs.filter(contrato_id=contrato_id)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        contrato_id = request.data.get("contrato")
+        tipo_id = request.data.get("tipo_documento_id")
+        arquivo = request.FILES.get("arquivo")
+
+        if not contrato_id or not tipo_id:
+            return Response(
+                {"detail": "Campos 'contrato' e 'tipo_documento_id' são obrigatórios."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not arquivo:
+            return Response(
+                {"detail": "Campo 'arquivo' é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        contrato_qs = ContratoEmpenho.objects.filter(pk=contrato_id, ativo=True)
+        user = request.user
+        if not user.is_superuser and not user.is_staff:
+            entidade_ids = list(user.entidades.values_list("id", flat=True))
+            contrato_qs = contrato_qs.filter(processo__entidade_id__in=entidade_ids)
+        contrato = get_object_or_404(contrato_qs)
+
+        # hash do arquivo
+        content = arquivo.read()
+        file_hash = hashlib.sha256(content).hexdigest()
+        arquivo.seek(0)
+
+        TIPO_DOC_CONTRATO_MAPA = {
+            1: "Documento Principal",
+            2: "Extrato",
+            3: "Termo Aditivo",
+            4: "Publicação DOU",
+            5: "Apostilamento",
+            6: "Rescisão",
+            7: "Outros",
+        }
+
+        titulo = request.data.get("titulo") or TIPO_DOC_CONTRATO_MAPA.get(int(tipo_id), "Documento")
+
+        # upsert por (contrato, tipo_documento_id)
+        existing = (
+            DocumentoContrato.objects.filter(
+                contrato=contrato,
+                tipo_documento_id=tipo_id,
+                ativo=True,
+            )
+            .exclude(status="removido")
+            .order_by("-criado_em")
+            .first()
+        )
+
+        if existing and existing.status != "enviado":
+            existing.arquivo = arquivo
+            existing.arquivo_nome = arquivo.name
+            existing.arquivo_hash = file_hash
+            existing.titulo = titulo
+            existing.status = "rascunho"
+            existing.ativo = True
+            existing.save()
+            ser = self.get_serializer(existing)
+            return Response(ser.data, status=status.HTTP_200_OK)
+
+        doc = DocumentoContrato.objects.create(
+            contrato=contrato,
+            tipo_documento_id=tipo_id,
+            titulo=titulo,
+            observacao=request.data.get("observacao") or None,
+            arquivo=arquivo,
+            arquivo_nome=arquivo.name,
+            arquivo_hash=file_hash,
+            status="rascunho",
+            ativo=True,
+        )
+        ser = self.get_serializer(doc)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        obj = self.get_object()
+        obj.ativo = False
+        obj.status = "removido"
+        obj.save(update_fields=["ativo", "status"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], url_path="enviar-ao-pncp")
+    def enviar_ao_pncp(self, request, pk=None):
+        """
+        Envia o DOCUMENTO do Contrato ao PNCP (6.5.6 – inserir documento de um Contrato).
+        """
+        doc = self.get_object()
+        contrato = doc.contrato
+        processo = contrato.processo
+
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not contrato.pncp_sequencial_contrato:
+            return Response(
+                {"detail": "Contrato ainda não publicado no PNCP (sequencialContrato ausente)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not doc.arquivo:
+            return Response(
+                {"detail": "Documento sem arquivo para envio."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content_type = getattr(getattr(doc.arquivo, "file", None), "content_type", "application/pdf")
+
+        try:
+            result = PNCPService.anexar_documento_contrato(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                sequencial_contrato=contrato.pncp_sequencial_contrato,
+                arquivo=doc.arquivo,
+                titulo_documento=doc.titulo,
+                tipo_documento_id=doc.tipo_documento_id,
+                content_type=content_type,
+            )
+        except ValueError as exc:
+            doc.status = "erro"
+            doc.save(update_fields=["status"])
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        seq = (
+            result.get("sequencialDocumento")
+            or result.get("sequencialArquivo")
+            or result.get("sequencial")
+        )
+
+        doc.status = "enviado"
+        doc.pncp_sequencial_documento = seq
+        doc.pncp_publicado_em = timezone.now()
+        doc.save(update_fields=["status", "pncp_sequencial_documento", "pncp_publicado_em"])
+
+        ser = self.get_serializer(doc)
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="excluir-do-pncp")
+    def excluir_do_pncp(self, request, pk=None):
+        """
+        Remove o DOCUMENTO do Contrato no PNCP (6.5.7).
+        """
+        doc = self.get_object()
+        contrato = doc.contrato
+        processo = contrato.processo
+
+        try:
+            require_referencia_pncp(processo)
+            cnpj = extrair_cnpj_processo(processo)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not contrato.pncp_sequencial_contrato:
+            return Response(
+                {"detail": "Contrato ainda não publicado no PNCP (sequencialContrato ausente)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not doc.pncp_sequencial_documento:
+            return Response(
+                {"detail": "Documento não possui sequencial no PNCP para exclusão."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        justificativa = request.data.get(
+            "justificativa",
+            "Exclusão de documento de contrato solicitada pelo sistema de origem.",
+        )
+
+        try:
+            PNCPService.excluir_documento_contrato(
+                cnpj_orgao=cnpj,
+                ano_compra=processo.pncp_ano_compra,
+                sequencial_compra=processo.pncp_sequencial_compra,
+                sequencial_contrato=contrato.pncp_sequencial_contrato,
+                sequencial_documento=doc.pncp_sequencial_documento,
+                justificativa=justificativa,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        doc.status = "rascunho"
+        doc.pncp_sequencial_documento = None
+        doc.pncp_publicado_em = None
+        doc.save(update_fields=["status", "pncp_sequencial_documento", "pncp_publicado_em"])
+
+        ser = self.get_serializer(doc)
+        return Response(ser.data, status=status.HTTP_200_OK)
 
 class SystemConfigView(APIView):
     

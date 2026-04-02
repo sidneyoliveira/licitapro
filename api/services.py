@@ -2063,6 +2063,422 @@ class PNCPService:
 
         raise ValueError("Falha ao listar documentos de ata no PNCP: nenhuma resposta recebida.")
 
+    # ================================================================== #
+    # 6.5 – CONTRATOS / EMPENHOS                                         #
+    # ================================================================== #
+
+    # ------------------------------------------------------------------ #
+    # 6.5.1 – Inserir Contrato                                           #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def inserir_contrato(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        tipo_contrato_id: int,
+        numero_contrato_empenho: str,
+        ano_contrato: int,
+        ni_fornecedor: str,
+        tipo_pessoa_fornecedor: str,
+        objeto: str = "",
+        receita_despesa: str = "D",
+        valor_inicial: float = 0.0,
+        valor_global: float = 0.0,
+        data_assinatura: Optional[str] = None,
+        data_vigencia_inicio: Optional[str] = None,
+        data_vigencia_fim: Optional[str] = None,
+        unidade_codigo: Optional[str] = None,
+        processo_ref: Optional[str] = None,
+        categoria_processo_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        6.5.1 – Inserir Contrato/Empenho no PNCP.
+        Endpoint:
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos  (POST)
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/contratos"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "application/json",
+        }
+
+        payload: Dict[str, Any] = {
+            "tipoContratoId": int(tipo_contrato_id),
+            "numeroContratoEmpenho": (numero_contrato_empenho or "").strip(),
+            "anoContrato": int(ano_contrato),
+            "niFornecedor": (ni_fornecedor or "").strip(),
+            "tipoPessoaFornecedor": (tipo_pessoa_fornecedor or "PJ").strip(),
+            "receitaDespesa": receita_despesa,
+            "valorInicial": float(valor_inicial or 0),
+            "valorGlobal": float(valor_global or 0),
+        }
+
+        if objeto:
+            payload["objetoContrato"] = objeto[:600]
+        if data_assinatura:
+            payload["dataAssinatura"] = data_assinatura
+        if data_vigencia_inicio:
+            payload["dataVigenciaInicio"] = data_vigencia_inicio
+        if data_vigencia_fim:
+            payload["dataVigenciaFim"] = data_vigencia_fim
+        if unidade_codigo:
+            payload["unidadeOrgao"] = {"codigoUnidade": unidade_codigo}
+        if processo_ref:
+            payload["processo"] = processo_ref
+        if categoria_processo_id:
+            payload["categoriaProcessoId"] = int(categoria_processo_id)
+
+        cls._log(f"Inserindo Contrato/Empenho no PNCP: {url}")
+
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (inserir contrato): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 201):
+            location = resp.headers.get("location") or resp.headers.get("Location") or ""
+            result: Dict[str, Any] = {
+                "status_code": resp.status_code,
+                "location": location,
+            }
+            try:
+                body = resp.json()
+                if isinstance(body, dict):
+                    result.update(body)
+            except ValueError:
+                result["raw_response"] = resp.text
+
+            # Extrai sequencialContrato da location (ex: .../contratos/3)
+            if not result.get("sequencialContrato") and location:
+                match = re.search(r"/contratos/(\d+)", location)
+                if match:
+                    result["sequencialContrato"] = int(match.group(1))
+
+            cls._log(f"Contrato inserido com sucesso. Location: {location}")
+            return result
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # 6.5.2 – Retificar Contrato                                         #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def retificar_contrato(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_contrato: int,
+        tipo_contrato_id: int,
+        numero_contrato_empenho: str,
+        ano_contrato: int,
+        ni_fornecedor: str,
+        tipo_pessoa_fornecedor: str,
+        objeto: str = "",
+        receita_despesa: str = "D",
+        valor_inicial: float = 0.0,
+        valor_global: float = 0.0,
+        data_assinatura: Optional[str] = None,
+        data_vigencia_inicio: Optional[str] = None,
+        data_vigencia_fim: Optional[str] = None,
+        unidade_codigo: Optional[str] = None,
+        processo_ref: Optional[str] = None,
+        categoria_processo_id: Optional[int] = None,
+        justificativa: str = "",
+    ) -> Dict[str, Any]:
+        """
+        6.5.2 – Retificar Contrato/Empenho no PNCP.
+        Endpoint:
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos/{sequencialContrato}  (PUT)
+
+        IMPORTANTE: Na retificação, TODOS os campos obrigatórios devem ser reenviados.
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "*/*",
+        }
+
+        payload: Dict[str, Any] = {
+            "tipoContratoId": int(tipo_contrato_id),
+            "numeroContratoEmpenho": (numero_contrato_empenho or "").strip(),
+            "anoContrato": int(ano_contrato),
+            "niFornecedor": (ni_fornecedor or "").strip(),
+            "tipoPessoaFornecedor": (tipo_pessoa_fornecedor or "PJ").strip(),
+            "receitaDespesa": receita_despesa,
+            "valorInicial": float(valor_inicial or 0),
+            "valorGlobal": float(valor_global or 0),
+            "justificativa": (justificativa or "Retificação de contrato solicitada.")[:255],
+        }
+
+        if objeto:
+            payload["objetoContrato"] = objeto[:600]
+        if data_assinatura:
+            payload["dataAssinatura"] = data_assinatura
+        if data_vigencia_inicio:
+            payload["dataVigenciaInicio"] = data_vigencia_inicio
+        if data_vigencia_fim:
+            payload["dataVigenciaFim"] = data_vigencia_fim
+        if unidade_codigo:
+            payload["unidadeOrgao"] = {"codigoUnidade": unidade_codigo}
+        if processo_ref:
+            payload["processo"] = processo_ref
+        if categoria_processo_id:
+            payload["categoriaProcessoId"] = int(categoria_processo_id)
+
+        cls._log(f"Retificando Contrato/Empenho no PNCP: {url}")
+
+        try:
+            resp = requests.put(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (retificar contrato): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 204):
+            result: Dict[str, Any] = {"status_code": resp.status_code}
+            try:
+                body = resp.json()
+                if isinstance(body, dict):
+                    result.update(body)
+            except ValueError:
+                pass
+            cls._log("Contrato retificado com sucesso no PNCP.")
+            return result
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # 6.5.3 – Excluir Contrato                                           #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def excluir_contrato(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_contrato: int,
+        justificativa: str,
+    ) -> bool:
+        """
+        6.5.3 – Excluir/Remover um Contrato/Empenho no PNCP.
+        Endpoint:
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos/{sequencialContrato} (DELETE)
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "*/*",
+        }
+
+        payload = {
+            "justificativa": (justificativa or "")[:255],
+        }
+
+        cls._log(f"Excluindo Contrato/Empenho no PNCP: {url}")
+
+        try:
+            resp = requests.delete(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (excluir contrato): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 204):
+            cls._log("Contrato excluído com sucesso do PNCP.")
+            return True
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # 6.5.6 – Inserir Documento de um Contrato                           #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def anexar_documento_contrato(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_contrato: int,
+        arquivo: IO[bytes],
+        titulo_documento: str,
+        tipo_documento_id: int,
+        content_type: str = "application/pdf",
+    ) -> Dict[str, Any]:
+        """
+        6.5.6 – Inserir Documento de um Contrato
+        Endpoint:
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos/{sequencialContrato}/arquivos  (POST)
+        """
+        token = cls._get_token()
+
+        if hasattr(arquivo, "seek"):
+            arquivo.seek(0)
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}/arquivos"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Titulo-Documento": (titulo_documento or "Documento")[:50],
+            "Tipo-Documento": str(int(tipo_documento_id)),
+            "accept": "*/*",
+        }
+
+        files = {
+            "arquivo": (
+                getattr(arquivo, "name", "documento.pdf"),
+                arquivo,
+                content_type,
+            )
+        }
+
+        cls._log(f"Anexando documento ao Contrato no PNCP: {url}")
+
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                files=files,
+                verify=cls.VERIFY_SSL,
+                timeout=90,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (anexar documento ao contrato): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 201):
+            location = resp.headers.get("location") or resp.headers.get("Location")
+            result: Dict[str, Any] = {
+                "location": location,
+                "status_code": resp.status_code,
+            }
+            try:
+                body = resp.json()
+                if isinstance(body, dict):
+                    result.update(body)
+            except ValueError:
+                result["raw_response"] = resp.text
+
+            cls._log(f"Documento de Contrato anexado com sucesso. Location: {location}")
+            return result
+
+        cls._handle_error(resp)
+
+    # ------------------------------------------------------------------ #
+    # 6.5.7 – Excluir Documento de um Contrato                           #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def excluir_documento_contrato(
+        cls,
+        *,
+        cnpj_orgao: str,
+        ano_compra: int,
+        sequencial_compra: int,
+        sequencial_contrato: int,
+        sequencial_documento: int,
+        justificativa: str,
+    ) -> bool:
+        """
+        6.5.7 – Excluir Documento de um Contrato
+        Endpoint:
+        /orgaos/{cnpj}/compras/{anoCompra}/{sequencialCompra}/contratos/{sequencialContrato}/arquivos/{sequencialDocumento} (DELETE)
+        """
+        token = cls._get_token()
+
+        url = (
+            f"{cls.BASE_URL}/orgaos/{cnpj_orgao}/compras/"
+            f"{int(ano_compra)}/{int(sequencial_compra)}/contratos/{int(sequencial_contrato)}"
+            f"/arquivos/{int(sequencial_documento)}"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "*/*",
+        }
+
+        payload = {
+            "justificativa": (justificativa or "")[:255],
+        }
+
+        cls._log(
+            f"Excluindo documento {sequencial_documento} do Contrato {sequencial_contrato} no PNCP: {url}"
+        )
+
+        try:
+            resp = requests.delete(
+                url,
+                headers=headers,
+                json=payload,
+                verify=cls.VERIFY_SSL,
+                timeout=cls.DEFAULT_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            msg = f"Falha de comunicação com PNCP (excluir documento de contrato): {exc}"
+            cls._log(msg, "error")
+            raise ValueError(msg) from exc
+
+        if resp.status_code in (200, 204):
+            cls._log("Documento de Contrato excluído com sucesso no PNCP.")
+            return True
+
+        cls._handle_error(resp)
+
 
 
 # ====================================================================== #

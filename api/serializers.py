@@ -11,6 +11,7 @@ from .models import (
     FornecedorProcesso,
     ItemFornecedor,
     ContratoEmpenho,
+    DocumentoContrato,
     Anotacao,
     Notificacao,
     ArquivoUser,
@@ -403,10 +404,84 @@ class ContratoEmpenhoSerializer(serializers.ModelSerializer):
             "unidade_codigo",
             "ni_fornecedor",
             "tipo_pessoa_fornecedor",
-            "sequencial_publicacao",
+            "objeto",
+            "valor_inicial",
+            "valor_global",
+            "data_assinatura",
+            "data_vigencia_inicio",
+            "data_vigencia_fim",
+            "status",
+            "pncp_sequencial_contrato",
+            "numero_controle_pncp",
+            "link_pncp",
+            "pncp_publicado_em",
+            "ativo",
             "criado_em",
             "atualizado_em",
         )
+        read_only_fields = (
+            "status",
+            "pncp_sequencial_contrato",
+            "numero_controle_pncp",
+            "link_pncp",
+            "pncp_publicado_em",
+            "ativo",
+            "criado_em",
+            "atualizado_em",
+        )
+
+
+class DocumentoContratoSerializer(serializers.ModelSerializer):
+    arquivo = serializers.FileField(required=False)
+    arquivo_url = serializers.SerializerMethodField()
+    tipo_documento_nome = serializers.SerializerMethodField()
+    contrato_display = serializers.SerializerMethodField()
+
+    TIPO_DOC_MAPA = {
+        1: "Documento Principal",
+        2: "Extrato",
+        3: "Termo Aditivo",
+        4: "Publicação DOU",
+        5: "Apostilamento",
+        6: "Rescisão",
+        7: "Outros",
+    }
+
+    class Meta:
+        model = DocumentoContrato
+        fields = (
+            "id",
+            "contrato",
+            "contrato_display",
+            "tipo_documento_id",
+            "tipo_documento_nome",
+            "titulo",
+            "observacao",
+            "arquivo",
+            "arquivo_nome",
+            "arquivo_url",
+            "arquivo_hash",
+            "status",
+            "pncp_sequencial_documento",
+            "pncp_publicado_em",
+            "ativo",
+            "criado_em",
+        )
+
+    def get_arquivo_url(self, obj):
+        if obj.arquivo and hasattr(obj.arquivo, "url"):
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(obj.arquivo.url)
+            return obj.arquivo.url
+        return None
+
+    def get_tipo_documento_nome(self, obj):
+        return self.TIPO_DOC_MAPA.get(obj.tipo_documento_id, f"Tipo {obj.tipo_documento_id}")
+
+    def get_contrato_display(self, obj):
+        c = obj.contrato
+        return f"{c.numero_contrato_empenho}/{c.ano_contrato}" if c else ""
 
 
 # ============================================================

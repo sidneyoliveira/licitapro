@@ -545,6 +545,12 @@ class ItemFornecedor(models.Model):
 # ============================================================
 
 class ContratoEmpenho(models.Model):
+    STATUS_CHOICES = (
+        ("rascunho", "Rascunho (local)"),
+        ("publicado", "Publicado no PNCP"),
+        ("cancelado", "Cancelado"),
+    )
+
     processo = models.ForeignKey(
         ProcessoLicitatorio, 
         related_name='contratos', 
@@ -560,24 +566,90 @@ class ContratoEmpenho(models.Model):
 
     unidade_codigo = models.CharField(max_length=32, blank=True, null=True)
     ni_fornecedor = models.CharField(max_length=14, blank=True, null=True)
-    
-    # Ajuste: se Tipo de Pessoa tiver um Choices definido, use aqui
+
     tipo_pessoa_fornecedor = models.CharField(
         max_length=2,
         blank=True,
         null=True
     )
 
-    sequencial_publicacao = models.PositiveIntegerField(blank=True, null=True)
-    
+    # Campos de valor e datas do PNCP
+    objeto = models.TextField(blank=True, null=True, help_text="Objeto do contrato/empenho.")
+    valor_inicial = models.DecimalField(max_digits=18, decimal_places=2, blank=True, null=True)
+    valor_global = models.DecimalField(max_digits=18, decimal_places=2, blank=True, null=True)
+    data_assinatura = models.DateField(blank=True, null=True)
+    data_vigencia_inicio = models.DateField(blank=True, null=True)
+    data_vigencia_fim = models.DateField(blank=True, null=True)
+
+    # Status e campos PNCP
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="rascunho",
+    )
+    pncp_sequencial_contrato = models.PositiveIntegerField(blank=True, null=True)
+    numero_controle_pncp = models.CharField(max_length=100, blank=True, null=True)
+    link_pncp = models.URLField(
+        blank=True, null=True,
+        verbose_name="Link no PNCP",
+        help_text="URL retornada pelo PNCP (header Location) na inserção do contrato.",
+    )
+    pncp_publicado_em = models.DateTimeField(blank=True, null=True)
+
+    ativo = models.BooleanField(default=True)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-criado_em']
+        verbose_name = "Contrato/Empenho"
+        verbose_name_plural = "Contratos/Empenhos"
 
     def __str__(self):
         return f"Contrato/Empenho {self.numero_contrato_empenho}/{self.ano_contrato}"
+
+
+class DocumentoContrato(models.Model):
+    STATUS = (
+        ("rascunho", "Rascunho (local)"),
+        ("enviado", "Enviado ao PNCP"),
+        ("erro", "Erro no envio"),
+        ("removido", "Removido"),
+    )
+
+    contrato = models.ForeignKey(
+        ContratoEmpenho,
+        related_name="documentos",
+        on_delete=models.CASCADE,
+    )
+
+    tipo_documento_id = models.PositiveIntegerField()
+    titulo = models.CharField(max_length=255, default="Documento do Contrato")
+    observacao = models.TextField(blank=True, null=True)
+
+    arquivo = models.FileField(upload_to="contratos_pncp/")
+    arquivo_nome = models.CharField(max_length=255, blank=True, null=True)
+    arquivo_hash = models.CharField(max_length=80, blank=True, null=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS,
+        default="rascunho",
+    )
+
+    pncp_sequencial_documento = models.PositiveIntegerField(blank=True, null=True)
+    pncp_publicado_em = models.DateTimeField(blank=True, null=True)
+
+    ativo = models.BooleanField(default=True)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-criado_em"]
+        verbose_name = "Documento de Contrato"
+        verbose_name_plural = "Documentos de Contratos"
+
+    def __str__(self):
+        return f"Doc Contrato {self.titulo} ({self.contrato})"
 
 # ============================================================
 # 📝 ANOTAÇÕES

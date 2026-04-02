@@ -14,6 +14,7 @@ from .views import (
     FornecedorProcessoViewSet,
     ItemFornecedorViewSet,
     ContratoEmpenhoViewSet,
+    DocumentoContratoViewSet,
     ReorderItensView,
     CreateUserView,
     ManageUserView,
@@ -56,6 +57,7 @@ router.register(r'itens-fornecedor', ItemFornecedorViewSet, basename='item-forne
 
 # CONTRATOS
 router.register(r'contratos', ContratoEmpenhoViewSet, basename='contrato')
+router.register(r'documentos-contratos', DocumentoContratoViewSet, basename='documento-contrato')
 
 # USUÁRIOS
 router.register(r'usuarios', UsuarioViewSet, basename='usuario')

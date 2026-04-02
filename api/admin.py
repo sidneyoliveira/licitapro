@@ -9,6 +9,8 @@ from .models import (
     FornecedorProcesso,
     Item,
     ItemFornecedor,
+    ContratoEmpenho,
+    DocumentoContrato,
     Anotacao,
     ArquivoUser,
     DocumentoPNCP,
@@ -171,6 +173,20 @@ class AtaRegistroPrecosAdmin(admin.ModelAdmin):
 class DocumentoAtaRegistroPrecosAdmin(admin.ModelAdmin):
     list_display = ('id', 'ata', 'titulo', 'arquivo_nome', 'criado_em')
     search_fields = ('ata__numero_ata', 'titulo', 'arquivo_nome')
+
+
+@admin.register(ContratoEmpenho)
+class ContratoEmpenhoAdmin(admin.ModelAdmin):
+    list_display = ('id', 'processo', 'numero_contrato_empenho', 'ano_contrato', 'tipo_contrato_id', 'status', 'criado_em')
+    list_filter = ('status', 'tipo_contrato_id', 'ano_contrato')
+    search_fields = ('numero_contrato_empenho', 'processo__numero_processo', 'ni_fornecedor')
+
+
+@admin.register(DocumentoContrato)
+class DocumentoContratoAdmin(admin.ModelAdmin):
+    list_display = ('id', 'contrato', 'titulo', 'arquivo_nome', 'status', 'criado_em')
+    list_filter = ('status',)
+    search_fields = ('contrato__numero_contrato_empenho', 'titulo', 'arquivo_nome')
 
 
 @admin.register(Notificacao)
